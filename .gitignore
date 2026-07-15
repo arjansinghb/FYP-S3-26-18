@@ -1,0 +1,43 @@
+# Local-only, never pushed — see agent-context/CLAUDE.md Rule 0
+agent-context/
+personal-reflections/
+diary/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Logs
+*.log
+
+# Large media (keep source video assets out of git history; link instead)
+*.mp4
+*.mov
+*.mkv
