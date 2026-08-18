@@ -1,0 +1,2491 @@
+/* =========================================================================
+   Shared base scale — used by every theme below (child chat, parent site/
+   dashboard, staff console). Themes differ in COLOR + TYPE, spacing/radius/
+   motion all come from here. See agent-context/CLAUDE.md §9 for the brief.
+
+   Two deliberately distinct visual identities (see §2.2 "distinct surfaces"):
+   - Child chat  = "Storybook Sticker": kraft paper, flat saturated colour,
+     thick ink outlines, hard offset shadows (cut-paper/sticker feel, not a
+     soft blurred gradient).
+   - Parent/staff = "Field Notes": neutral stone canvas, hairline borders,
+     one confident teal accent, monospace for data — calm and legible rather
+     than another generic blue-SaaS card wall.
+   ========================================================================= */
+
+@font-face {
+  font-family: 'Baloo 2';
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Baloo2-800.woff') format('woff');
+}
+@font-face {
+  font-family: 'Quicksand';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Quicksand-500.woff') format('woff');
+}
+@font-face {
+  font-family: 'Quicksand';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Quicksand-700.woff') format('woff');
+}
+@font-face {
+  font-family: 'Sora';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Sora-700.woff') format('woff');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Manrope-400.woff') format('woff');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Manrope-600.woff') format('woff');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Manrope-800.woff') format('woff');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/IBMPlexMono-500.woff2') format('woff2');
+}
+
+:root {
+  /* spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+
+  /* radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-full: 999px;
+
+  /* type scale */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 21px;
+  --text-2xl: 26px;
+  --text-3xl: 34px;
+  --text-4xl: 44px;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 120ms;
+  --duration-base: 220ms;
+  --duration-slow: 380ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =========================================================================
+   Child chat UI — a companion, not a search box (agent-context/CLAUDE.md
+   §2.1/§9). Execution reference: Duolingo (rounded shapes, controlled
+   saturated colour, chunky "3D" buttons with a bottom-lip press state),
+   Speak (chat bubble depth/spacing), Epic!/Khan Academy Kids (framed
+   avatars, cover-forward content cards). Soft layered shadows for lift,
+   a coloured bottom-lip shadow (not a black outline) for primary buttons,
+   ring-framed avatars instead of bare emoji — this is the thing that reads
+   as considered rather than default-template.
+   ========================================================================= */
+
+:root {
+  --paper: #f6ecd4;
+  --paper-grain: rgba(36, 26, 61, 0.045);
+  --ink: #241a3d;
+  --ink-soft: #5b4d72;
+  --ink-faint: #8d7fa3;
+  --card-bg: #fffcf6;
+  --bubble-bot: #fffcf6;
+  --bubble-child: #6c4ff6;
+  --bubble-child-text: #fffcf6;
+  --cherry: #ff4f64;
+  --cherry-strong: #e83b52;
+  --sun: #ffc53d;
+  --sky: #2fb0c9;
+  --grass: #4fae5d;
+  --violet: #6c4ff6;
+  --ring-color: #fffcf6;
+
+  --shadow-tint: 36, 26, 61;
+  --shadow-sm: 0 2px 8px rgba(var(--shadow-tint), 0.09);
+  --shadow-md: 0 8px 20px rgba(var(--shadow-tint), 0.13);
+  --shadow-lg: 0 20px 44px rgba(var(--shadow-tint), 0.18);
+  --shadow: var(--shadow-md);
+
+  font: var(--text-lg)/1.55 'Quicksand', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1c1730;
+    --paper-grain: rgba(245, 239, 224, 0.045);
+    --ink: #f5efe0;
+    --ink-soft: #cabfe0;
+    --ink-faint: #8d7fa3;
+    --card-bg: #2a2245;
+    --bubble-bot: #2a2245;
+    --bubble-child: #8b7bff;
+    --bubble-child-text: #211544;
+    --cherry: #ff6b7d;
+    --cherry-strong: #ff8492;
+    --sun: #ffd166;
+    --sky: #3fc6de;
+    --grass: #63c471;
+    --violet: #8b7bff;
+    --ring-color: #2a2245;
+
+    --shadow-tint: 0, 0, 0;
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.38);
+    --shadow-lg: 0 20px 44px rgba(0, 0, 0, 0.48);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background-color: var(--paper);
+  background-image: radial-gradient(circle at 1px 1px, var(--paper-grain) 1px, transparent 0);
+  background-size: 16px 16px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.app-shell {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Generic "screen" layout (login / avatar picker / goodbye) ---------- */
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-7) var(--space-5);
+  text-align: center;
+  animation: fade-in-up var(--duration-slow) var(--ease-out);
+}
+
+.app-title {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 800;
+  font-size: var(--text-4xl);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.login-subtitle {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+/* ---------- Profile picker (login) ---------- */
+
+.profile-grid,
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 480px;
+}
+
+.profile-tile,
+.avatar-tile {
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-md);
+  transition:
+    transform var(--duration-base) var(--ease-spring),
+    box-shadow var(--duration-base) var(--ease-out);
+  min-height: 104px;
+  position: relative;
+}
+
+.profile-tile:hover,
+.avatar-tile:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: var(--shadow-lg);
+}
+
+.profile-tile:active,
+.avatar-tile:active {
+  transform: translateY(-1px) scale(0.97);
+  box-shadow: var(--shadow-sm);
+}
+
+.profile-tile--selected {
+  box-shadow:
+    0 0 0 3px var(--card-bg),
+    0 0 0 6px var(--cherry),
+    var(--shadow-lg);
+}
+
+.profile-tile--add {
+  background: var(--card-bg);
+  border: 2.5px dashed color-mix(in srgb, var(--ink-faint) 55%, transparent);
+  box-shadow: none;
+}
+
+.profile-tile--add:hover {
+  border-color: var(--cherry);
+  transform: none;
+  box-shadow: none;
+}
+
+.profile-tile-emoji,
+.avatar-tile-emoji {
+  font-size: 38px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.15));
+}
+
+.profile-tile-name,
+.avatar-tile-name {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 800;
+  font-size: var(--text-sm);
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.profile-tile--add .profile-tile-name {
+  color: var(--ink);
+  text-shadow: none;
+}
+
+/* ---------- Inputs / buttons ---------- */
+
+.text-input,
+.pin-input {
+  width: 100%;
+  max-width: 320px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background: var(--card-bg);
+  color: var(--ink);
+  font-family: 'Quicksand', sans-serif;
+  font-weight: 700;
+  font-size: var(--text-xl);
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.text-input:focus,
+.pin-input:focus {
+  outline: none;
+  border-color: var(--violet);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--violet) 20%, transparent), var(--shadow-sm);
+}
+
+.pin-input {
+  letter-spacing: 14px;
+}
+
+.pin-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.big-button {
+  font-family: 'Baloo 2', sans-serif;
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--cherry);
+  color: var(--card-bg);
+  font-size: var(--text-xl);
+  font-weight: 800;
+  box-shadow: 0 var(--space-1) 0 color-mix(in srgb, var(--cherry) 60%, black), var(--shadow-sm);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out);
+}
+
+.big-button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.big-button:active:not(:disabled) {
+  transform: translateY(var(--space-1));
+  box-shadow: var(--shadow-sm);
+}
+
+.big-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  font-weight: 700;
+  font-size: var(--text-md);
+  padding: var(--space-2);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.link-button:hover {
+  color: var(--cherry-strong);
+}
+
+.error-text {
+  color: var(--cherry-strong);
+  font-weight: 700;
+  margin: 0;
+  animation: fade-in-up var(--duration-base) var(--ease-out);
+}
+
+/* ---------- Chat screen ---------- */
+
+.chat-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100svh;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  z-index: 1;
+}
+
+.avatar-button {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 0 0 2px var(--card-bg),
+    0 0 0 4px color-mix(in srgb, var(--violet) 45%, transparent),
+    var(--shadow-sm);
+  flex-shrink: 0;
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.avatar-button:hover {
+  transform: scale(1.08) rotate(-4deg);
+}
+
+.chat-header-name {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 800;
+  font-size: var(--text-xl);
+  flex: 1;
+}
+
+.chat-header-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.bubble-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  animation: fade-in-up var(--duration-base) var(--ease-out);
+}
+
+.bubble-row--child {
+  justify-content: flex-end;
+}
+
+.bubble-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  box-shadow:
+    0 0 0 2px var(--card-bg),
+    0 0 0 4px color-mix(in srgb, var(--violet) 40%, transparent),
+    var(--shadow-sm);
+}
+
+.bubble-avatar--big {
+  position: relative;
+  width: 108px;
+  height: 108px;
+  font-size: 52px;
+  box-shadow: 0 0 0 5px var(--card-bg), var(--shadow-lg);
+  animation: pop-in var(--duration-slow) var(--ease-spring);
+}
+
+.bubble-avatar--big::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  border-radius: 50%;
+  filter: blur(1px);
+  background: conic-gradient(from 0deg, var(--cherry), var(--sun), var(--sky), var(--grass), var(--violet), var(--cherry));
+  animation: spin-slow 7s linear infinite;
+}
+
+.bubble-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 80%;
+}
+
+.bubble {
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-xl);
+  font-weight: 600;
+  font-size: var(--text-lg);
+  line-height: 1.5;
+  box-shadow: var(--shadow-sm);
+}
+
+.bubble--bot {
+  background: var(--bubble-bot);
+  color: var(--ink);
+  border-bottom-left-radius: var(--space-1);
+}
+
+.bubble--child {
+  background: var(--bubble-child);
+  color: var(--bubble-child-text);
+  border-bottom-right-radius: var(--space-1);
+}
+
+.bubble--typing {
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--ink-faint);
+  animation: typing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes typing-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---------- Recommendation cards ---------- */
+
+.rec-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.rec-card {
+  display: flex;
+  gap: var(--space-4);
+  background: var(--card-bg);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-md);
+  animation: fade-in-up var(--duration-base) var(--ease-out);
+  transition: transform var(--duration-base) var(--ease-out), box-shadow var(--duration-base) var(--ease-out);
+}
+
+.rec-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* CH12 — Watch Embedded Video. A playable video swaps the row layout (small
+   thumbnail + body) for a stacked one: full-width 16:9 player on top, then
+   title/reason/actions below — a 76px-wide thumbnail is too small to play
+   anything in. */
+.rec-card--video {
+  flex-direction: column;
+}
+
+.rec-card-video {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.rec-card-video iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.rec-card-cover {
+  position: relative;
+  width: 76px;
+  height: 92px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-sm), inset 0 -18px 14px -10px rgba(0, 0, 0, 0.16);
+}
+
+.rec-card-cover--book {
+  background: linear-gradient(165deg, color-mix(in srgb, var(--sun) 88%, white), var(--sun));
+}
+
+.rec-card-cover--video {
+  background: linear-gradient(165deg, color-mix(in srgb, var(--sky) 88%, white), var(--sky));
+}
+
+.rec-card-cover-tag {
+  position: absolute;
+  bottom: var(--space-1);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'Baloo 2', sans-serif;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.24);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.rec-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+
+.rec-card-title {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 800;
+  font-size: var(--text-lg);
+  line-height: 1.25;
+}
+
+.rec-card-reason {
+  color: var(--ink-soft);
+  font-weight: 500;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.rec-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+
+/* Real buttons, not a row of bare emoji: a filled 3D-lip primary action
+   (Save), a tonal secondary action (Listen), and a pair of circular tonal
+   icon buttons (feedback) grouped to one side. */
+
+.rec-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 800;
+  font-size: var(--text-xs);
+  border: none;
+  border-radius: var(--radius-full);
+  padding: var(--space-2) var(--space-4);
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    filter var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+
+.rec-action-icon {
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.rec-action--primary {
+  background: var(--grass);
+  color: var(--card-bg);
+  box-shadow: 0 var(--space-1) 0 color-mix(in srgb, var(--grass) 58%, black);
+}
+
+.rec-action--primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.rec-action--primary:active:not(:disabled) {
+  transform: translateY(var(--space-1));
+  box-shadow: none;
+}
+
+.rec-action--primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.rec-action--secondary {
+  background: color-mix(in srgb, var(--violet) 12%, var(--card-bg));
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.rec-action--secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--violet) 20%, var(--card-bg));
+}
+
+.rec-action--secondary:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.rec-icon-group {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.rec-icon-btn {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  background: color-mix(in srgb, var(--ink) 6%, var(--card-bg));
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-fast) var(--ease-spring), background var(--duration-fast) var(--ease-out);
+}
+
+.rec-icon-btn:hover {
+  transform: scale(1.1);
+}
+
+.rec-icon-btn:active {
+  transform: scale(0.92);
+}
+
+.rec-icon-btn--liked {
+  background: var(--grass);
+}
+
+.rec-icon-btn--disliked {
+  background: var(--cherry);
+}
+
+/* Wide tonal button — CH18 "show me something else", sits below the card list. */
+.pill-button {
+  font-family: 'Baloo 2', sans-serif;
+  border: none;
+  border-radius: var(--radius-full);
+  padding: var(--space-3) var(--space-5);
+  background: color-mix(in srgb, var(--violet) 12%, var(--card-bg));
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 800;
+  box-shadow: var(--shadow-sm);
+  align-self: flex-start;
+  transition: transform var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.pill-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--violet) 20%, var(--card-bg));
+}
+
+.pill-button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.pill-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ---------- Chat input ---------- */
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--card-bg);
+  box-shadow: 0 -4px 16px rgba(var(--shadow-tint), 0.07);
+}
+
+.chat-text-input {
+  flex: 1;
+  max-width: none;
+  text-align: left;
+  font-weight: 600;
+}
+
+.send-button {
+  font-family: 'Baloo 2', sans-serif;
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-6);
+  height: 48px;
+  font-weight: 800;
+  font-size: var(--text-md);
+  background: var(--cherry);
+  color: var(--card-bg);
+  box-shadow: 0 var(--space-1) 0 color-mix(in srgb, var(--cherry) 60%, black);
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), filter var(--duration-fast) var(--ease-out);
+}
+
+.send-button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.send-button:active:not(:disabled) {
+  transform: translateY(var(--space-1));
+  box-shadow: none;
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mic-button {
+  border: none;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: var(--text-lg);
+  background: color-mix(in srgb, var(--sun) 40%, var(--card-bg));
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-fast) var(--ease-spring), background var(--duration-fast) var(--ease-out);
+}
+
+.mic-button:active {
+  transform: scale(0.9);
+}
+
+.mic-button--active {
+  background: var(--cherry);
+  color: var(--card-bg);
+  animation: typing-pulse 1s ease-in-out infinite;
+}
+
+/* =========================================================================
+   Parent-facing UI (landing, auth, dashboard) — REDESIGN (dev-session
+   2026-08-10): the previous pass here drifted from its own brief — the
+   comment said "one confident TEAL accent" but the actual swatch shipped was
+   generic indigo (#3454d1) on true cool slate, which is indistinguishable
+   from a thousand AI-template SaaS dashboards. This pass does two things:
+
+   1. Actually ships the teal the brief always wanted, in the same hue
+      family as the child theme's --sky, so the two "distinct surfaces"
+      (§2.2/§9) read as one brand wearing two moods rather than two
+      unrelated products bolted together.
+   2. Retints the neutral scale warm instead of cool-slate, and reuses the
+      child theme's exact ink/paper values in dark mode — same underlying
+      canvas, different accent + type + density on top. Hairline borders,
+      restrained shadow, monospace reserved for genuinely tabular data
+      (timestamps, IDs, money) — never for marketing copy, which is the
+      single biggest "AI-generated" tell (a mono-uppercase-tracked pill
+      badge) and got removed from the hero/pricing badge accordingly.
+      Execution reference: Bark/Qustodio/Family Link for calm-not-
+      surveillance activity UI; Linear/Notion for hairline card/table
+      polish — same references as before, better followed this time.
+   ========================================================================= */
+
+:root {
+  /* warm stone neutrals — same warm undertone as the child theme's paper/ink
+     (a deliberate family resemblance), not cool corporate slate */
+  --p-gray-50: #faf7f1;
+  --p-gray-100: #f1ead9;
+  --p-gray-200: #e3d9c2;
+  --p-gray-400: #a99a80;
+  --p-gray-600: #6b5f4d;
+  --p-gray-900: #241a3d;
+
+  --p-bg: var(--p-gray-50);
+  --p-surface: #ffffff;
+  --p-ink: var(--p-gray-900);
+  --p-ink-soft: var(--p-gray-600);
+  --p-ink-faint: var(--p-gray-400);
+  --p-border: var(--p-gray-200);
+
+  /* one confident accent — deep teal, same hue family as the child theme's
+     --sky (#2fb0c9) toned down for a calmer, "trust" register */
+  --p-primary-50: #eaf6f6;
+  --p-primary-100: #cdeae9;
+  --p-primary-300: #6cbcbb;
+  --p-primary: #0e7c86;
+  --p-primary-hover: #0a5f67;
+  --p-primary-700: #073f44;
+  --p-primary-soft: rgba(14, 124, 134, 0.08);
+
+  /* semantic status colours — kept distinct from the teal accent */
+  --p-success: #1a7a4c;
+  --p-success-soft: rgba(26, 122, 76, 0.12);
+  --p-danger: #c14a3a;
+  --p-danger-soft: rgba(193, 74, 58, 0.12);
+  --p-warning: #a3690a;
+  --p-warning-soft: rgba(184, 134, 11, 0.15);
+  --p-info: #3454b4;
+  --p-info-soft: rgba(52, 84, 180, 0.1);
+
+  --p-shadow-tint: 36, 26, 61;
+  --p-shadow-sm: 0 1px 3px rgba(var(--p-shadow-tint), 0.07);
+  --p-shadow-md: 0 4px 14px rgba(var(--p-shadow-tint), 0.08);
+  --p-shadow-lg: 0 18px 36px rgba(var(--p-shadow-tint), 0.13);
+  --p-shadow: var(--p-shadow-md);
+
+  --p-font-display: 'Sora', system-ui, sans-serif;
+  --p-font-body: 'Manrope', system-ui, sans-serif;
+  --p-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* same canvas as the child theme's dark mode (--paper/--card-bg/--ink),
+       not a separate near-black — see module docstring above */
+    --p-gray-50: #1c1730;
+    --p-gray-100: #251e3f;
+    --p-gray-200: #3a3160;
+    --p-gray-400: #8d7fa3;
+    --p-gray-600: #cabfe0;
+    --p-gray-900: #f5efe0;
+
+    --p-bg: var(--p-gray-50);
+    --p-surface: #2a2245;
+    --p-ink: var(--p-gray-900);
+    --p-ink-soft: var(--p-gray-600);
+    --p-ink-faint: var(--p-gray-400);
+    --p-border: var(--p-gray-200);
+
+    --p-primary-50: #12302f;
+    --p-primary-100: #164240;
+    --p-primary-300: #3f9d98;
+    --p-primary: #4fd6cc;
+    --p-primary-hover: #74e2da;
+    --p-primary-700: #b7f0eb;
+    --p-primary-soft: rgba(79, 214, 204, 0.14);
+
+    --p-success: #3fbd82;
+    --p-success-soft: rgba(63, 189, 130, 0.14);
+    --p-danger: #f0837a;
+    --p-danger-soft: rgba(240, 131, 122, 0.16);
+    --p-warning: #d9a441;
+    --p-warning-soft: rgba(217, 164, 65, 0.16);
+    --p-info: #8fa6ff;
+    --p-info-soft: rgba(143, 166, 255, 0.15);
+
+    --p-shadow-tint: 0, 0, 0;
+    --p-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.32);
+    --p-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.36);
+    --p-shadow-lg: 0 18px 36px rgba(0, 0, 0, 0.46);
+  }
+}
+
+.landing,
+.auth-screen,
+.parent-shell {
+  background: var(--p-bg);
+  color: var(--p-ink);
+  font: var(--text-md)/1.6 var(--p-font-body);
+  min-height: 100svh;
+}
+
+.landing h1,
+.landing h2,
+.landing h3,
+.parent-shell h1,
+.parent-shell h2,
+.auth-screen h1 {
+  font-family: var(--p-font-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* --- Landing page --- */
+
+.landing-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-7);
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  transition: background var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out),
+    backdrop-filter var(--duration-base) var(--ease-out);
+}
+
+/* Glass nav — solid at the very top (blends into the hero), frosts and
+   drops a hairline + soft shadow once the page scrolls under it. */
+.landing-nav--scrolled {
+  background: color-mix(in srgb, var(--p-surface) 82%, transparent);
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  border-bottom-color: var(--p-border);
+  box-shadow: var(--p-shadow-sm);
+}
+
+.landing-brand {
+  font-family: var(--p-font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+  color: var(--p-ink);
+  text-decoration: none;
+}
+
+.landing-nav-link {
+  margin-right: var(--space-4);
+  color: var(--p-ink-soft);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.landing-nav-link:hover {
+  color: var(--p-primary);
+}
+
+.landing-nav-cta {
+  background: var(--p-primary);
+  color: var(--p-surface);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-weight: 700;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.landing-nav-cta:hover {
+  background: var(--p-primary-hover);
+}
+
+.landing-hero {
+  position: relative;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--space-11) var(--space-6) var(--space-9);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: var(--space-8);
+  align-items: center;
+  text-align: left;
+}
+
+.landing-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle at 1px 1px, var(--p-border) 1px, transparent 0);
+  background-size: 26px 26px;
+  background-position: center top;
+  -webkit-mask-image: linear-gradient(to bottom, black, black 45%, transparent 92%);
+  mask-image: linear-gradient(to bottom, black, black 45%, transparent 92%);
+}
+
+.landing-hero-copy {
+  min-width: 0;
+}
+
+.landing-hero-illustration {
+  justify-self: center;
+  width: 100%;
+  max-width: 380px;
+  filter: drop-shadow(var(--p-shadow-lg));
+  animation: hero-illo-float 6s ease-in-out infinite;
+}
+
+@keyframes hero-illo-float {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(-1deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-illustration {
+    animation: none;
+  }
+}
+
+/* Scroll-reveal (see hooks/useReveal.ts) — hidden+offset until the element
+   has entered the viewport once, then eases in and stays. */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.7s var(--ease-out), transform 0.7s var(--ease-out);
+}
+
+.reveal--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+.hero-illo-backdrop {
+  fill: var(--p-primary-soft);
+  fill: url(#hero-mesh); /* gradient mesh (see LandingPage.tsx defs) — the
+    flat fallback above covers browsers that fail to resolve the url() ref */
+}
+
+.hero-illo-book--1 {
+  fill: var(--cherry, #ff4f64);
+}
+
+.hero-illo-book--2 {
+  fill: var(--sun, #ffc53d);
+}
+
+.hero-illo-book--3 {
+  fill: var(--grass, #4fae5d);
+}
+
+.hero-illo-video-card {
+  fill: var(--sky, #2fb0c9);
+}
+
+.hero-illo-play-ring {
+  fill: rgba(255, 255, 255, 0.22);
+}
+
+.hero-illo-play-triangle {
+  fill: #fff;
+}
+
+.hero-illo-sparkle {
+  fill: var(--violet, #6c4ff6);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sparkle-twinkle 2.6s ease-in-out infinite;
+}
+
+.hero-illo-sparkle--1 {
+  fill: var(--sun, #ffc53d);
+  animation-delay: 0.3s;
+}
+
+.hero-illo-sparkle--2 {
+  animation-delay: 0.9s;
+}
+
+.hero-illo-sparkle--3 {
+  fill: var(--cherry, #ff4f64);
+  animation-delay: 1.4s;
+}
+
+@keyframes sparkle-twinkle {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (max-width: 860px) {
+  .landing-hero {
+    grid-template-columns: 1fr;
+    text-align: center;
+    padding-top: var(--space-9);
+  }
+
+  .landing-eyebrow {
+    justify-content: center;
+  }
+
+  .landing-hero-illustration {
+    max-width: 280px;
+    order: -1;
+  }
+}
+
+/* Deliberately NOT a mono-uppercase-tracked pill (the single most common
+   "AI-generated landing page" tell) — just the display font at a friendly
+   size, colour doing the accent work instead of letter-spacing. */
+.landing-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--p-font-display);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--p-primary-700);
+  margin: 0 0 var(--space-4);
+}
+
+.landing-eyebrow::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--p-primary);
+}
+
+.landing-hero h1 {
+  font-size: var(--text-3xl);
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0 0 var(--space-4);
+  text-wrap: balance;
+}
+
+.landing-subtitle {
+  color: var(--p-ink-soft);
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-7);
+}
+
+.landing-hero-actions {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 860px) {
+  .landing-hero-actions {
+    justify-content: center;
+  }
+}
+
+.landing-section {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-9) var(--space-6);
+}
+
+.landing-section h2 {
+  text-align: center;
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  margin: 0 0 var(--space-7);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-5);
+}
+
+.feature-card {
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  transition: border-color var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
+}
+
+.feature-card:hover {
+  border-color: var(--p-primary-300);
+  transform: translateY(-4px);
+  box-shadow: var(--p-shadow-lg);
+}
+
+.feature-icon {
+  transition: transform var(--duration-base) var(--ease-spring);
+}
+
+.feature-card:hover .feature-icon {
+  transform: scale(1.12) rotate(-6deg);
+}
+
+/* Each card gets its own tint (cycling the child theme's accent colours,
+   nth-child rather than inline style so the mapping lives in one place) —
+   a uniform blue-box-per-icon is the other half of the generic-SaaS-grid
+   tell alongside the mono pill badge above. */
+.feature-icon {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-4);
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--p-primary-soft);
+}
+
+.feature-card:nth-child(4n + 1) .feature-icon {
+  background: color-mix(in srgb, var(--cherry, #ff4f64) 16%, transparent);
+}
+
+.feature-card:nth-child(4n + 2) .feature-icon {
+  background: color-mix(in srgb, var(--sky, #2fb0c9) 18%, transparent);
+}
+
+.feature-card:nth-child(4n + 3) .feature-icon {
+  background: color-mix(in srgb, var(--sun, #ffc53d) 22%, transparent);
+}
+
+.feature-card:nth-child(4n + 4) .feature-icon {
+  background: color-mix(in srgb, var(--grass, #4fae5d) 18%, transparent);
+}
+
+.feature-card h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+.feature-card p {
+  color: var(--p-ink-soft);
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-6);
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.pricing-card {
+  background: var(--p-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-7);
+  border: 1px solid var(--p-border);
+  transition: border-color var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
+}
+
+.pricing-card:hover {
+  border-color: var(--p-primary-300);
+  transform: translateY(-2px);
+}
+
+.pricing-card--premium {
+  border-color: var(--p-primary);
+  position: relative;
+}
+
+.pricing-card--premium::before {
+  content: 'Most flexible';
+  position: absolute;
+  top: calc(-1 * var(--space-3));
+  left: var(--space-6);
+  background: var(--p-primary);
+  color: #fff;
+  font-family: var(--p-font-display);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: 3px var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.pricing-card h3 {
+  font-size: var(--text-lg);
+  margin: 0;
+}
+
+.pricing-price {
+  font-family: var(--p-font-display);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  margin: var(--space-2) 0 var(--space-5);
+  color: var(--p-primary);
+}
+
+.pricing-card ul {
+  padding-left: var(--space-5);
+  color: var(--p-ink-soft);
+  font-size: var(--text-sm);
+  line-height: 1.9;
+  margin: 0;
+}
+
+.pricing-note {
+  text-align: center;
+  color: var(--p-ink-soft);
+  font-size: var(--text-sm);
+  margin-top: var(--space-6);
+}
+
+.reviews-empty {
+  text-align: center;
+  color: var(--p-ink-soft);
+  padding: var(--space-8);
+  background: var(--p-surface);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--p-border);
+}
+
+.landing-footer {
+  text-align: center;
+  padding: var(--space-8);
+  color: var(--p-ink-faint);
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+}
+
+/* --- Auth screens (signup/login/consent) --- */
+
+.auth-screen {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: var(--space-9) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  text-align: center;
+}
+
+.auth-screen h1 {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  margin: 0;
+}
+
+.auth-card {
+  width: 100%;
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-7);
+  box-shadow: var(--p-shadow-sm);
+}
+
+.auth-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  text-align: left;
+}
+
+.auth-form label,
+.inline-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--p-ink-soft);
+}
+
+.auth-form input,
+.inline-form input,
+.inline-form select {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--p-border);
+  background: var(--p-surface);
+  color: var(--p-ink);
+  font-family: var(--p-font-body);
+  font-size: var(--text-base);
+  font-weight: 400;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.auth-form input:focus,
+.inline-form input:focus,
+.inline-form select:focus {
+  outline: none;
+  border-color: var(--p-primary);
+  box-shadow: 0 0 0 3px var(--p-primary-soft);
+}
+
+.settings-textarea {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--p-border);
+  background: var(--p-surface);
+  color: var(--p-ink);
+  font-family: var(--p-font-mono);
+  font-size: var(--text-sm);
+  resize: vertical;
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.settings-textarea:focus {
+  outline: none;
+  border-color: var(--p-primary);
+  box-shadow: 0 0 0 3px var(--p-primary-soft);
+}
+
+.auth-switch {
+  font-size: var(--text-sm);
+  color: var(--p-ink-soft);
+}
+
+.consent-box {
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-7);
+  text-align: left;
+}
+
+.consent-box p:first-child {
+  font-weight: 700;
+  margin-top: 0;
+}
+
+.consent-box ul {
+  padding-left: var(--space-5);
+  color: var(--p-ink-soft);
+  line-height: 1.8;
+}
+
+.consent-actions {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  margin-top: var(--space-5);
+}
+
+/* Parent-theme buttons — same class names as the child UI (.big-button,
+   .link-button, .error-text) get overridden here since these files load in
+   the same stylesheet; scope by ancestor so the child app keeps its look. */
+.landing .big-button,
+.auth-screen .big-button,
+.parent-shell .big-button {
+  position: relative;
+  overflow: hidden;
+  font-family: var(--p-font-body);
+  background: var(--p-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-7);
+  font-size: var(--text-base);
+  font-weight: 700;
+  box-shadow: none;
+  transition: background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.landing .big-button:hover:not(:disabled),
+.auth-screen .big-button:hover:not(:disabled),
+.parent-shell .big-button:hover:not(:disabled) {
+  background: var(--p-primary-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -8px color-mix(in srgb, var(--p-primary) 55%, transparent);
+}
+
+.landing .big-button:active:not(:disabled),
+.auth-screen .big-button:active:not(:disabled),
+.parent-shell .big-button:active:not(:disabled) {
+  transform: scale(0.98);
+  box-shadow: none;
+}
+
+/* Diagonal shine sweep on the marketing CTA specifically — a subtle
+   "kekinian" touch that reads as an intentional flourish once, not a
+   distracting always-animating shimmer. */
+.landing .big-button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.35) 48%, transparent 66%);
+  transform: translateX(-120%);
+}
+
+.landing .big-button:hover::after {
+  transform: translateX(120%);
+  transition: transform 0.7s var(--ease-out);
+}
+
+.landing .link-button,
+.auth-screen .link-button,
+.parent-shell .link-button {
+  color: var(--p-primary);
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+}
+
+.landing .error-text,
+.auth-screen .error-text,
+.parent-shell .error-text {
+  font-size: var(--text-sm);
+}
+
+.notice-text {
+  color: var(--p-success);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+/* --- Secondary button (outlined/ghost) — for actions that shouldn't
+   compete with a primary .big-button in the same view. */
+.secondary-button {
+  font-family: var(--p-font-body);
+  background: none;
+  border: 1.5px solid var(--p-border);
+  color: var(--p-ink);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-6);
+  font-weight: 700;
+  font-size: var(--text-base);
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.secondary-button:hover:not(:disabled) {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+}
+
+/* --- Parent dashboard shell --- */
+
+.parent-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-4) var(--space-7);
+  background: var(--p-surface);
+  border-bottom: 1px solid var(--p-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.parent-brand {
+  font-family: var(--p-font-display);
+  font-weight: 700;
+  color: var(--p-ink);
+  text-decoration: none;
+  font-size: var(--text-base);
+}
+
+.parent-brand-sub {
+  font-family: var(--p-font-mono);
+  font-weight: 500;
+  color: var(--p-ink-soft);
+  font-size: var(--text-xs);
+}
+
+.parent-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.parent-nav a {
+  color: var(--p-ink-soft);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.parent-nav a:hover {
+  color: var(--p-primary);
+}
+
+.parent-nav-email {
+  font-family: var(--p-font-mono);
+  color: var(--p-ink-faint);
+  font-size: var(--text-xs);
+}
+
+.parent-nav-logout {
+  font-family: var(--p-font-body);
+  border: 1.5px solid var(--p-border);
+  background: none;
+  color: var(--p-ink);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+}
+
+.parent-nav-logout:hover {
+  border-color: var(--p-danger);
+  color: var(--p-danger);
+}
+
+/* PA20 — Receive Notifications. */
+.notif-bell {
+  position: relative;
+}
+
+.notif-bell-trigger {
+  position: relative;
+  background: none;
+  border: none;
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-1);
+}
+
+.notif-bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  background: var(--p-danger);
+  color: #fff;
+  font-family: var(--p-font-body);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+.notif-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-3));
+  right: 0;
+  width: 320px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--p-shadow-lg);
+  z-index: 20;
+}
+
+.notif-dropdown-header {
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--p-font-display);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--p-border);
+}
+
+.notif-dropdown-empty {
+  padding: var(--space-5) var(--space-4);
+  color: var(--p-ink-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notif-item {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--p-border);
+}
+
+.notif-item:last-child {
+  border-bottom: none;
+}
+
+.notif-item--unread {
+  background: var(--p-primary-soft);
+}
+
+.notif-item-title {
+  font-weight: 700;
+  font-size: var(--text-sm);
+  color: var(--p-ink);
+}
+
+.notif-item-body {
+  font-size: var(--text-xs);
+  color: var(--p-ink-soft);
+  margin-top: 2px;
+}
+
+.notif-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-2);
+  font-family: var(--p-font-mono);
+  font-size: 11px;
+  color: var(--p-ink-faint);
+}
+
+.notif-item-read {
+  background: none;
+  border: none;
+  color: var(--p-primary);
+  font-family: var(--p-font-body);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.parent-content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-6) var(--space-10);
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-5);
+}
+
+.dashboard-header h1 {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  margin: 0;
+}
+
+.dashboard-note {
+  color: var(--p-ink-soft);
+  font-size: var(--text-sm);
+}
+
+.dashboard-empty {
+  color: var(--p-ink-faint);
+  font-style: italic;
+  padding: var(--space-6) 0;
+}
+
+.dashboard-section {
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  margin-bottom: var(--space-5);
+}
+
+.dashboard-section h1 {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  margin: 0 0 var(--space-2);
+}
+
+.dashboard-section h2 {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--p-ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dashboard-section--danger {
+  border-color: var(--p-danger-soft);
+}
+
+.dashboard-section--warning {
+  border-color: var(--p-warning-soft);
+  background: var(--p-warning-soft);
+}
+
+.billing-history-heading {
+  margin-top: var(--space-6) !important;
+}
+
+.verification-link-preview {
+  display: block;
+  width: 100%;
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+  background: var(--p-bg);
+  border: 1px dashed var(--p-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  word-break: break-all;
+  color: var(--p-ink-soft);
+}
+
+.danger-button {
+  font-family: var(--p-font-body);
+  background: var(--p-danger);
+  color: var(--p-surface);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
+  font-weight: 700;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--p-danger) 85%, black);
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-end;
+  margin-bottom: var(--space-3);
+}
+
+/* PA21/PA22/PA29 — boolean settings (safety settings, notification
+   preferences, privacy settings) as a labelled toggle row + switch, rather
+   than a bare checkbox. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--p-border);
+}
+
+.toggle-row:last-child {
+  border-bottom: none;
+}
+
+.toggle-row-label {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--p-ink);
+}
+
+.toggle-row-hint {
+  font-size: var(--text-xs);
+  color: var(--p-ink-faint);
+  margin-top: 2px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--p-gray-200);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+  /* Purely decorative — without this, a click lands on the span instead of
+     bubbling to the <label>'s native "activate associated control" behaviour
+     (observed to silently no-op the toggle in at least one engine, even
+     though span.click() nominally bubbles). Letting clicks pass through to
+     the label/input underneath is the standard fix for this checkbox+span
+     toggle-switch pattern. */
+  pointer-events: none;
+}
+
+.toggle-switch-track::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: var(--p-surface);
+  border-radius: 50%;
+  box-shadow: var(--p-shadow-sm);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.toggle-switch input:checked + .toggle-switch-track {
+  background: var(--p-primary);
+}
+
+.toggle-switch input:checked + .toggle-switch-track::before {
+  transform: translateX(18px);
+}
+
+.toggle-switch input:disabled + .toggle-switch-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* PA21 — blocked-topics tag input. */
+.tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--p-primary-soft);
+  color: var(--p-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 3px var(--space-2) 3px var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.tag-chip button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  line-height: 1;
+  padding: 0 2px;
+}
+
+/* PA31/PA32 — small stat cards for activity trends / comparative insights. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-4);
+}
+
+.stat-card {
+  background: var(--p-bg);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.stat-card-value {
+  font-family: var(--p-font-display);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--p-ink);
+}
+
+.stat-card-label {
+  font-size: var(--text-xs);
+  color: var(--p-ink-soft);
+  margin-top: 2px;
+}
+
+.premium-lock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--p-ink-soft);
+  font-size: var(--text-sm);
+}
+
+.child-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.child-card {
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  text-decoration: none;
+  color: var(--p-ink);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  text-align: left;
+  transition: transform var(--duration-base) var(--ease-out), border-color var(--duration-base) var(--ease-out), box-shadow var(--duration-base) var(--ease-out);
+}
+
+.child-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--p-primary-300);
+  box-shadow: var(--p-shadow-md);
+}
+
+.child-card-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: var(--space-3);
+  box-shadow: 0 0 0 3px var(--p-surface), 0 0 0 4px var(--p-border);
+}
+
+.child-card-name {
+  font-family: var(--p-font-display);
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+
+.child-card-meta {
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+  color: var(--p-ink-soft);
+}
+
+.child-card-cta {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--p-border);
+  width: 100%;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--p-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.child-card-cta span {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.child-card:hover .child-card-cta span {
+  transform: translateX(3px);
+}
+
+.child-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.child-detail-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  box-shadow: 0 0 0 4px var(--p-bg);
+}
+
+.avatar-mini-grid {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.avatar-mini {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.avatar-mini:hover {
+  transform: scale(1.1);
+}
+
+.avatar-mini--selected {
+  box-shadow: 0 0 0 3px var(--p-surface), 0 0 0 5px var(--p-primary);
+}
+
+.activity-session {
+  border-bottom: 1px solid var(--p-border);
+  padding: var(--space-3) 0;
+}
+
+.activity-session:last-child {
+  border-bottom: none;
+}
+
+.activity-session-toggle {
+  background: none;
+  border: none;
+  color: var(--p-ink);
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  padding: var(--space-1) 0;
+}
+
+.activity-transcript {
+  margin-top: var(--space-3);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--p-primary-100);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.activity-message {
+  font-size: var(--text-sm);
+}
+
+.activity-message--bot {
+  color: var(--p-ink-soft);
+}
+
+.activity-refs {
+  margin-top: var(--space-1);
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.activity-ref-chip {
+  background: var(--p-bg);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.chip-action {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0 2px;
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.chip-action:hover {
+  transform: scale(1.15);
+}
+
+.favourites-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.favourites-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--p-border);
+}
+
+.favourites-list li:last-child {
+  border-bottom: none;
+}
+
+.favourites-list li span:first-child {
+  flex: 1;
+}
+
+.override-badge {
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.override-badge--approve {
+  background: var(--p-success-soft);
+  color: var(--p-success);
+}
+
+.override-badge--block {
+  background: var(--p-danger-soft);
+  color: var(--p-danger);
+}
+
+/* --- Staff (moderator/admin) console — table-heavy, utilitarian by design
+   (not subject to the child UI's §2.1 "not a search engine" rule — this
+   surface is staff-facing, see agent-context/CLAUDE.md §9's closing note).
+   Execution reference: shadcn/ui's table/badge/button visual language
+   (hand-coded here, no library dependency) + Retool for admin-table density.
+   Still shares the same base scale + palette as the parent dashboard. --- */
+
+.staff-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.staff-table th,
+.staff-table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--p-border);
+  vertical-align: middle;
+}
+
+.staff-table th {
+  font-family: var(--p-font-mono);
+  color: var(--p-ink-soft);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  background: var(--p-bg);
+}
+
+.staff-table tbody tr {
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.staff-table tbody tr:hover {
+  background: var(--p-primary-50);
+}
+
+.staff-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* A card-list item that should read as flat/table-adjacent rather than a
+   standalone elevated card (e.g. one row in a review queue) — same padding
+   rhythm as .dashboard-section, minus the shadow, so a stack of these reads
+   as one contiguous list. */
+.dashboard-section--flat {
+  box-shadow: none;
+  border: 1px solid var(--p-border);
+}
+
+/* --- Status badges — a wider palette than PA18's approve/block-only
+   .override-badge, for catalogue/account states that aren't binary. A thin
+   colour-matched border (not just a soft fill) is the shadcn/ui badge tell. --- */
+
+.status-badge {
+  font-family: var(--p-font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.status-badge--success {
+  background: var(--p-success-soft);
+  color: var(--p-success);
+  border-color: color-mix(in srgb, var(--p-success) 30%, transparent);
+}
+
+.status-badge--danger {
+  background: var(--p-danger-soft);
+  color: var(--p-danger);
+  border-color: color-mix(in srgb, var(--p-danger) 30%, transparent);
+}
+
+.status-badge--warning {
+  background: var(--p-warning-soft);
+  color: var(--p-warning);
+  border-color: color-mix(in srgb, var(--p-warning) 30%, transparent);
+}
+
+.status-badge--info {
+  background: var(--p-info-soft);
+  color: var(--p-info);
+  border-color: color-mix(in srgb, var(--p-info) 30%, transparent);
+}
+
+.status-badge--neutral {
+  background: var(--p-gray-100);
+  color: var(--p-ink-soft);
+  border-color: var(--p-border);
+}
+
+/* --- Button hierarchy for table rows: .table-btn is the ghost/secondary
+   step down from .big-button (primary, filled) — .table-btn--danger is a
+   destructive-outline variant that reads as "careful" even at rest, not
+   just on hover, the same way shadcn's destructive-ghost buttons do. --- */
+
+.table-btn-group {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.table-btn {
+  font-family: var(--p-font-body);
+  border: 1.5px solid var(--p-border);
+  background: var(--p-surface);
+  color: var(--p-ink);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+
+.table-btn:hover {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+  color: var(--p-primary);
+}
+
+.table-btn--danger {
+  border-color: color-mix(in srgb, var(--p-danger) 35%, transparent);
+  color: var(--p-danger);
+}
+
+.table-btn--danger:hover {
+  border-color: var(--p-danger);
+  background: var(--p-danger-soft);
+  color: var(--p-danger);
+}

@@ -1,0 +1,16 @@
+{
+  "name": "StoryBuddy — Book & Video Recommendations for Kids",
+  "short_name": "StoryBuddy",
+  "description": "A conversational companion that helps kids discover age-appropriate books and videos from a curated, parent-visible catalogue.",
+  "start_url": "/chat",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f3e2ba",
+  "theme_color": "#241a3d",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
+  ]
+}

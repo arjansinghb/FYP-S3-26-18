@@ -1,0 +1,84 @@
+// Firestore Security Rules — FYP-26-S3-18
+//
+// IMPORTANT CONTEXT (read this before editing): in this build, the FastAPI
+// backend (app/repositories/firestore_store.py) is the ONLY thing that talks
+// to Firestore, using the Admin SDK. The Admin SDK bypasses these rules
+// entirely — it authenticates as a service account, not as an end user.
+// So these rules are NOT the primary access control for this app; the
+// FastAPI auth dependencies (app/core/deps.py: get_current_parent,
+// get_current_child, get_current_staff, require_owner, require_admin) are.
+//
+// These rules exist as defense-in-depth for one specific scenario: if the
+// React frontend ever talks to Firestore directly with the Firebase client
+// SDK (it doesn't today — everything goes through the backend), only a
+// parent's own data should be reachable, and nothing else should be
+// reachable at all. Child and staff sessions in this build use custom JWTs
+// (see app/core/security.py), NOT Firebase Auth — so `request.auth` is never
+// populated for them, and they can never satisfy any rule below that checks
+// `request.auth.uid`. That's intentional: a child or staff member should
+// never be able to reach Firestore directly at all, only through the
+// backend's own auth layer.
+//
+// Deploy with: firebase deploy --only firestore:rules (requires the
+// Firebase CLI + a real project — see src/backend/README.md).
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // parents/{parentId} — a parent may read/update only their own document.
+    // Never creatable/deletable directly by a client (that's PA06's backend
+    // flow, which cascades to child data first — see
+    // app/repositories/children.py's cascade_delete_child).
+    match /parents/{parentId} {
+      allow read, update: if request.auth != null && request.auth.uid == parentId;
+      allow create, delete: if false;
+    }
+
+    // child_profiles/{childId} — this build stores children as a top-level
+    // collection with a parentId field (see app/repositories/base.py's
+    // docstring on why), not a true subcollection. A parent may read/update
+    // a child profile only if they own it. Never writable by anyone else —
+    // the child themselves authenticate via a custom JWT the backend issues,
+    // never via Firebase Auth, so they have no `request.auth` here at all.
+    match /child_profiles/{childId} {
+      allow read, update: if request.auth != null && request.auth.uid == resource.data.parentId;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.parentId;
+      allow delete: if false; // PA09 cascades — see cascade_delete_child, backend-only
+    }
+
+    // chat_sessions/{sessionId}, messages/{messageId}, favourites/{id},
+    // feedback/{id}, flags/{id}, content_overrides/{id} — all child-scoped
+    // data. No direct client access at all: the child has no Firebase Auth
+    // identity to check against, and a parent reading this data goes through
+    // the backend's dual-auth-checked routes (see get_child_dual_auth),
+    // which also enforce ownership before ever touching Firestore.
+    match /chat_sessions/{sessionId} { allow read, write: if false; }
+    match /messages/{messageId} { allow read, write: if false; }
+    match /favourites/{favouriteId} { allow read, write: if false; }
+    match /feedback/{feedbackId} { allow read, write: if false; }
+    match /flags/{flagId} { allow read, write: if false; }
+    match /content_overrides/{overrideId} { allow read, write: if false; }
+
+    // catalogue_items/{itemId} — the curated catalogue. Even read access is
+    // denied here: the backend's /children/{id}/... chat routes already
+    // filter to age-band-appropriate, status=="live" items and never expose
+    // the raw collection to a client. Direct reads would let a client bypass
+    // that filtering (e.g. read `pendingReview` or `rejected` items, or a
+    // book's parent-only `sourceUrl`).
+    match /catalogue_items/{itemId} { allow read, write: if false; }
+
+    // staff_accounts/{staffId}, dev_users/{id}, system_settings/{doc} —
+    // credentials and platform config. Never client-readable under any
+    // circumstances.
+    match /staff_accounts/{staffId} { allow read, write: if false; }
+    match /dev_users/{id} { allow read, write: if false; }
+    match /system_settings/{doc} { allow read, write: if false; }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

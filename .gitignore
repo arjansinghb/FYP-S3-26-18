@@ -34,6 +34,15 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Local dev data store (src/backend, used when Firebase isn't configured — see
+# agent-context/CLAUDE.md §12): dev-only fixtures/PINs/passwords, never real data.
+src/backend/data/*.json
+!src/backend/data/.gitkeep
+
+# Firebase Admin service-account credentials — never commit these.
+secrets/
+*firebase-admin*.json
+
 # Logs
 *.log
 
