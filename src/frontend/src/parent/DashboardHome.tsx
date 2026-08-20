@@ -1,7 +1,7 @@
 // PA07 (Create Child Profile) + children list (the dashboard's landing view)
 // + PA32 (Multi-Child Comparative Insights, Premium).
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/http'
 import * as parentApi from '../api/parentClient'
 import ParentLayout from './ParentLayout'
@@ -11,6 +11,7 @@ import type { ChildInsight, ChildProfilePublic } from '../types'
 
 export default function DashboardHome() {
   const { token, parent } = useParentSession()
+  const navigate = useNavigate()
   const [children, setChildren] = useState<ChildProfilePublic[] | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,11 +20,6 @@ export default function DashboardHome() {
     if (!token) return
     parentApi.listChildren(token).then(setChildren).catch(() => setChildren([]))
   }, [token])
-
-  async function refresh() {
-    if (!token) return
-    setChildren(await parentApi.listChildren(token))
-  }
 
   const limit = parent?.subscription_tier === 'premium' ? 4 : 1
   const atLimit = (children?.length ?? 0) >= limit
@@ -50,9 +46,17 @@ export default function DashboardHome() {
       {showForm && (
         <CreateChildForm
           token={token!}
-          onCreated={() => {
+          onCreated={(created) => {
             setShowForm(false)
-            refresh()
+            // dev-session 2026-08-20 bug fix: land straight on the new
+            // child's detail page (which now shows the Profile ID, see
+            // ChildDetailPage.tsx) instead of just the list — a parent who
+            // just created a profile has nowhere else to find the ID their
+            // child needs to actually log in (CH01). Reported: "can't find
+            // a way to log in to the child profile... says incorrect PIN"
+            // — the PIN was never wrong, there was just no ID to give the
+            // child in the first place.
+            navigate(`/dashboard/children/${created.id}`)
           }}
           onError={setError}
         />
@@ -146,7 +150,7 @@ function CreateChildForm({
   onError,
 }: {
   token: string
-  onCreated: () => void
+  onCreated: (created: ChildProfilePublic) => void
   onError: (msg: string | null) => void
 }) {
   const [name, setName] = useState('')
@@ -163,8 +167,8 @@ function CreateChildForm({
     }
     setBusy(true)
     try {
-      await parentApi.createChild(token, { name, dob, pin })
-      onCreated()
+      const created = await parentApi.createChild(token, { name, dob, pin })
+      onCreated(created)
     } catch (err) {
       onError(err instanceof ApiError ? err.message : 'Something went wrong — try again?')
     } finally {

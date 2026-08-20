@@ -114,6 +114,8 @@ export default function ChildDetailPage() {
         </div>
       </div>
 
+      <ProfileIdBadge childId={child.id} />
+
       {notice && <p className="notice-text">{notice}</p>}
       {error && <p className="error-text">{error}</p>}
 
@@ -220,6 +222,49 @@ export default function ChildDetailPage() {
 
 function favouritesSorted(f: Favourite[]): Favourite[] {
   return [...f].sort((a, b) => (a.saved_at < b.saved_at ? 1 : -1))
+}
+
+// CH01 (Enter Linking Code to Activate Profile) — dev-session 2026-08-20 bug
+// fix. This ID was never shown anywhere in the parent-facing UI before now
+// (only ever used internally in API calls/URLs), so a parent had no actual
+// way to give their child the "Profile ID" the child-login screen
+// (LoginScreen.tsx) asks for — every login attempt failed with "Incorrect
+// PIN" no matter how carefully the PIN was typed, because the backend
+// deliberately returns that same generic error for a wrong/unknown ID too
+// (see app/routers/children.py's child_login — doesn't reveal whether an ID
+// exists, a reasonable security choice, but a very misleading symptom when
+// there was never a way to get the *right* ID in the first place). Shown
+// persistently here (not just right after creation) since a child may need
+// to log in again later on a different device.
+function ProfileIdBadge({ childId }: { childId: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(childId)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can be denied (e.g. insecure context) — the ID is
+      // still selectable/readable as plain text either way.
+    }
+  }
+
+  return (
+    <section className="dashboard-section dashboard-section--warning">
+      <h2>Profile ID — give this to your child</h2>
+      <p className="dashboard-note">
+        On your child's device, they'll enter this Profile ID plus the PIN you set for them at{' '}
+        <code>/chat</code> to log in (first time and every time after).
+      </p>
+      <div className="inline-form">
+        <code className="verification-link-preview">{childId}</code>
+        <button className="big-button" type="button" onClick={handleCopy}>
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+    </section>
+  )
 }
 
 // PA21 — Adjust Safety Settings. Actually enforced at recommend-time on the
