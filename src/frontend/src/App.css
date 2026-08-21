@@ -87,7 +87,7 @@
 /* ---------- avatar animations ---------- */
 
 .avatar-shadow { fill: rgba(120, 80, 200, 0.15); }
-.avatar-fill   { fill: #9b6bff; }
+.avatar-fill   { fill: var(--avatar-color, #9b6bff); }
 .avatar-cheek  { fill: #ff9ecb; opacity: 0.75; }
 .avatar-eye    { fill: #2a2440; }
 .avatar-glint  { fill: #ffffff; }

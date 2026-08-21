@@ -8,7 +8,16 @@
 // This is the "face" the LLM will later speak through. Right now the words
 // are hardcoded in the demo; later they'll come from the FastAPI backend.
 
-export default function Avatar({ speaking = false, mood = 'idle' }) {
+// Colour variants the child can choose (CH19/CH20).
+export const AVATAR_COLORS = {
+  purple: '#9b6bff',
+  blue: '#5a9bff',
+  green: '#4bc98a',
+  pink: '#ff7fb0',
+  orange: '#ffa94d',
+}
+
+export default function Avatar({ speaking = false, mood = 'idle', color = 'purple' }) {
   const className = [
     'avatar',
     speaking ? 'is-speaking' : '',
@@ -17,9 +26,12 @@ export default function Avatar({ speaking = false, mood = 'idle' }) {
     .filter(Boolean)
     .join(' ')
 
+  const fill = AVATAR_COLORS[color] || AVATAR_COLORS.purple
+
   return (
     <svg
       className={className}
+      style={{ '--avatar-color': fill }}
       viewBox="0 0 200 200"
       width="220"
       height="220"
