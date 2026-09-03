@@ -5,7 +5,7 @@ import RecommendationCard from '../components/RecommendationCard'
 import ChildLogin from './ChildLogin'
 import {
   askPip, getChildToken, getChildMe, childLogout, setChildAvatar,
-  saveFavourite, myFavourites, sendFeedback,
+  saveFavourite, myFavourites, sendFeedback, startChatSession, endChatSession,
 } from '../api'
 import { getReply } from '../placeholderBot'
 import '../App.css'
@@ -30,14 +30,33 @@ export default function ChildChat() {
 
 function Experience({ child, setChild, onLogout }) {
   const [status, setStatus] = useState('idle') // idle | listening | thinking | speaking
-  const [caption, setCaption] = useState(`Hi ${child.name}! Tap the button and tell me what you'd like to read or watch!`)
+  const [caption, setCaption] = useState(`Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch!`)
   const [recs, setRecs] = useState([])
   const [lastMessage, setLastMessage] = useState('')
   const [overlay, setOverlay] = useState(null)   // 'favourites' | 'avatar' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
   const [video, setVideo] = useState(null)       // a rec item
+  const [typed, setTyped] = useState('')
+  const [sessionId, setSessionId] = useState(null)  // CH04 — ties messages together for real conversation memory (CH07)
   const recognitionRef = useRef(null)
+
+  // CH04 — a chat session starts once, when the child reaches this screen
+  // (already-logged-in trigger, per the URS). Its id rides along on every
+  // message so the backend can hand the brain real prior-turn context.
+  useEffect(() => {
+    let cancelled = false
+    startChatSession().then((s) => { if (!cancelled) setSessionId(s.id) }).catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // CH05 — ends the session on logout ("before handing back a shared
+  // device") rather than leaving it open forever.
+  function logoutAndEndSession() {
+    if (sessionId) endChatSession(sessionId).catch(() => {})
+    onLogout()
+  }
 
   const supported = Boolean(SpeechRecognition) && 'speechSynthesis' in window
   const color = child.avatar in AVATAR_COLORS ? child.avatar : 'purple'
@@ -66,7 +85,7 @@ function Experience({ child, setChild, onLogout }) {
     setCaption('Hmm, let me think…')
     setLastMessage(message)
     try {
-      const res = await askPip(message)
+      const res = await askPip(message, sessionId)
       setRecs(res.recommendations || [])
       speak(res.reply)
     } catch {
@@ -100,6 +119,15 @@ function Experience({ child, setChild, onLogout }) {
     }
     rec.onend = () => setStatus((s) => (s === 'listening' ? 'idle' : s))
     rec.start()
+  }
+
+  function submitTyped(e) {
+    e.preventDefault()
+    const message = typed.trim()
+    if (!message) return
+    setTyped('')
+    recognitionRef.current?.stop?.()
+    ask(message)
   }
 
   useEffect(() => {
@@ -136,7 +164,7 @@ function Experience({ child, setChild, onLogout }) {
         <div className="bar-btns">
           <button className="pill" onClick={openFavourites}>❤️ Favourites</button>
           <button className="pill" onClick={() => setOverlay('avatar')}>🎨 Avatar</button>
-          <button className="pill" onClick={onLogout}>Log out</button>
+          <button className="pill" onClick={logoutAndEndSession}>Log out</button>
         </div>
       </div>
 
@@ -145,18 +173,39 @@ function Experience({ child, setChild, onLogout }) {
           <Avatar speaking={speaking} mood={speaking ? 'idle' : 'happy'} color={color} />
           <p className={`caption ${listening ? 'caption-listening' : ''}`}>{caption}</p>
 
-          {!supported && (
-            <p className="caption">Please open this page in <b>Chrome</b> or <b>Edge</b> to talk to me. 😊</p>
+          {supported ? (
+            <button
+              className={`talk ${listening ? 'talk-listening' : ''}`}
+              onClick={startListening}
+              disabled={status === 'thinking' || status === 'speaking'}
+            >
+              <span className="talk-icon" aria-hidden="true">🎤</span>
+              <span>{buttonLabel}</span>
+            </button>
+          ) : (
+            <p className="caption">This browser can't listen for talking — no worries, you can still type below! 😊</p>
           )}
 
-          <button
-            className={`talk ${listening ? 'talk-listening' : ''}`}
-            onClick={startListening}
-            disabled={!supported || status === 'thinking' || status === 'speaking'}
-          >
-            <span className="talk-icon" aria-hidden="true">🎤</span>
-            <span>{buttonLabel}</span>
-          </button>
+          {supported && <p className="or-divider">or type instead</p>}
+
+          <form className="type-row" onSubmit={submitTyped}>
+            <input
+              type="text"
+              className="type-input"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="Type what you'd like to read or watch…"
+              disabled={status === 'thinking' || status === 'speaking'}
+              aria-label="Type a message to Pip"
+            />
+            <button
+              type="submit"
+              className="type-send"
+              disabled={!typed.trim() || status === 'thinking' || status === 'speaking'}
+            >
+              Send
+            </button>
+          </form>
         </div>
       </div>
 
@@ -213,6 +262,7 @@ function Experience({ child, setChild, onLogout }) {
       {/* CH14 — content details */}
       {details && (
         <Overlay title={`${details.type === 'book' ? '📚' : '🎬'} ${details.title}`} onClose={() => setDetails(null)}>
+          {details.thumbnail && <img className="rec-cover" src={details.thumbnail} alt="" />}
           <p>{details.description || details.explanation}</p>
           <p className="muted">Why Pip picked it: {details.explanation}</p>
         </Overlay>

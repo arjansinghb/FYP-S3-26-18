@@ -1,0 +1,13 @@
+{
+  "name": "Pip — Reading Buddy",
+  "short_name": "Pip",
+  "description": "Safe, age-appropriate book & video recommendations for kids, through conversation with Pip.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6efff",
+  "theme_color": "#6a2ea0",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

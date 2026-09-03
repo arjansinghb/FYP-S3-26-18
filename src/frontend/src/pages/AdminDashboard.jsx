@@ -188,6 +188,7 @@ const CONFIG_SECTIONS = [
     { name: 'firebase_enabled', label: 'Firebase enabled', type: 'bool' },
     { name: 'google_books_enabled', label: 'Google Books enabled', type: 'bool' },
     { name: 'youtube_enabled', label: 'YouTube enabled', type: 'bool' },
+    { name: 'youtube_channel_allowlist', label: 'YouTube curated channel allowlist (comma-separated channel IDs — empty = open search, still moderator-gated)', type: 'list' },
   ] },
   { key: 'compliance', title: 'Compliance & Data Retention (SA10)', fields: [
     { name: 'data_retention_days', label: 'Data retention (days)', type: 'number' },
@@ -227,11 +228,39 @@ function ConfigCard({ section }) {
   return (
     <div className="card">
       <h3>{section.title}</h3>
+      {section.key === 'compliance' && (
+        <div
+          className="card"
+          style={{
+            margin: '0 0 8px', padding: 12,
+            background: values.openai_zdr_status === 'confirmed' ? '#dcf6e8' : '#fdeef4',
+          }}
+        >
+          <p style={{ margin: 0 }}>
+            <b>OpenAI Zero Data Retention: {values.openai_zdr_status}</b>
+          </p>
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            {values.openai_zdr_status === 'confirmed'
+              ? 'A real ZDR agreement with OpenAI is in place.'
+              : values.openai_zdr_status === 'accepted_risk'
+                ? "The team has knowingly decided to proceed without ZDR for now — see URS §2.5."
+                : "Real child chat text is sent to OpenAI's standard API (30-day retention, no ZDR agreement). Set via ZDR_STATUS in the backend .env — this is a real compliance/business decision, not something to toggle here."}
+          </p>
+        </div>
+      )}
       {section.fields.map((f) => (
         f.type === 'bool' ? (
           <label key={f.name} className="toggle">
             <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
             {f.label}
+          </label>
+        ) : f.type === 'list' ? (
+          <label key={f.name}>{f.label}
+            <input
+              type="text"
+              value={(values[f.name] ?? []).join(', ')}
+              onChange={(e) => set(f.name, e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
+            />
           </label>
         ) : (
           <label key={f.name}>{f.label}

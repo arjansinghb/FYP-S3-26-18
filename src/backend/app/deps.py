@@ -19,6 +19,11 @@ def current_account(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> di
     acc = db.accounts.get(acc_id)
     if not acc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not found")
+    # PA25 — lazily downgrade a scheduled-cancellation account once its date
+    # has passed; runs on every authenticated request so no cron is needed.
+    db.apply_pending_cancellation(acc)
+    # PA30 — same lazy pattern for scheduled child-data deletions.
+    db.apply_due_deletions()
     return acc
 
 

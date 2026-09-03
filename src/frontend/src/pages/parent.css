@@ -128,6 +128,7 @@ button.ghost:hover:not(:disabled) { background: #f6efff; }
 button.danger { background: #fff; color: #c62b6d; border: 2px solid #f3c6da; }
 button.danger:hover:not(:disabled) { background: #fdeef4; }
 button.small { font-size: 14px; padding: 8px 14px; }
+button.ghost.on { background: #6a2ea0; color: #fff; border-color: #6a2ea0; }
 
 /* tabs (moderator console) */
 .tabs { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }

@@ -46,6 +46,14 @@
   background: #fff; border: 2px solid #ecdfff; border-radius: 16px; padding: 16px;
   box-shadow: 0 6px 16px rgba(120, 80, 200, 0.08); text-align: left;
 }
+.rec-cover {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 10px;
+  background: #f6efff;
+}
 .rec-title { margin: 0 0 4px; color: #4a2470; font-size: 18px; }
 .rec-why { margin: 0 0 12px; color: #6b6080; font-size: 15px; }
 .rec-btns { display: flex; flex-wrap: wrap; gap: 8px; }

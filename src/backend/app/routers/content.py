@@ -3,11 +3,16 @@
 Browse (CM13, also used by the recommendation engine) is open to any logged-in
 account. Add/edit/remove/approve/reject (CM03-CM09) require the moderator role.
 
-LATER: the catalogue is populated from Google Books + YouTube (curated
-allowlist); this manual CRUD stays as the moderator's control surface.
+The catalogue can be populated two ways: manual CRUD below (moderator typed it
+in themselves, trusted at entry time -> auto-"approved"), or search + import
+from Google Books/YouTube (app/content_sources.py) -> lands as "pending" so it
+still goes through an explicit approve/reject (CM07/CM08), same as any other
+new submission. Search results are never recommendable on their own — only
+`/approve`'d content ever reaches app/brain.py.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .. import content_sources, embeddings
 from ..deps import current_account, require_role
 from ..models import ContentIn, ContentOut
 from ..storage import db
@@ -17,6 +22,17 @@ router = APIRouter(prefix="/api/content", tags=["content"])
 
 def _out(item: dict) -> ContentOut:
     return ContentOut(**item)
+
+
+def _refresh_embedding(item: dict) -> None:
+    """URS Design Constraint 3's "embedding-based content matching" half —
+    computed once here (approve/edit-while-approved), not at chat time, so
+    app/brain.py's retrieval step is just a similarity lookup, no live API
+    call per catalogue item per message."""
+    if item["status"] != "approved":
+        return
+    text = f"{item['title']}. {item.get('description', '')}"
+    db.set_embedding(item["id"], embeddings.embed_text(text))
 
 
 @router.get("", response_model=list[ContentOut])
@@ -46,6 +62,41 @@ def browse(
 @router.post("", response_model=ContentOut, status_code=201)
 def add_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))):
     item = db.add_content(body.model_dump(), status="approved")
+    _refresh_embedding(item)
+    return _out(item)
+
+
+# ---------- CM03/CM06: search + import from Google Books / YouTube ----------
+
+@router.get("/search/books")
+def search_books(
+    q: str = Query(..., min_length=1),
+    start_index: int = Query(0, ge=0),
+    mod: dict = Depends(require_role("moderator")),
+):
+    """Live Google Books search — import candidates only, nothing here is
+    recommendable until a moderator explicitly imports (-> pending) and
+    approves (CM07) it. Empty list (not an error) if no API key is configured.
+    `start_index` pages through results (see content_sources.search_books)."""
+    return content_sources.search_books(q, start_index=start_index)
+
+
+@router.get("/search/videos")
+def search_videos(q: str = Query(..., min_length=1), mod: dict = Depends(require_role("moderator"))):
+    """Live YouTube Data API search — same import-candidate-only rule as
+    search/books above."""
+    return content_sources.search_videos(q)
+
+
+@router.post("/import", response_model=ContentOut, status_code=201)
+def import_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))):
+    """Takes a search/books or search/videos result the moderator picked
+    (title/description/external_ref carried over) plus the age_bands/genres
+    they assign — that assignment is a real editorial judgement call a human
+    makes here, not something inferred from the API response. Lands as
+    "pending", same as any other new submission (CM06), until explicitly
+    approved via POST /{id}/approve (CM07/CM08 still applies)."""
+    item = db.add_content(body.model_dump(), status="pending")
     return _out(item)
 
 
@@ -55,6 +106,7 @@ def edit_entry(content_id: str, body: ContentIn, mod: dict = Depends(require_rol
     if not item:
         raise HTTPException(404, "Content not found")
     item.update(body.model_dump())
+    _refresh_embedding(item)  # title/description may have changed
     return _out(item)
 
 
@@ -71,6 +123,7 @@ def approve(content_id: str, mod: dict = Depends(require_role("moderator"))):
     if not item:
         raise HTTPException(404, "Content not found")
     item["status"] = "approved"
+    _refresh_embedding(item)
     return _out(item)
 
 

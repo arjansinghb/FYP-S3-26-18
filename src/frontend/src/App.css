@@ -77,6 +77,56 @@
   100% { box-shadow: 0 0 0 0 rgba(224, 69, 155, 0); }
 }
 
+/* "or type instead" divider between the mic button and the text row */
+.or-divider {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #b3a8ca;
+}
+
+/* typed-message alternative to the mic button */
+.type-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+}
+.type-input {
+  flex: 1;
+  font: inherit;
+  font-size: 17px;
+  padding: 14px 18px;
+  border-radius: 999px;
+  border: 2px solid #e6d8ff;
+  outline: none;
+  min-width: 0;
+}
+.type-input:focus {
+  border-color: #c9a7ff;
+}
+.type-input:disabled {
+  opacity: 0.6;
+}
+.type-send {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0 22px;
+  border: none;
+  border-radius: 999px;
+  background: #6a2ea0;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.type-send:hover:not(:disabled) {
+  background: #7d3cbd;
+}
+.type-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .app-footer {
   margin-top: 20px;
   text-align: center;

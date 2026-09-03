@@ -1,9 +1,23 @@
 # Backend — Pip API (FastAPI)
 
-The "engine room" for FYP-26-S3-18. Runs **with no API keys and no database
-setup** using a placeholder brain and in-memory storage, so anyone on the team
-can start it in one command. Real services (LLM provider, Firebase, content
-APIs) plug in later at single, isolated swap points.
+The "engine room" for FYP-26-S3-18. Still runs **with no API keys and no
+database setup** using a placeholder brain and in-memory storage, so anyone on
+the team can start it in one command — but now also picks up real services
+automatically the moment their keys are present, at the same two isolated swap
+points the file layout was always meant for:
+
+- **`app/brain.py`** — `OpenAIBrain` calls the real OpenAI API once
+  `OPENAI_API_KEY` is set (`BRAIN_PROVIDER` auto-detects this — see
+  `.env.example`), constrained to only ever recommend items from the
+  catalogue it's given (never invents a title).
+- **`app/storage.py` + `app/firestore_store.py`** — once `FIREBASE_PROJECT_ID`
+  + a service-account file are configured, the in-memory store is loaded from
+  and saved back to Firestore (a coarse whole-state snapshot under a
+  `prototype_state` collection, kept deliberately separate from the other
+  branch's schema in the same project — see `firestore_store.py`'s docstring
+  for why this isn't fine-grained per-record Firestore access).
+
+Both fall back to the original zero-setup behaviour with no keys configured.
 
 ## Run it
 
@@ -33,13 +47,16 @@ uvicorn app.main:app --reload
 ## Key design choices
 
 - **Provider-agnostic brain** (`app/brain.py`): the only place the AI lives.
-  Swap `BRAIN_PROVIDER` from `placeholder` to `openai`/`anthropic` later —
-  nothing else changes.
-- **Storage is isolated** (`app/storage.py`): in-memory dicts today, Firebase
-  later, without touching the routers.
-- Data resets on restart (in-memory) — expected for a prototype.
+  `BRAIN_PROVIDER` picks `placeholder` or `openai` — nothing else changes.
+- **Storage is isolated** (`app/storage.py` + `app/firestore_store.py`):
+  in-memory dicts either way, optionally snapshotted to/from Firestore,
+  without touching the routers.
+- With no Firebase configured, data still resets on restart (in-memory) —
+  expected for a quick local demo.
 
-A demo **moderator** account is seeded: `moderator@pip.local` / `moderator123`.
+A demo **moderator** account is seeded: `moderator@pip.local` / `moderator123`
+(and an admin: `admin@pip.local` / `admin123`) — persisted like everything
+else once Firestore is configured, so these keep working across restarts too.
 
 ## Not built yet (deliberately out of the backbone)
 

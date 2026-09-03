@@ -63,18 +63,42 @@ export async function getPublicPlans() {
 // ----- child chat -----
 // Returns the full result { reply, recommendations }. If a child is logged in,
 // the child token is attached so replies use their age band + safety settings
-// and the conversation is logged for the parent.
-export async function askPip(message) {
-  return request('/api/chat', { method: 'POST', body: { message }, auth: 'child' })
+// and the conversation is logged for the parent. `sessionId` (CH04/05) ties
+// this message to a chat session so the backend can pass real conversation
+// history back to the brain on the next turn (CH07) — see ChatScreen's
+// session start/end calls.
+export async function askPip(message, sessionId) {
+  return request('/api/chat', { method: 'POST', body: { message, session_id: sessionId }, auth: 'child' })
 }
 
 // ----- child session (CH01/CH02 login, CH03 logout) -----
+// CH01: this device hasn't been activated for a child yet -> full code+PIN.
+// CH02: it has -> the device remembers which child (id only, nothing
+// secret) and the login screen only asks for the PIN.
+const DEVICE_CHILD_KEY = 'pip_activated_child_id'
+export function getActivatedChildId() {
+  return localStorage.getItem(DEVICE_CHILD_KEY)
+}
+export function forgetDevice() {
+  localStorage.removeItem(DEVICE_CHILD_KEY)
+}
+
 export async function linkChild(code, pin) {
   const data = await request('/api/children/link', { method: 'POST', body: { code, pin } })
   setChildToken(data.token)
+  localStorage.setItem(DEVICE_CHILD_KEY, data.child.id)
+  return data.child
+}
+export async function pinLogin(childId, pin) {
+  const data = await request(`/api/children/${childId}/login`, { method: 'POST', body: { pin } })
+  setChildToken(data.token)
+  localStorage.setItem(DEVICE_CHILD_KEY, data.child.id)
   return data.child
 }
 export function childLogout() {
+  // CH03: ends the session but the device stays "activated" (CH02's own
+  // precondition) — logging out returns to the PIN-only screen, not all
+  // the way back to code entry. Use forgetDevice() separately for that.
   setChildToken(null)
 }
 export async function getChildMe() {
@@ -99,7 +123,10 @@ export async function sendFeedback(contentId, liked) {
 export async function signup(email, password, name) {
   const data = await request('/api/auth/signup', { method: 'POST', body: { email, password, name } })
   setToken(data.token)
-  return data.account
+  // verify_token is dev-mode only (see VerifyRequestOut on the backend — no
+  // email service is configured, so the token comes back here instead of
+  // being emailed). Callers that don't need it can just ignore it.
+  return { ...data.account, verify_token: data.verify_token }
 }
 export async function login(email, password) {
   const data = await request('/api/auth/login', { method: 'POST', body: { email, password } })
@@ -124,6 +151,77 @@ export async function deleteAccount() {
   return request('/api/auth/me', { method: 'DELETE', auth: true })
 }
 
+// ----- UV06 email verification / PA03 password reset -----
+export async function requestVerification() {
+  return request('/api/auth/verify/request', { method: 'POST', auth: true })
+}
+export async function confirmVerification(token) {
+  return request('/api/auth/verify/confirm', { method: 'POST', body: { token } })
+}
+export async function requestPasswordReset(email) {
+  return request('/api/auth/reset-password/request', { method: 'POST', body: { email } })
+}
+export async function confirmPasswordReset(token, newPassword) {
+  return request('/api/auth/reset-password/confirm', { method: 'POST', body: { token, new_password: newPassword } })
+}
+
+// ----- PA28 consent / PA29 privacy / PA30 data deletion -----
+export async function getConsent() {
+  return request('/api/account/consent', { auth: true })
+}
+export async function giveConsent(password) {
+  return request('/api/account/consent', { method: 'POST', body: { password }, auth: true })
+}
+export async function getPrivacySettings() {
+  return request('/api/account/privacy-settings', { auth: true })
+}
+export async function updatePrivacySettings(retentionPreference) {
+  return request('/api/account/privacy-settings', { method: 'PATCH', body: { retention_preference: retentionPreference }, auth: true })
+}
+export async function requestChildDataDeletion(childId) {
+  return request(`/api/account/children/${childId}/data-deletion`, { method: 'POST', auth: true })
+}
+export async function listChildDataDeletions(childId) {
+  return request(`/api/account/children/${childId}/data-deletion`, { auth: true })
+}
+export async function cancelChildDataDeletion(requestId) {
+  return request(`/api/account/data-deletion/${requestId}/cancel`, { method: 'POST', auth: true })
+}
+
+// ----- PA20/22 notifications -----
+export async function getNotificationPreferences() {
+  return request('/api/account/notification-preferences', { auth: true })
+}
+export async function updateNotificationPreferences(channels) {
+  return request('/api/account/notification-preferences', { method: 'PATCH', body: { channels }, auth: true })
+}
+export async function listNotifications() {
+  return request('/api/account/notifications', { auth: true })
+}
+export async function markNotificationRead(id) {
+  return request(`/api/account/notifications/${id}/read`, { method: 'POST', auth: true })
+}
+
+// ----- PA23-27 billing (simulated) -----
+export async function getSubscriptionStatus() {
+  return request('/api/account/subscription', { auth: true })
+}
+export async function subscribePremium(billingCycle, paymentMethod) {
+  return request('/api/account/subscribe', { method: 'POST', body: { billing_cycle: billingCycle, payment_method: paymentMethod }, auth: true })
+}
+export async function cancelPremium() {
+  return request('/api/account/cancel-premium', { method: 'POST', auth: true })
+}
+export async function resumePremium() {
+  return request('/api/account/resume-premium', { method: 'POST', auth: true })
+}
+export async function updatePaymentMethod(brand, last4) {
+  return request('/api/account/payment-method', { method: 'PUT', body: { brand, last4 }, auth: true })
+}
+export async function getBillingHistory() {
+  return request('/api/account/billing-history', { auth: true })
+}
+
 // ----- child profiles -----
 export async function listChildren() {
   return request('/api/children', { auth: true })
@@ -139,6 +237,28 @@ export async function deleteChild(id) {
 }
 export async function updateChildSettings(id, settings) {
   return request(`/api/children/${id}/settings`, { method: 'PUT', body: settings, auth: true })
+}
+export async function unlockChild(id) {
+  return request(`/api/children/${id}/unlock`, { method: 'POST', auth: true })
+}
+
+// ----- PA18 per-child content overrides -----
+export async function setContentOverride(childId, contentId, action) {
+  return request(`/api/children/${childId}/content-overrides/${contentId}`, { method: 'PUT', body: { action }, auth: true })
+}
+export async function listContentOverrides(childId) {
+  return request(`/api/children/${childId}/content-overrides`, { auth: true })
+}
+export async function clearContentOverride(childId, contentId) {
+  return request(`/api/children/${childId}/content-overrides/${contentId}`, { method: 'DELETE', auth: true })
+}
+
+// ----- PA31/32 premium insights -----
+export async function childTrends(id) {
+  return request(`/api/children/${id}/trends`, { auth: true })
+}
+export async function compareChildren() {
+  return request('/api/children/compare', { auth: true })
 }
 
 // ----- moderator: catalogue (CM03-CM10, CM13) -----
@@ -216,4 +336,31 @@ export async function reportContent(id, contentId, reason) {
     body: { content_id: contentId, reason },
     auth: true,
   })
+}
+
+// ----- PA17: reported-content status -----
+export async function childReports(id) {
+  return request(`/api/children/${id}/reports`, { auth: true })
+}
+export async function myReports() {
+  return request('/api/children/reports', { auth: true })
+}
+
+// ----- CH04/05: chat session lifecycle -----
+export async function startChatSession() {
+  return request('/api/chat/sessions', { method: 'POST', auth: 'child' })
+}
+export async function endChatSession(id) {
+  return request(`/api/chat/sessions/${id}/end`, { method: 'POST', auth: 'child' })
+}
+
+// ----- CM03/CM06: search + import from Google Books/YouTube -----
+export async function searchBooks(q) {
+  return request(`/api/content/search/books?q=${encodeURIComponent(q)}`, { auth: true })
+}
+export async function searchVideos(q) {
+  return request(`/api/content/search/videos?q=${encodeURIComponent(q)}`, { auth: true })
+}
+export async function importContent(payload) {
+  return request('/api/content/import', { method: 'POST', body: payload, auth: true })
 }

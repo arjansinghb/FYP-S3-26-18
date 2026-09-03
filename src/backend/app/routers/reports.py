@@ -39,4 +39,11 @@ def resolve_report(report_id: str, body: ResolveReport, mod: dict = Depends(requ
         content = db.content.get(report["content_id"])
         if content:
             content["status"] = "rejected"
-    return _report_out(report)
+    out = _report_out(report)
+    # PA17's status view + PA20's notification are two different ways of
+    # surfacing the same event — fire both from the one place it happens.
+    db.add_notification(
+        report["parent_id"], "flag_resolved", "Your report has been reviewed",
+        f'"{out.content_title}" — {("removed from the catalogue" if body.action == "remove" else "reviewed, no change made")}.',
+    )
+    return out

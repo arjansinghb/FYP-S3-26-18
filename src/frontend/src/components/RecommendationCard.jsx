@@ -17,6 +17,7 @@ export default function RecommendationCard({ item, onDetails, onWatch, onSave, o
 
   return (
     <div className="rec-card">
+      {item.thumbnail && <img className="rec-cover" src={item.thumbnail} alt="" />}
       <h3 className="rec-title">{item.type === 'book' ? '📚' : '🎬'} {item.title}</h3>
       <p className="rec-why">{item.explanation}</p>
       <div className="rec-btns">
