@@ -4,15 +4,18 @@
 // agent-context/CLAUDE.md §2.1/§9) — never a separate results page.
 import { useState } from 'react'
 import { giveFeedback, saveFavourite } from '../api/client'
+import { SpeakerIcon } from '../icons'
 import type { RecommendationOut } from '../types'
 
 interface Props {
   rec: RecommendationOut
   childId: string
   token: string
+  onSpeak?: (text: string) => void
+  canSpeak?: boolean
 }
 
-export default function RecommendationCard({ rec, childId, token }: Props) {
+export default function RecommendationCard({ rec, childId, token, onSpeak, canSpeak }: Props) {
   const [saved, setSaved] = useState(false)
   const [feedback, setFeedback] = useState<'liked' | 'disliked' | null>(null)
   const [busy, setBusy] = useState(false)
@@ -41,9 +44,7 @@ export default function RecommendationCard({ rec, childId, token }: Props) {
   }
 
   function handleListen() {
-    if (!('speechSynthesis' in window)) return
-    const utterance = new SpeechSynthesisUtterance(`${rec.title}. ${rec.reason}`)
-    window.speechSynthesis.speak(utterance)
+    onSpeak?.(`${rec.title}. ${rec.reason}`)
   }
 
   const isPlayableVideo = rec.type === 'video' && !!rec.embed_url
@@ -76,9 +77,9 @@ export default function RecommendationCard({ rec, childId, token }: Props) {
             <span className="rec-action-icon">{saved ? '✅' : '⭐'}</span>
             <span>{saved ? 'Saved' : 'Save'}</span>
           </button>
-          {'speechSynthesis' in window && (
+          {canSpeak && (
             <button className="rec-action rec-action--secondary" onClick={handleListen}>
-              <span className="rec-action-icon">🔊</span>
+              <span className="rec-action-icon"><SpeakerIcon /></span>
               <span>Listen</span>
             </button>
           )}

@@ -5,15 +5,20 @@
 import { useState } from 'react'
 import AvatarPicker from './components/AvatarPicker'
 import ChatScreen from './components/ChatScreen'
+import FavouritesShelf from './components/FavouritesShelf'
 import LoginScreen from './components/LoginScreen'
 import { useChildSession } from './state/useChildSession'
 import type { ChildLoginResult, ChildProfilePublic } from './types'
 
-type Screen = 'login' | 'avatar' | 'chat'
+type Screen = 'login' | 'avatar' | 'chat' | 'favourites'
 
 export default function ChildApp() {
   const { token, profile, isLoggedIn, login, updateProfile, logout } = useChildSession()
   const [forceAvatarPicker, setForceAvatarPicker] = useState(false)
+  // CH16 "My Favourites" (dev-session 2026-08-21) — a peer screen to chat,
+  // not a route change (this app deliberately doesn't use react-router
+  // internally, see the module docstring above).
+  const [showFavourites, setShowFavourites] = useState(false)
 
   function handleLogin(result: ChildLoginResult) {
     login(result)
@@ -31,7 +36,7 @@ export default function ChildApp() {
 
   let screen: Screen = 'login'
   if (isLoggedIn && profile) {
-    screen = forceAvatarPicker || !profile.avatar_id ? 'avatar' : 'chat'
+    screen = forceAvatarPicker ? 'avatar' : !profile.avatar_id ? 'avatar' : showFavourites ? 'favourites' : 'chat'
   }
 
   return (
@@ -40,12 +45,16 @@ export default function ChildApp() {
       {screen === 'avatar' && token && profile && (
         <AvatarPicker token={token} profile={profile} onDone={handleAvatarDone} />
       )}
+      {screen === 'favourites' && token && profile && (
+        <FavouritesShelf token={token} childId={profile.id} onBack={() => setShowFavourites(false)} />
+      )}
       {screen === 'chat' && token && profile && (
         <ChatScreen
           token={token}
           profile={profile}
           onLogout={logout}
           onEditAvatar={() => setForceAvatarPicker(true)}
+          onShowFavourites={() => setShowFavourites(true)}
         />
       )}
     </div>

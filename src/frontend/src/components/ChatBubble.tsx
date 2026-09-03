@@ -17,6 +17,8 @@ interface Props {
   token: string
   onRequestAlternative?: () => void
   alternativeLoading?: boolean
+  onSpeak?: (text: string) => void
+  canSpeak?: boolean
 }
 
 export default function ChatBubble({
@@ -26,6 +28,8 @@ export default function ChatBubble({
   token,
   onRequestAlternative,
   alternativeLoading,
+  onSpeak,
+  canSpeak,
 }: Props) {
   const isBot = message.sender === 'bot'
   const avatar = getAvatar(avatarId)
@@ -43,7 +47,14 @@ export default function ChatBubble({
         {message.recommendations && message.recommendations.length > 0 && (
           <div className="rec-card-list">
             {message.recommendations.map((rec) => (
-              <RecommendationCard key={rec.item_id} rec={rec} childId={childId} token={token} />
+              <RecommendationCard
+                key={rec.item_id}
+                rec={rec}
+                childId={childId}
+                token={token}
+                onSpeak={onSpeak}
+                canSpeak={canSpeak}
+              />
             ))}
             {message.canShowAlternative && (
               <button className="pill-button pill-button--wide" onClick={onRequestAlternative} disabled={alternativeLoading}>

@@ -14,6 +14,8 @@ from app.repositories.store import COLLECTION_CHILD_PROFILES, get_store
 def _to_doc(profile: ChildProfile) -> dict:
     doc = profile.model_dump()
     doc["dob"] = profile.dob.isoformat()  # keep as ISO string — Firestore's Python client doesn't accept bare `date`
+    if profile.last_active_date is not None:
+        doc["last_active_date"] = profile.last_active_date.isoformat()
     return doc
 
 
@@ -21,6 +23,8 @@ def _from_doc(doc: dict) -> ChildProfile:
     data = dict(doc)
     if isinstance(data.get("dob"), str):
         data["dob"] = date.fromisoformat(data["dob"])
+    if isinstance(data.get("last_active_date"), str):
+        data["last_active_date"] = date.fromisoformat(data["last_active_date"])
     return ChildProfile(**data)
 
 
@@ -79,6 +83,38 @@ def mark_first_login(child_id: str) -> None:
     """CH01 — Enter Linking Code to Activate Profile: recorded the first time a
     child profile's PIN is successfully entered."""
     get_store().update(COLLECTION_CHILD_PROFILES, child_id, {"first_login_at": datetime.now(timezone.utc)})
+
+
+def record_daily_activity(child_id: str, *, today: date | None = None) -> ChildProfile | None:
+    """dev-session 2026-08-21 — engagement feature (not a PRD/URS use case):
+    updates the streak counters once per calendar day. Called from
+    app/routers/children.py's child_login on every CH01/CH02 login, not
+    every message, so a child bouncing in and out of a chat session all
+    afternoon doesn't inflate anything — only the *day* matters.
+
+    Rules: no prior activity, or the last active day was yesterday -> streak
+    continues/starts (+1). Already active today -> no-op (idempotent within a
+    day, so re-logging-in doesn't double count). Any bigger gap -> streak
+    resets to 1 (today itself still counts as day one of a new streak, not
+    zero — a lapsed streak isn't punished further than losing the old count).
+    """
+    child = get_child(child_id)
+    if child is None:
+        return None
+    today = today or date.today()
+    if child.last_active_date == today:
+        return child  # already recorded today — idempotent
+    if child.last_active_date is not None and (today - child.last_active_date).days == 1:
+        new_streak = child.current_streak + 1
+    else:
+        new_streak = 1
+    new_longest = max(child.longest_streak, new_streak)
+    get_store().update(
+        COLLECTION_CHILD_PROFILES,
+        child_id,
+        {"current_streak": new_streak, "longest_streak": new_longest, "last_active_date": today.isoformat()},
+    )
+    return get_child(child_id)
 
 
 def adjust_favourites_count(child_id: str, delta: int) -> None:

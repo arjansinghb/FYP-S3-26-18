@@ -18,6 +18,10 @@ export interface ChildProfilePublic {
   created_at: string
   favourites_count: number
   safety_settings: SafetySettings
+  // dev-session 2026-08-21 — engagement streak, not a PRD/URS field. See
+  // backend's app/repositories/children.py record_daily_activity docstring.
+  current_streak: number
+  longest_streak: number
 }
 
 export interface ChildLoginResult {
@@ -75,6 +79,12 @@ export interface Favourite {
   child_id: string
   catalogue_item_id: string
   saved_at: string
+  // dev-session 2026-08-21 — enriched from the catalogue item server-side
+  // (see backend's FavouriteWithItem); null if that item was since removed.
+  title: string | null
+  type: 'book' | 'video' | null
+  synopsis: string | null
+  embed_url: string | null
 }
 
 export interface ApiErrorBody {

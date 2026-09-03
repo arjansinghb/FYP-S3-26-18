@@ -204,8 +204,16 @@ button {
   min-height: 100svh;
   display: flex;
   flex-direction: column;
-  max-width: 720px;
-  margin: 0 auto;
+  /* dev-session 2026-08-21: this used to cap the *entire* child app
+     (login, avatar picker, chat — everything ChildApp.tsx renders) at
+     720px, so on any screen wider than that it looked like a small boxed
+     column with a lot of dead space either side. Login/avatar-picker still
+     want that cozy centered-form width (see `.screen` below, which now
+     carries the same 720px cap instead) but the chat screen itself should
+     fill the real viewport — see `.chat-header`/`.chat-companion`/
+     `.chat-scroll`/`.chat-input-row` below for where its own, wider
+     (900px) reading-width cap lives instead. */
+  width: 100%;
 }
 
 @keyframes fade-in-up {
@@ -250,6 +258,9 @@ button {
   gap: var(--space-5);
   padding: var(--space-7) var(--space-5);
   text-align: center;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
   animation: fade-in-up var(--duration-slow) var(--ease-out);
 }
 
@@ -432,6 +443,21 @@ button {
   color: var(--cherry-strong);
 }
 
+/* dev-session 2026-08-21: a couple of link-buttons (e.g. chat-header's "My
+   Favourites") now carry an icon before their text — an underline reading
+   through the icon looked wrong, so those specifically drop it. */
+.link-button:has(svg) {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.link-button svg {
+  width: 15px;
+  height: 15px;
+}
+
 .error-text {
   color: var(--cherry-strong);
   font-weight: 700;
@@ -452,7 +478,12 @@ button {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-5);
+  /* dev-session 2026-08-21: horizontal padding grows with the viewport (via
+     max()) so the bar's own background still spans the full width (no dead
+     margins either side on a wide screen — see .app-shell's docstring) while
+     its content settles into the same ~900px reading column the rest of the
+     chat screen uses, instead of being force-stretched edge to edge. */
+  padding: var(--space-3) max(var(--space-5), calc((100% - 900px) / 2));
   background: var(--card-bg);
   box-shadow: var(--shadow-sm);
   z-index: 1;
@@ -484,6 +515,64 @@ button {
   font-weight: 800;
   font-size: var(--text-xl);
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* dev-session 2026-08-21 — engagement streak badge. */
+.streak-badge {
+  font-family: 'Baloo 2', sans-serif;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: color-mix(in srgb, var(--cherry) 70%, var(--ink));
+  background: color-mix(in srgb, var(--sun) 35%, var(--card-bg));
+  border-radius: var(--radius-full, 999px);
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* dev-session 2026-08-21 — quick-start chips. */
+.starter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-3);
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.starter-chip {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full, 999px);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  border: none;
+  transition: transform var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.starter-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.starter-chip svg,
+.streak-badge svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 
 .chat-header-actions {
@@ -494,6 +583,9 @@ button {
 .chat-scroll {
   flex: 1;
   overflow-y: auto;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
   padding: var(--space-5) var(--space-4);
   display: flex;
   flex-direction: column;
@@ -591,11 +683,165 @@ button {
   }
 }
 
+/* dev-session 2026-08-21 — large reactive companion avatar, see
+   ChatScreen.tsx's module docstring for why this exists (a teammate's "feels
+   text-based, not avatar-based" feedback). Sits between the header and the
+   message transcript, always visible, state driven by companionState. */
+.chat-companion {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-2);
+  flex-shrink: 0;
+}
+
+.companion-avatar {
+  /* dev-session 2026-08-21: Kiefer asked for just the character's face here
+     — no colour badge circle, no ring/glow — so this is deliberately just a
+     sizing/positioning box now, not a "circle chip" like the small avatar
+     badges elsewhere (header/bubbles/cards/picker) still are. Those keep
+     their `background: avatar.color` + ring treatment untouched; only this
+     one, big companion avatar dropped it. */
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 88px;
+  animation: companion-bob 3.4s ease-in-out infinite;
+}
+
+.chat-companion--thinking .companion-avatar {
+  animation: companion-think 1s ease-in-out infinite;
+}
+
+.chat-companion--speaking .companion-avatar {
+  animation: companion-talk 0.5s ease-in-out infinite;
+}
+
+.companion-status {
+  font-family: 'Baloo 2', sans-serif;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+  height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.companion-status--thinking span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  animation: typing-pulse 1s ease-in-out infinite;
+}
+
+.companion-status--thinking span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.companion-status--thinking span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.companion-status--speaking {
+  color: var(--violet);
+}
+
+@keyframes companion-bob {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes companion-think {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+  }
+  25% {
+    transform: scale(0.96) rotate(-3deg);
+  }
+  75% {
+    transform: scale(0.96) rotate(3deg);
+  }
+}
+
+@keyframes companion-talk {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+/* dev-session 2026-08-21 — blink + talking-mouth technique ported from
+   arjansinghb's standalone "Pip" avatar prototype (main@763f318,
+   src/frontend/src/components/Avatar.jsx), shown to Claude as a visual
+   reference — see avatars.tsx's module docstring. Blink is pure CSS, always
+   on, and applies to *every* avatar icon anywhere in the app (header,
+   bubbles, dashboard cards, the picker grid) since it's just a class on the
+   SVG's own eyes group — no JS/props involved. The talking mouth-flap only
+   activates under `.chat-companion--speaking` (ChatScreen.tsx's big avatar),
+   reached via a plain CSS descendant selector into whichever character SVG
+   happens to be selected — nothing avatar-specific to wire up per character. */
+.avatar-eyes {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: avatar-blink 4.5s ease-in-out infinite;
+}
+
+@keyframes avatar-blink {
+  0%, 92%, 100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+.chat-companion--speaking .companion-avatar .avatar-mouth-smile {
+  opacity: 0;
+}
+
+.chat-companion--speaking .companion-avatar .avatar-mouth-open {
+  opacity: 1;
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: avatar-talk 0.26s ease-in-out infinite;
+}
+
+@keyframes avatar-talk {
+  0%, 100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1.15);
+  }
+}
+
 /* ---------- Recommendation cards ---------- */
 
 .rec-card-list {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* CH16 "My Favourites" — dev-session 2026-08-21. Reuses .rec-card itself
+   (same look as recommendation cards in-chat) but lays several out in a
+   responsive grid instead of one column, since this is a dedicated screen
+   with room to spare, not squeezed into a chat bubble. */
+.favourites-shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
 }
 
@@ -840,7 +1086,14 @@ button {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  /* dev-session 2026-08-21: same full-bleed-background/centered-content
+     trick as .chat-header above — otherwise .chat-text-input's `flex: 1`
+     would stretch the input box uncomfortably wide on a large screen now
+     that .app-shell no longer caps the whole page at 720px. */
+  padding-top: var(--space-3);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom));
+  padding-left: max(var(--space-4), calc((100% - 900px) / 2));
+  padding-right: max(var(--space-4), calc((100% - 900px) / 2));
   background: var(--card-bg);
   box-shadow: 0 -4px 16px rgba(var(--shadow-tint), 0.07);
 }

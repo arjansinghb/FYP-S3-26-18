@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.deps import get_child_dual_auth, get_current_child
 from app.models.child import ChildProfile
-from app.models.favourite import Favourite, FavouriteCreate
+from app.models.favourite import Favourite, FavouriteCreate, FavouriteWithItem
+from app.repositories import catalogue as catalogue_repo
 from app.repositories import children as children_repo
 from app.repositories import favourites as favourites_repo
 from app.repositories import parents as parents_repo
+from app.services.recommendation_service import _embed_url
 
 router = APIRouter(prefix="/children/{child_id}/favourites", tags=["favourites"])
 
@@ -40,10 +42,27 @@ def save_favourite(
     return fav
 
 
-@router.get("", response_model=list[Favourite])
-def list_favourites(child_id: str, child: ChildProfile = Depends(get_child_dual_auth)) -> list[Favourite]:
-    """CH16 (child) / PA15 (parent) — View Saved Favourites."""
-    return favourites_repo.list_favourites(child_id)
+@router.get("", response_model=list[FavouriteWithItem])
+def list_favourites(child_id: str, child: ChildProfile = Depends(get_child_dual_auth)) -> list[FavouriteWithItem]:
+    """CH16 (child) / PA15 (parent) — View Saved Favourites. Enriched with the
+    catalogue item's title/type/synopsis/embed_url (see FavouriteWithItem's
+    docstring) rather than the bare catalogue_item_id the response used to
+    carry — that's what let both the parent dashboard and the child's "My
+    Favourites" view show a real title instead of e.g. "seed-dog-man"."""
+    favourites = favourites_repo.list_favourites(child_id)
+    enriched = []
+    for fav in favourites:
+        item = catalogue_repo.get_item(fav.catalogue_item_id)
+        enriched.append(
+            FavouriteWithItem(
+                **fav.model_dump(),
+                title=item.title if item else None,
+                type=item.type if item else None,
+                synopsis=item.synopsis if item else None,
+                embed_url=_embed_url(item.id, item.type) if item else None,
+            )
+        )
+    return enriched
 
 
 @router.delete("/{favourite_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

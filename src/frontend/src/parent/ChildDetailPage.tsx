@@ -168,7 +168,10 @@ export default function ChildDetailPage() {
         <ul className="favourites-list">
           {favourites.map((f) => (
             <li key={f.id}>
-              <span>{f.catalogue_item_id}</span>
+              {/* dev-session 2026-08-21: was `f.catalogue_item_id` (a raw id
+                  like "seed-dog-man") — the list only ever carried the id,
+                  see types.ts's Favourite for the now-enriched shape. */}
+              <span>{f.title ?? '(removed from catalogue)'}</span>
               <button className="chip-action" onClick={() => handleFlag(f.catalogue_item_id)}>
                 🚩 Flag
               </button>

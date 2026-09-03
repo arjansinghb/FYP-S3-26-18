@@ -132,6 +132,14 @@ class ChildProfile(BaseModel):
     favourites_count: int = 0
     first_login_at: datetime | None = None  # set on the CH01 (activation) login; None until then
     safety_settings: SafetySettings = Field(default_factory=SafetySettings)  # PA21
+    # dev-session 2026-08-21 — engagement feature, not a PRD/URS use case:
+    # a Duolingo-style "days in a row" counter. Updated once per calendar day
+    # in app/routers/children.py's child_login (CH01/CH02) — see
+    # app/repositories/children.py's record_daily_activity docstring for the
+    # exact same-day/consecutive-day/gap rules.
+    current_streak: int = 0
+    longest_streak: int = 0
+    last_active_date: date | None = None
 
     def public(self) -> "ChildProfilePublic":
         return ChildProfilePublic(
@@ -144,6 +152,8 @@ class ChildProfile(BaseModel):
             created_at=self.created_at,
             favourites_count=self.favourites_count,
             safety_settings=self.safety_settings,
+            current_streak=self.current_streak,
+            longest_streak=self.longest_streak,
         )
 
 
@@ -159,6 +169,8 @@ class ChildProfilePublic(BaseModel):
     created_at: datetime
     favourites_count: int
     safety_settings: SafetySettings
+    current_streak: int = 0
+    longest_streak: int = 0
 
 
 class ChildLoginResult(BaseModel):

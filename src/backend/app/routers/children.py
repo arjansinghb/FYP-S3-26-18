@@ -199,5 +199,9 @@ def child_login(child_id: str, data: ChildPinLogin) -> ChildLoginResult:
                 child_id=child.id,
             )
 
+    # dev-session 2026-08-21 — engagement streak, see
+    # app/repositories/children.py's record_daily_activity docstring.
+    child = children_repo.record_daily_activity(child_id) or child
+
     token = create_child_session_token(child_id=child.id, parent_id=child.parent_id)
     return ChildLoginResult(profile=child.public(), session_token=token, activated=activated)

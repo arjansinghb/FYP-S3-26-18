@@ -58,6 +58,12 @@ export function listFavourites(childId: string, token: string): Promise<Favourit
   return request(`/children/${childId}/favourites`, { token })
 }
 
+// CH16-adjacent — removing something from "My Favourites" (dev-session
+// 2026-08-21's new shelf view; the backend route already existed).
+export function removeFavourite(childId: string, token: string, favouriteId: string): Promise<void> {
+  return request(`/children/${childId}/favourites/${favouriteId}`, { method: 'DELETE', token })
+}
+
 // CH17 — Give Feedback on Recommendation.
 export function giveFeedback(itemId: string, token: string, liked: boolean): Promise<void> {
   return request(`/recommendations/${itemId}/feedback`, {
