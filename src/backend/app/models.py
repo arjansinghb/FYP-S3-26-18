@@ -195,21 +195,25 @@ class ChildComparisonOut(BaseModel):
 # ----- child profiles -----
 
 
-PIN_PATTERN = r"^\d{6}$"  # URS PA10: "exactly six digits" — also doubles as the CH01 linking code
-
-
 class ChildCreate(BaseModel):
+    """No `pin` field — it's system-generated (storage._generate_unique_pin),
+    not parent-typed. See that function's docstring: letting a parent freely
+    choose a value that must also be globally unique caused real "PIN
+    already taken" collisions as the child count grew, for zero benefit
+    (nothing about this code needs to be memorable to the parent — it's
+    read off the dashboard and handed to the child, not typed from memory)."""
     name: str
     age_band: AgeBand
     reading_level: Optional[str] = None
-    pin: str = Field(pattern=PIN_PATTERN)
 
 
 class ChildUpdate(BaseModel):
+    """No `pin` field here either — see ChildCreate's docstring. A parent
+    resets the code via POST /children/{id}/regenerate-pin instead of typing
+    a replacement value, for the same reason."""
     name: Optional[str] = None
     age_band: Optional[AgeBand] = None
     reading_level: Optional[str] = None
-    pin: Optional[str] = Field(default=None, pattern=PIN_PATTERN)
 
 
 class ChildSettings(BaseModel):

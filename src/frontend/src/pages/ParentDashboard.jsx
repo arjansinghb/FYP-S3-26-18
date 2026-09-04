@@ -11,7 +11,7 @@ import {
   requestChildDataDeletion, listChildDataDeletions, cancelChildDataDeletion,
   listNotifications, markNotificationRead,
   getSubscriptionStatus, subscribePremium, cancelPremium, resumePremium, getBillingHistory,
-  setContentOverride, listContentOverrides, clearContentOverride, unlockChild,
+  setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin,
   childReports, childTrends, compareChildren,
 } from '../api'
 import './parent.css'
@@ -597,7 +597,6 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   const [name, setName] = useState('')
   const [ageBand, setAgeBand] = useState('5-8')
   const [readingLevel, setReadingLevel] = useState('')
-  const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -605,8 +604,11 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
-      await createChild({ name, age_band: ageBand, reading_level: readingLevel || null, pin })
-      setName(''); setReadingLevel(''); setPin(''); setAgeBand('5-8'); setOpen(false)
+      // No pin field — the server generates a unique 6-digit linking
+      // code/PIN itself (see models.ChildCreate's docstring for why letting
+      // a parent type one caused real collisions between families).
+      await createChild({ name, age_band: ageBand, reading_level: readingLevel || null })
+      setName(''); setReadingLevel(''); setAgeBand('5-8'); setOpen(false)
       onAdded()
     } catch (err) {
       setError(err.message)
@@ -645,9 +647,7 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
       <label>Reading level (optional)
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
       </label>
-      <label>PIN (exactly 6 digits — this is also the linking code your child enters the first time)
-        <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} required pattern="\d{6}" title="Exactly 6 digits" minLength={6} maxLength={6} />
-      </label>
+      <p className="muted">A 6-digit linking code/PIN will be generated automatically — you'll see it on the child's card right after creating the profile, ready to give to your child.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Create profile'}</button>
@@ -748,6 +748,12 @@ function ChildCard({ child, account, onChanged }) {
     onChanged()
   }
 
+  async function regeneratePin() {
+    if (!confirm(`Generate a new code for ${child.name}? The old one (${child.linking_code}) will stop working immediately.`)) return
+    await regenerateChildPin(child.id)
+    onChanged()
+  }
+
   return (
     <div className="child-card">
       <div className="child-top">
@@ -766,8 +772,9 @@ function ChildCard({ child, account, onChanged }) {
       )}
 
       <div className="linking">
-        <span className="muted">Linking code / PIN (give to your child — it's the same 6-digit number):</span>
+        <span className="muted">Linking code / PIN (give to your child — it's the same 6-digit number, generated automatically):</span>
         <code className="code">{child.linking_code}</code>
+        <button className="ghost small" onClick={regeneratePin}>Generate new code</button>
       </div>
 
       <div className="row">
@@ -782,7 +789,7 @@ function ChildCard({ child, account, onChanged }) {
 
       {view === 'edit' && <EditChild child={child} onDone={() => { setView(null); onChanged() }} />}
       {view === 'safety' && <SafetySettings child={child} onDone={() => { setView(null); onChanged() }} />}
-      {view === 'privacy' && <ChildDataPrivacy child={child} onDone={() => setView(null)} />}
+      {view === 'privacy' && <ChildDataPrivacy child={child} />}
 
       {(view === 'activity' || view === 'favourites' || view === 'reports' || view === 'insights') && (
         <div className="panel">
@@ -843,7 +850,6 @@ function EditChild({ child, onDone }) {
   const [name, setName] = useState(child.name)
   const [ageBand, setAgeBand] = useState(child.age_band)
   const [readingLevel, setReadingLevel] = useState(child.reading_level || '')
-  const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -851,7 +857,6 @@ function EditChild({ child, onDone }) {
     e.preventDefault()
     setError(''); setBusy(true)
     const payload = { name, age_band: ageBand, reading_level: readingLevel || null }
-    if (pin) payload.pin = pin
     try {
       await updateChild(child.id, payload)
       onDone()
@@ -876,9 +881,7 @@ function EditChild({ child, onDone }) {
       <label>Reading level
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
       </label>
-      <label>New PIN (leave blank to keep current — exactly 6 digits, also becomes the new linking code)
-        <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} pattern="\d{6}" title="Exactly 6 digits" minLength={6} maxLength={6} />
-      </label>
+      <p className="muted">To change {child.name}'s code/PIN, use "Generate new code" on their card instead — it's system-generated, not typed in.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
@@ -931,7 +934,11 @@ function SafetySettings({ child, onDone }) {
 }
 
 // PA30 — Request Child Data Deletion
-function ChildDataPrivacy({ child, onDone }) {
+// Deliberately stays open after a request/cancel (no onDone close-out) — the
+// scheduled/history status right below IS the confirmation the parent came
+// here to see, unlike EditChild/SafetySettings where closing back to the
+// list is the natural "done" signal.
+function ChildDataPrivacy({ child }) {
   const [requests, setRequests] = useState([])
   const [busy, setBusy] = useState(false)
 

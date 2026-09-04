@@ -2,91 +2,118 @@
 .child-login {
   max-width: 460px;
   margin: 0 auto;
-  padding: 40px 20px;
+  padding: var(--space-9) var(--space-5);
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
+  min-height: 100svh;
+  justify-content: center;
+  background:
+    radial-gradient(1000px 450px at 50% 0%, color-mix(in srgb, var(--primary-500) 14%, transparent), transparent 70%),
+    var(--bg);
 }
 .child-login .avatar { width: 150px; height: 150px; }
-.child-login h1 { color: #6a2ea0; margin: 6px 0; font-size: 32px; }
-.child-login form { width: 100%; display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.child-login h1 { margin: var(--space-2) 0; font-size: var(--text-2xl); font-weight: 800; }
+.child-login form { width: 100%; display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); }
 .child-login input {
-  font: inherit; font-size: 22px; text-align: center; letter-spacing: 3px;
-  padding: 14px; border-radius: 14px; border: 2px solid #e6d8ff; outline: none;
+  font: inherit; font-size: var(--text-xl); text-align: center; letter-spacing: 3px;
+  padding: var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--border); outline: none;
+  color: var(--ink);
 }
-.child-login input:focus { border-color: #c9a7ff; }
+.child-login input:focus { border-color: var(--primary-500); }
 .big-btn {
-  font: inherit; font-size: 22px; font-weight: 700; padding: 16px;
-  border: none; border-radius: 999px; background: #6a2ea0; color: #fff; cursor: pointer;
+  font: inherit; font-size: var(--text-xl); font-weight: 800; padding: var(--space-4);
+  border: none; border-radius: var(--radius-pill); background: var(--primary-700); color: #fff; cursor: pointer;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--primary-700) 28%, transparent);
+  transition: transform 0.1s, box-shadow 0.15s;
 }
-.big-btn:hover:not(:disabled) { background: #7d3cbd; }
-.big-btn:disabled { opacity: 0.55; cursor: default; }
+.big-btn:hover:not(:disabled) { transform: translateY(-1px); }
+.big-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
 
 /* ---------- child top bar ---------- */
+/* Full-width surface (not a centered floating pill) — content itself is
+   centered to the same 760px column as .chat-shell/.chat-input-bar via the
+   padding trick below, so the whole screen reads as one shell that fills
+   the window on a wide monitor instead of a phone-width card in dead space. */
 .child-bar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; padding: 12px 16px; max-width: 720px; margin: 0 auto;
+  gap: var(--space-3); width: 100%;
+  padding: var(--space-4) max(var(--space-5), calc((100% - 760px) / 2));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
-.child-bar .who { font-weight: 700; color: #6a2ea0; font-size: 18px; }
-.child-bar .bar-btns { display: flex; gap: 8px; }
+.child-bar .who {
+  font-weight: 800; color: var(--ink); font-size: var(--text-lg);
+}
+.child-bar .bar-btns { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .pill {
-  font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 999px;
-  border: 2px solid #e6d8ff; background: #fff; color: #6a2ea0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font: inherit; font-size: var(--text-sm); font-weight: 700; padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill);
+  border: 1px solid var(--border); background: var(--surface); color: var(--primary-700); cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
 }
-.pill:hover { background: #f6efff; }
+.pill:hover { border-color: var(--primary-border); }
 
-/* ---------- recommendation cards ---------- */
-.recs {
-  max-width: 720px; margin: 8px auto 0; padding: 0 16px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;
-}
+/* ---------- recommendation cards (rendered inside a pip bubble — see App.css's .bubble-recs) ---------- */
 .rec-card {
-  background: #fff; border: 2px solid #ecdfff; border-radius: 16px; padding: 16px;
-  box-shadow: 0 6px 16px rgba(120, 80, 200, 0.08); text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 8%, transparent); text-align: left;
 }
 .rec-cover {
   width: 100%;
-  max-height: 160px;
+  height: 160px; /* fixed, not max-height — reserves the space before the
+                    cover image loads, so the card doesn't grow after the
+                    fact and throw off scroll-to-latest-message position */
   object-fit: cover;
-  border-radius: 10px;
-  margin-bottom: 10px;
-  background: #f6efff;
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-3);
+  background: var(--primary-100);
 }
-.rec-title { margin: 0 0 4px; color: #4a2470; font-size: 18px; }
-.rec-why { margin: 0 0 12px; color: #6b6080; font-size: 15px; }
-.rec-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.rec-title {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: 0 0 var(--space-1); font-size: var(--text-lg);
+  font-weight: 700; line-height: var(--leading-snug);
+}
+.rec-type-icon { flex-shrink: 0; color: var(--primary-500); }
+.rec-why { margin: 0 0 var(--space-4); color: var(--text); font-size: var(--text-sm); line-height: var(--leading-body); }
+.rec-btns { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .rec-btns button {
-  font: inherit; font-size: 14px; font-weight: 600; padding: 8px 12px;
-  border-radius: 999px; border: 2px solid #e6d8ff; background: #fff; color: #6a2ea0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font: inherit; font-size: var(--text-sm); font-weight: 700; padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); color: var(--primary-700); cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
 }
-.rec-btns button:hover { background: #f6efff; }
-.rec-btns button.on { background: #6a2ea0; color: #fff; border-color: #6a2ea0; }
+.rec-btns button:hover { border-color: var(--primary-border); }
+.rec-btns button.on { background: var(--primary-700); color: #fff; border-color: var(--primary-700); }
 
 /* ---------- overlay (favourites, avatar, details, video) ---------- */
 .overlay {
-  position: fixed; inset: 0; background: rgba(40, 20, 60, 0.45);
-  display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  position: fixed; inset: 0; background: rgba(36, 31, 54, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: var(--space-5); z-index: 50;
 }
 .sheet {
-  background: #fff; border-radius: 20px; padding: 24px; max-width: 520px; width: 100%;
-  max-height: 84vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-6); max-width: 520px; width: 100%;
+  max-height: 84vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
 }
-.sheet h2 { margin: 0 0 12px; color: #4a2470; }
+.sheet h2 {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: 0 0 var(--space-4); font-size: var(--text-xl); font-weight: 800;
+}
 .sheet .close { float: right; }
-.fav-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f2ecff; }
+.fav-row { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
 
-.swatches { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.swatches { display: flex; gap: var(--space-3); flex-wrap: wrap; margin: var(--space-3) 0; }
 .swatch {
   width: 54px; height: 54px; border-radius: 50%; border: 3px solid #fff; cursor: pointer;
-  box-shadow: 0 0 0 2px #e6d8ff;
+  box-shadow: 0 0 0 2px var(--border);
 }
-.swatch.sel { box-shadow: 0 0 0 3px #6a2ea0; }
+.swatch.sel { box-shadow: 0 0 0 3px var(--primary-700); }
 
 .video-box {
-  position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 12px;
-  overflow: hidden; background: #1c1430; color: #fff;
-  display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px;
+  position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-md);
+  overflow: hidden; background: var(--ink); color: #fff;
+  display: flex; align-items: center; justify-content: center; text-align: center; padding: var(--space-4);
 }
 .video-box iframe { width: 100%; height: 100%; border: 0; }

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import RecommendationCard from '../components/RecommendationCard'
 import ChildLogin from './ChildLogin'
@@ -8,10 +7,30 @@ import {
   saveFavourite, myFavourites, sendFeedback, startChatSession, endChatSession,
 } from '../api'
 import { getReply } from '../placeholderBot'
+import {
+  BookIcon, CloseIcon, CompassIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
+  PaletteIcon, PawIcon, RefreshIcon, SendIcon, SparkleIcon, VideoIcon,
+} from '../icons'
 import '../App.css'
 import './child.css'
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+// A handful of ready-made openers so a child who isn't a confident typer (or
+// just doesn't know where to start) has a one-tap way in — shown only before
+// the first real message, so they don't clutter an in-progress conversation.
+const STARTER_PROMPTS = [
+  { icon: SparkleIcon, label: 'Surprise me', message: 'Surprise me with something fun!' },
+  { icon: BookIcon, label: 'A good book', message: "I'd like a good book to read." },
+  { icon: VideoIcon, label: 'A fun video', message: "I'd like to watch something fun." },
+  { icon: PawIcon, label: 'Animal stories', message: 'Do you have anything about animals?' },
+  { icon: CompassIcon, label: 'Adventure', message: 'I want something exciting and adventurous.' },
+  { icon: MoonIcon, label: 'Something calm', message: 'I want something calm and cosy.' },
+]
+
+function newId() {
+  return Math.random().toString(36).slice(2)
+}
 
 // Session gate: restore a logged-in child, else show the login screen.
 export default function ChildChat() {
@@ -30,9 +49,12 @@ export default function ChildChat() {
 
 function Experience({ child, setChild, onLogout }) {
   const [status, setStatus] = useState('idle') // idle | listening | thinking | speaking
-  const [caption, setCaption] = useState(`Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch!`)
-  const [recs, setRecs] = useState([])
-  const [lastMessage, setLastMessage] = useState('')
+  // The visible transcript IS the context window (see storage.session_history
+  // on the backend) — every turn shown here is exactly what gets sent back to
+  // the brain as conversation memory, nothing hidden or summarised away.
+  const [turns, setTurns] = useState([
+    { id: 'greeting', role: 'pip', text: `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.` },
+  ])
   const [overlay, setOverlay] = useState(null)   // 'favourites' | 'avatar' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
@@ -40,6 +62,9 @@ function Experience({ child, setChild, onLogout }) {
   const [typed, setTyped] = useState('')
   const [sessionId, setSessionId] = useState(null)  // CH04 — ties messages together for real conversation memory (CH07)
   const recognitionRef = useRef(null)
+  const transcriptEndRef = useRef(null)
+
+  const hasChatted = turns.some((t) => t.role === 'child')
 
   // CH04 — a chat session starts once, when the child reaches this screen
   // (already-logged-in trigger, per the URS). Its id rides along on every
@@ -50,6 +75,15 @@ function Experience({ child, setChild, onLogout }) {
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    // 'auto' (instant), not 'smooth' — smooth scroll is a requestAnimationFrame
+    // animation, which browsers throttle/skip in a backgrounded tab, so a
+    // child switching apps mid-reply could come back to the reply scrolled
+    // out of view. Instant scroll is a synchronous position set, not subject
+    // to that — reliability here matters more than the animation.
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+  }, [turns])
 
   // CH05 — ends the session on logout ("before handing back a shared
   // device") rather than leaving it open forever.
@@ -62,7 +96,6 @@ function Experience({ child, setChild, onLogout }) {
   const color = child.avatar in AVATAR_COLORS ? child.avatar : 'purple'
 
   function speak(text) {
-    setCaption(text)
     if (!('speechSynthesis' in window)) { setStatus('idle'); return }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
@@ -81,16 +114,25 @@ function Experience({ child, setChild, onLogout }) {
 
   async function ask(message) {
     if (!message) return
+    const pipId = newId()
     setStatus('thinking')
-    setCaption('Hmm, let me think…')
-    setLastMessage(message)
+    setTurns((t) => [
+      ...t,
+      { id: newId(), role: 'child', text: message },
+      { id: pipId, role: 'pip', text: null, pending: true, sourceMessage: message },
+    ])
     try {
       const res = await askPip(message, sessionId)
-      setRecs(res.recommendations || [])
+      setTurns((t) => t.map((turn) => (
+        turn.id === pipId ? { ...turn, text: res.reply, recs: res.recommendations || [], pending: false } : turn
+      )))
       speak(res.reply)
     } catch {
-      setRecs([])
-      speak(getReply(message))
+      const fallback = getReply(message)
+      setTurns((t) => t.map((turn) => (
+        turn.id === pipId ? { ...turn, text: fallback, recs: [], pending: false } : turn
+      )))
+      speak(fallback)
     }
   }
 
@@ -105,16 +147,12 @@ function Experience({ child, setChild, onLogout }) {
     rec.maxAlternatives = 1
     recognitionRef.current = rec
 
-    rec.onstart = () => { setStatus('listening'); setCaption("Listening… I'm all ears!") }
+    rec.onstart = () => setStatus('listening')
     rec.onresult = (e) => ask(e.results[0][0].transcript)
     rec.onerror = (e) => {
       setStatus('idle')
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        setCaption('I need permission to use the microphone. Please allow it, then tap again!')
-      } else if (e.error === 'no-speech') {
-        setCaption("I didn't quite hear that. Tap the button and try again!")
-      } else {
-        setCaption('Oops! Something went wrong. Tap the button to try again.')
+      if (e.error !== 'not-allowed' && e.error !== 'service-not-allowed' && e.error !== 'no-speech') {
+        setTurns((t) => [...t, { id: newId(), role: 'pip', text: 'Oops! Something went wrong. Tap the mic to try again.' }])
       }
     }
     rec.onend = () => setStatus((s) => (s === 'listening' ? 'idle' : s))
@@ -152,89 +190,113 @@ function Experience({ child, setChild, onLogout }) {
 
   const speaking = status === 'speaking'
   const listening = status === 'listening'
-  const buttonLabel = listening ? 'Listening… tap to stop'
+  const busy = status === 'thinking' || status === 'speaking'
+  const statusLine = listening ? "Listening… I'm all ears!"
     : status === 'thinking' ? 'Thinking…'
-    : status === 'speaking' ? 'Pip is talking…'
-    : 'Tap to talk'
+    : status === 'speaking' ? 'Talking…'
+    : null
 
   return (
-    <div>
+    <div className="child-screen">
       <div className="child-bar">
         <span className="who">Hi, {child.name}!</span>
         <div className="bar-btns">
-          <button className="pill" onClick={openFavourites}>❤️ Favourites</button>
-          <button className="pill" onClick={() => setOverlay('avatar')}>🎨 Avatar</button>
-          <button className="pill" onClick={logoutAndEndSession}>Log out</button>
+          <button className="pill" onClick={openFavourites}><HeartIcon width={16} height={16} /> Favourites</button>
+          <button className="pill" onClick={() => setOverlay('avatar')}><PaletteIcon width={16} height={16} /> Avatar</button>
+          <button className="pill" onClick={logoutAndEndSession}><LogoutIcon width={16} height={16} /> Log out</button>
         </div>
       </div>
 
-      <div className="app">
-        <div className="stage">
+      <div className="chat-shell">
+        <div className="chat-presence">
+          <div className="chat-presence-glow" />
           <Avatar speaking={speaking} mood={speaking ? 'idle' : 'happy'} color={color} />
-          <p className={`caption ${listening ? 'caption-listening' : ''}`}>{caption}</p>
+          <p className={`chat-status ${listening ? 'chat-status-listening' : ''}`}>{statusLine || ' '}</p>
+        </div>
 
-          {supported ? (
-            <button
-              className={`talk ${listening ? 'talk-listening' : ''}`}
-              onClick={startListening}
-              disabled={status === 'thinking' || status === 'speaking'}
-            >
-              <span className="talk-icon" aria-hidden="true">🎤</span>
-              <span>{buttonLabel}</span>
-            </button>
-          ) : (
-            <p className="caption">This browser can't listen for talking — no worries, you can still type below! 😊</p>
+        <div className="chat-transcript">
+          {turns.map((turn) => (
+            <div key={turn.id} className={`bubble-row bubble-row-${turn.role}`}>
+              <div className={`bubble bubble-${turn.role}`}>
+                {turn.pending ? (
+                  <span className="bubble-dots" aria-label="Pip is thinking">
+                    <span></span><span></span><span></span>
+                  </span>
+                ) : turn.text}
+              </div>
+
+              {turn.recs?.length > 0 && (
+                <div className="bubble-recs">
+                  {turn.recs.map((item) => (
+                    <RecommendationCard
+                      key={item.id}
+                      item={item}
+                      onDetails={setDetails}
+                      onWatch={setVideo}
+                      onSave={(it) => saveFavourite(it.id).catch(() => {})}
+                      onFeedback={(it, liked) => sendFeedback(it.id, liked).catch(() => {})}
+                    />
+                  ))}
+                  <button className="pill" onClick={() => ask(turn.sourceMessage)}>
+                    <RefreshIcon width={15} height={15} /> Show me another
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {!hasChatted && (
+            <div className="starter-row">
+              {STARTER_PROMPTS.map(({ icon: Icon, label, message }) => (
+                <button key={label} className="starter-chip" onClick={() => ask(message)}>
+                  <Icon width={17} height={17} />
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
 
-          {supported && <p className="or-divider">or type instead</p>}
-
-          <form className="type-row" onSubmit={submitTyped}>
-            <input
-              type="text"
-              className="type-input"
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              placeholder="Type what you'd like to read or watch…"
-              disabled={status === 'thinking' || status === 'speaking'}
-              aria-label="Type a message to Pip"
-            />
-            <button
-              type="submit"
-              className="type-send"
-              disabled={!typed.trim() || status === 'thinking' || status === 'speaking'}
-            >
-              Send
-            </button>
-          </form>
+          <div ref={transcriptEndRef} />
         </div>
       </div>
 
-      {recs.length > 0 && (
-        <>
-          <div className="recs">
-            {recs.map((item) => (
-              <RecommendationCard
-                key={item.id}
-                item={item}
-                onDetails={setDetails}
-                onWatch={setVideo}
-                onSave={(it) => saveFavourite(it.id).catch(() => {})}
-                onFeedback={(it, liked) => sendFeedback(it.id, liked).catch(() => {})}
-              />
-            ))}
-          </div>
-          <div style={{ textAlign: 'center', margin: '14px 0 30px' }}>
-            <button className="pill" onClick={() => ask(lastMessage)}>🔄 Show me another</button>
-          </div>
-        </>
-      )}
+      {/* Own full-width surface, sibling of .chat-shell (not nested inside
+          its capped max-width) — see App.css's .chat-input-bar. */}
+      <form className="chat-input-bar" onSubmit={submitTyped}>
+        {supported && (
+          <button
+            type="button"
+            className={`mic-btn ${listening ? 'mic-btn-listening' : ''}`}
+            onClick={startListening}
+            disabled={status === 'thinking' || status === 'speaking'}
+            aria-label={listening ? 'Stop listening' : 'Talk to Pip'}
+            title={listening ? 'Stop listening' : 'Talk to Pip'}
+          >
+            <MicIcon />
+          </button>
+        )}
+        <input
+          type="text"
+          className="chat-text-input"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          placeholder={supported ? 'Type or tap the mic…' : "This browser can't listen — type here instead"}
+          disabled={busy}
+          aria-label="Type a message to Pip"
+        />
+        <button type="submit" className="chat-send-btn" disabled={!typed.trim() || busy} aria-label="Send">
+          <SendIcon width={18} height={18} />
+        </button>
+      </form>
 
       {/* CH16 — favourites */}
       {overlay === 'favourites' && (
         <Overlay title="My Favourites" onClose={() => setOverlay(null)}>
-          {favs.length === 0 && <p className="muted">You haven't saved anything yet. Tap 🤍 Save on a suggestion!</p>}
+          {favs.length === 0 && <p className="muted">You haven't saved anything yet. Tap Save on a suggestion!</p>}
           {favs.map((f) => (
-            <div key={f.id} className="fav-row">{f.type === 'book' ? '📚' : '🎬'} {f.title}</div>
+            <div key={f.id} className="fav-row">
+              {f.type === 'book' ? <BookIcon width={17} height={17} /> : <VideoIcon width={17} height={17} />} {f.title}
+            </div>
           ))}
         </Overlay>
       )}
@@ -261,7 +323,7 @@ function Experience({ child, setChild, onLogout }) {
 
       {/* CH14 — content details */}
       {details && (
-        <Overlay title={`${details.type === 'book' ? '📚' : '🎬'} ${details.title}`} onClose={() => setDetails(null)}>
+        <Overlay title={details.title} icon={details.type === 'book' ? BookIcon : VideoIcon} onClose={() => setDetails(null)}>
           {details.thumbnail && <img className="rec-cover" src={details.thumbnail} alt="" />}
           <p>{details.description || details.explanation}</p>
           <p className="muted">Why Pip picked it: {details.explanation}</p>
@@ -270,7 +332,7 @@ function Experience({ child, setChild, onLogout }) {
 
       {/* CH12 — watch embedded video */}
       {video && (
-        <Overlay title={`🎬 ${video.title}`} onClose={() => setVideo(null)}>
+        <Overlay title={video.title} icon={VideoIcon} onClose={() => setVideo(null)}>
           <div className="video-box">
             {video.external_ref ? (
               <iframe
@@ -280,7 +342,7 @@ function Experience({ child, setChild, onLogout }) {
                 allowFullScreen
               />
             ) : (
-              <span>▶ This is where the video plays.<br />(Sample catalogue — real, curated videos get linked in later.)</span>
+              <span>This is where the video plays.<br />(Sample catalogue — real, curated videos get linked in later.)</span>
             )}
           </div>
         </Overlay>
@@ -289,12 +351,12 @@ function Experience({ child, setChild, onLogout }) {
   )
 }
 
-function Overlay({ title, children, onClose }) {
+function Overlay({ title, icon: Icon, children, onClose }) {
   return (
     <div className="overlay" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <button className="pill close" onClick={onClose}>Close ✕</button>
-        <h2>{title}</h2>
+        <button className="pill close" onClick={onClose} aria-label="Close"><CloseIcon width={16} height={16} /></button>
+        <h2>{Icon && <Icon width={20} height={20} />} {title}</h2>
         {children}
       </div>
     </div>

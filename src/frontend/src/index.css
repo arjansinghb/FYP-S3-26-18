@@ -1,5 +1,73 @@
+/* ============================================================
+   Design tokens — the whole system. Every colour, spacing, radius
+   and font size used anywhere in the app traces back to one of
+   these; nothing invents a one-off value outside this file.
+   ============================================================ */
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* ---- type: ONE typeface, used at different weights/sizes for
+     hierarchy instead of mixing families ---- */
+  --font: 'Nunito', system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  --text-xs: 13px;    /* fine print, timestamps, meta */
+  --text-sm: 15px;    /* captions, secondary labels */
+  --text-base: 16px;  /* body copy default */
+  --text-md: 18px;    /* lead paragraph, tagline */
+  --text-lg: 22px;    /* card/tile titles */
+  --text-xl: 28px;    /* section heading, mobile */
+  --text-2xl: 34px;   /* section heading, desktop */
+  --text-3xl: 44px;   /* hero headline, mobile */
+  --text-4xl: 60px;   /* hero headline, desktop */
+
+  --leading-tight: 1.08;   /* display headlines only */
+  --leading-snug: 1.35;    /* UI labels, card titles */
+  --leading-body: 1.6;     /* paragraphs — never tighter than this */
+
+  --measure: 62ch;         /* max paragraph width for readable line length */
+
+  /* ---- spacing scale (4px base) — every margin/padding/gap in the
+     app snaps to one of these, never an arbitrary in-between value ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+  --space-10: 72px;
+  --space-11: 96px;
+
+  /* ---- radius scale ---- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-pill: 999px;
+
+  /* ---- colour: 1 primary + 1 accent + neutrals. Every colour below
+     has exactly one defined job — see the comment on each. Nothing
+     gets used outside its stated role, and nothing gets added to this
+     list without one. ----
+
+     PRIMARY (purple) — brand, primary actions, links, icon accents. */
+  --primary-700: #6a2ea0;   /* solid fills: buttons, active states */
+  --primary-500: #9b6bff;   /* lighter emphasis: icons, secondary accents */
+  --primary-100: #f3ecff;   /* tinted surfaces: icon chips, subtle backgrounds */
+  --primary-border: #e6d8ff; /* borders on cards/inputs */
+
+  /* ACCENT (amber) — ONE job: star ratings. Nothing else uses this. */
+  --accent-600: #b8720f;
+
+  /* NEUTRALS — ink for headings, text for body, muted for the least
+     important label on the page, never for a paragraph a user is
+     meant to actually read. */
+  --ink: #241f36;
+  --text: #4a4460;
+  --muted: #6f6789;
+  --border: #ece6f5;
+  --surface: #ffffff;
+  --bg: #fdf9f2;
+
   color-scheme: light;
 }
 
@@ -10,6 +78,18 @@
 body {
   margin: 0;
   min-height: 100svh;
-  background: linear-gradient(160deg, #eef6ff 0%, #fdf0ff 60%, #fff6ec 100%);
-  color: #2a2440;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: var(--leading-body);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font);
+  color: var(--ink);
+  line-height: var(--leading-snug);
+}
+
+p {
+  max-width: var(--measure);
 }

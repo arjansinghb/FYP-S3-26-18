@@ -59,6 +59,9 @@ export async function getPublicSite() {
 export async function getPublicPlans() {
   return request('/api/public/plans')
 }
+export async function getPublicCatalogueSample(limit = 6) {
+  return request(`/api/public/catalogue-sample?limit=${limit}`)
+}
 
 // ----- child chat -----
 // Returns the full result { reply, recommendations }. If a child is logged in,
@@ -240,6 +243,9 @@ export async function updateChildSettings(id, settings) {
 }
 export async function unlockChild(id) {
   return request(`/api/children/${id}/unlock`, { method: 'POST', auth: true })
+}
+export async function regenerateChildPin(id) {
+  return request(`/api/children/${id}/regenerate-pin`, { method: 'POST', auth: true })
 }
 
 // ----- PA18 per-child content overrides -----

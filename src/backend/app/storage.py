@@ -419,7 +419,31 @@ class Database:
 
     # ---------- children ----------
 
-    def create_child(self, parent_id: str, name: str, age_band: str, pin: str, reading_level=None) -> dict:
+    def _generate_unique_pin(self) -> str:
+        """System-generated, not parent-typed — see the real-collision bug
+        this replaces (below). 6 digits = 1,000,000 possible values; retry
+        is only ever needed if today's actual collision hits (astronomically
+        unlikely at this system's realistic scale), never surfaced to a
+        parent as an error."""
+        for _ in range(20):
+            candidate = f"{secrets.randbelow(1_000_000):06d}"
+            if not self.pin_in_use(candidate):
+                return candidate
+        raise RuntimeError("Could not generate a unique PIN after 20 attempts — the 6-digit space is far more saturated than expected.")
+
+    def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None) -> dict:
+        """Real bug found via testing, not hypothetical (see pin_in_use's own
+        docstring): letting a PARENT freely type the PIN, while also
+        requiring it to double as CH01's globally-unique linking code,
+        means two different families can't both pick "123456" even though
+        that's a completely reasonable, independent thing for each of them
+        to want — and the 1,000,000-value space gets real collision
+        pressure as the user base grows, since humans cluster on the same
+        "easy" numbers. The system generates it instead: unique by
+        construction, no user-facing "PIN already taken" retry loop ever,
+        and — as a side benefit — not a predictable parent-chosen number
+        (birthdate, "123456") in the first place."""
+        pin = self._generate_unique_pin()
         child = {
             "id": _new_id(),
             "parent_id": parent_id,
@@ -429,8 +453,9 @@ class Database:
             "pin": pin,
             # URS: CH01's "linking code" and PA10's PIN are the same 6-digit
             "linking_code": pin,
-            # value — one parent-set PIN activates the device (CH01) AND is
-            # used for every login after that (CH02), not two separate codes.
+            # value — one system-generated code activates the device (CH01)
+            # AND is used for every login after that (CH02), not two
+            # separate codes a young child would need to keep straight.
             "avatar": "purple",  # avatar colour variant the child can change
             "settings": {
                 "allow_books": True,
@@ -453,6 +478,21 @@ class Database:
     def find_child_by_code(self, code: str):
         code = code.strip()
         return next((c for c in self.children.values() if c["linking_code"] == code), None)
+
+    def regenerate_pin(self, child: dict) -> dict:
+        """PA10 — a parent resets the code (lost/shared with the wrong
+        person). Same system-generated, unique-by-construction path as
+        create_child, not a free-typed replacement value — see
+        _generate_unique_pin's docstring for why."""
+        new_pin = self._generate_unique_pin()
+        child["pin"] = new_pin
+        child["linking_code"] = new_pin
+        # a fresh code deserves a fresh lockout state too — otherwise a parent
+        # regenerating specifically to fix a locked-out child would see the
+        # profile still locked against a code that no longer exists.
+        child["failed_pin_attempts"] = 0
+        child["locked"] = False
+        return child
 
     def pin_in_use(self, pin: str, exclude_child_id: str | None = None) -> bool:
         """Real bug found via testing (not hypothetical): since the linking

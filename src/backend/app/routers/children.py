@@ -49,11 +49,10 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
                if limit == FREE_CHILD_LIMIT else
                "You've reached the Premium limit of 4 child profiles.")
         raise HTTPException(403, msg)
-    if db.pin_in_use(body.pin):
-        # PIN doubles as the linking code (PA10/CH01) and must be unique
-        # system-wide, not just per-parent — see storage.pin_in_use's docstring.
-        raise HTTPException(409, "That PIN is already in use by another profile — please choose a different one.")
-    child = db.create_child(parent["id"], body.name, body.age_band, body.pin, body.reading_level)
+    # PIN/linking code is system-generated inside create_child now, not
+    # parent-typed — see models.ChildCreate's docstring for why. No
+    # pin_in_use check needed here: it's unique by construction.
+    child = db.create_child(parent["id"], body.name, body.age_band, body.reading_level)
     return _child_out(child)
 
 
@@ -65,14 +64,20 @@ def list_children(parent: dict = Depends(require_role("parent"))):
 @router.patch("/api/children/{child_id}", response_model=ChildOut)
 def update_child(child_id: str, body: ChildUpdate, parent: dict = Depends(require_role("parent"))):
     child = _owned_child(child_id, parent)
-    if body.pin is not None and db.pin_in_use(body.pin, exclude_child_id=child["id"]):
-        raise HTTPException(409, "That PIN is already in use by another profile — please choose a different one.")
-    for f in ("name", "age_band", "reading_level", "pin"):
+    for f in ("name", "age_band", "reading_level"):
         val = getattr(body, f)
         if val is not None:
             child[f] = val
-            if f == "pin":
-                child["linking_code"] = val  # kept in sync — see storage.create_child's note
+    return _child_out(child)
+
+
+@router.post("/api/children/{child_id}/regenerate-pin", response_model=ChildOut)
+def regenerate_pin(child_id: str, parent: dict = Depends(require_role("parent"))):
+    """PA10 — resets the code (e.g. the parent lost it, or shared it with
+    the wrong person). System-generated replacement, not a parent-typed
+    one — see storage.regenerate_pin's docstring."""
+    child = _owned_child(child_id, parent)
+    db.regenerate_pin(child)
     return _child_out(child)
 
 
