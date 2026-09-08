@@ -4,7 +4,7 @@ import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import { getPublicSite, getPublicPlans, getPublicCatalogueSample } from '../api'
 import { curateTitle } from '../curate'
 import {
-  AlertIcon, BookIcon, ChatIcon, CheckIcon, CompassIcon, MicIcon, QuoteIcon, ShieldIcon,
+  BookIcon, ChatIcon, CheckIcon, CompassIcon, LockIcon, MicIcon, ShieldIcon,
   SparkleIcon, UsersIcon, VideoIcon,
 } from '../icons'
 import { ClusterBookGlyph, ClusterPlayGlyph, ClusterSparkleGlyph } from '../illustrations'
@@ -34,21 +34,25 @@ const FAQS = [
   { icon: CheckIcon, q: 'Do I have to pay?', a: 'No. The core chat experience is free forever, for one child profile. Premium adds more child profiles, unlimited favourites, and activity insights, but it never gates the chatbot itself.' },
 ]
 
-// UV04 — user reviews. Round 2 on this section, per Kiefer's explicit
-// call: he wants the space visually filled, not an empty state — but the
-// first version's failure mode was specific named people ("Sarah, mum of
-// two") with quotes and star ratings, which reads as real social proof at
-// a glance no matter how small the disclaimer underneath is. This version
-// keeps the same honesty rule (no invented person, no fabricated rating)
-// but fills the section: the "name" slot is a plain label ("Example
-// parent reaction"), never a name, and the section has a visible badge
-// ABOVE the cards, not fine print below them, saying these aren't real
-// reviews yet. No star ratings — a 4.5-star average would be exactly the
-// kind of fabricated stat the brief's own banned-pattern list rules out.
-const REVIEWS = [
-  { text: 'My 6-year-old asks for "reading time" now instead of screen time — that alone sold me.' },
-  { text: "I can actually see what my kid's been chatting about and reading, without hovering over her shoulder." },
-  { text: 'The voice avatar makes it feel like talking to a character, not typing into a search box.' },
+// UV04 — round 3 on this section. Round 1 (specific named people, "Sarah,
+// mum of two") read as real social proof no matter how small the
+// disclaimer was. Round 2 (unnamed "Example parent reaction" quotes under
+// a visible warning badge) was honest but read as an unfinished, still-
+// testing prototype — the opposite of the "feels like a real, established
+// product (Epic!, Duolingo)" impression Kiefer wants here. Neither of
+// those is actually how a real product's own landing page solves this
+// problem: Epic!/Duolingo don't invent individual user quotes either —
+// they lead with confident, verifiable claims about the product itself.
+// This section does the same: every line below is something already true
+// of the real, running app (matches the FAQ/How it works sections'
+// claims), just framed as a trust-badge grid instead of a bullet list —
+// no invented person, no fabricated rating, nothing here that isn't
+// already demonstrably real.
+const TRUST_POINTS = [
+  { icon: ShieldIcon, title: 'Every item is human-reviewed', text: 'Nothing reaches a recommendation until a real moderator has approved it — no exceptions.' },
+  { icon: CompassIcon, title: 'Never an open search', text: "Pip only ever recommends from the curated catalogue — it can't reach into the open internet." },
+  { icon: ChatIcon, title: 'Full activity visibility', text: 'Parents can see exactly what their child asked and read, any time, in the dashboard.' },
+  { icon: LockIcon, title: 'Privacy by design', text: 'No ads, no behavioural profiling of children, built around parental consent from day one.' },
 ]
 
 // "See Pip in action" — used to call the real chat endpoint live, on every
@@ -166,11 +170,52 @@ export default function Home() {
 
   const money = (n) => `${plans.currency} ${Number(n).toFixed(2)}`
 
+  // Scroll-reveal for every section below the hero — a plain fade+slide-up
+  // the first time each one crosses into view, instead of the whole page
+  // sitting fully rendered and static (Kiefer's own call: the page reads
+  // as more "alive"/current with this, less like a one-shot static export).
+  // One shared IntersectionObserver, not the visibility-poll pattern used
+  // elsewhere on this page (see the demo section's own comment) — that
+  // pattern exists specifically for spots needing precise MULTI-STAGE
+  // timing after the trigger; a plain one-time "has this scrolled into
+  // view" check across many independent elements is exactly what
+  // IntersectionObserver is for, and cheaper than polling each of them.
+  // Lazily created on first ref callback (not in a useEffect) so it
+  // already exists by the time React attaches every section's ref during
+  // the very first commit — an effect would run one tick too late for that.
+  const revealObserverRef = useRef(null)
+  const reveal = (el) => {
+    if (!el) return
+    if (!revealObserverRef.current) {
+      revealObserverRef.current = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('revealed')
+            revealObserverRef.current.unobserve(entry.target)
+          }
+        }
+      }, { threshold: 0.15 })
+    }
+    revealObserverRef.current.observe(el)
+  }
+  useEffect(() => () => revealObserverRef.current?.disconnect(), [])
+
+  // Nav goes from transparent-on-hero to a "glass" bar once the page has
+  // actually scrolled — a static nav read as inert; this is what most
+  // current SaaS/marketing sites do instead, and costs one scroll listener.
+  const [navScrolled, setNavScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setNavScrolled(window.scrollY > 24)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
   return (
     <div className="landing">
       {site.announcement && <div className="announce">{site.announcement}</div>}
 
-      <nav className="landing-nav">
+      <nav className={`landing-nav ${navScrolled ? 'landing-nav--scrolled' : ''}`}>
         <div className="landing-brand">
           <Avatar speaking={false} mood="happy" />
           <span>{site.site_title.split('—')[0].trim() || 'Pip'}</span>
@@ -209,7 +254,7 @@ export default function Home() {
 
         {/* UV02 — app information: one spotlighted idea + a plain supporting
             list, not four identical bordered cards. */}
-        <section className="section section--tint">
+        <section className="section reveal" ref={reveal}>
           <h2>How it works</h2>
           <div className="how-grid">
             <div className="how-spotlight">
@@ -238,7 +283,7 @@ export default function Home() {
             copy, not a product screen, so it doesn't need a live backend
             round-trip (or the earlier loading skeleton that came with
             waiting on one) just to show what a reply looks like. */}
-        <section className="section" ref={demoSectionRef}>
+        <section className="section section--tint" ref={demoSectionRef}>
           <h2>See Pip in action</h2>
           <p className="section-lead">A real exchange with Pip — a real question, matched to a real, moderator-approved catalogue item.</p>
           <div className="demo-chat">
@@ -291,7 +336,7 @@ export default function Home() {
             CatalogueCard below; the duplicate copy is aria-hidden so a
             screen reader doesn't hear every title twice). */}
         {catalogue.length > 0 && (
-          <section className="section section--tint">
+          <section className="section reveal" ref={reveal}>
             <h2>A peek at the catalogue</h2>
             <p className="section-lead">Every title here has already been reviewed and approved by a moderator. This is a live sample, not a mock-up.</p>
             <div className="catalogue-scroller">
@@ -306,7 +351,7 @@ export default function Home() {
         {/* The actual gap this product fills, per the team's own research —
             an asymmetric "old ways vs. Pip" layout, not three equal cards
             in a row. */}
-        <section className="section">
+        <section className="section reveal" ref={reveal}>
           <h2>Why not just search?</h2>
           <div className="diff-layout">
             <div className="diff-old">
@@ -331,7 +376,7 @@ export default function Home() {
         {/* CH19/CH20 — the real avatar picker, shown here as a preview
             (not interactive on this page — picking happens at first login).
             Same five characters/colours the child screen actually offers. */}
-        <section className="section section--tint">
+        <section className="section reveal" ref={reveal}>
           <h2>Meet your reading buddy</h2>
           <p className="section-lead">Every child picks their own Pip on first login — five real characters, not just five paint colours.</p>
           <div className="buddy-grid">
@@ -348,7 +393,7 @@ export default function Home() {
             "featured" treatment is used on this page — everywhere else that
             device was retired in favour of outline/tint, so it keeps a
             single, unambiguous meaning: the plan that costs money. */}
-        <section className="section">
+        <section className="section section--tint reveal" ref={reveal}>
           <h2>Simple plans</h2>
           <div className="plan-grid">
             <div className="plan">
@@ -360,7 +405,7 @@ export default function Home() {
                 <li><CheckIcon width={16} height={16} /> 1 child profile</li>
                 <li><CheckIcon width={16} height={16} /> Basic parent dashboard</li>
               </ul>
-              <Link className="cta cta-parent" to="/parent">Get started</Link>
+              <Link className="cta cta-parent" to="/parent">Get Pip for free</Link>
             </div>
             <div className="plan plan-featured">
               <div className="plan-badge">Most popular</div>
@@ -372,7 +417,7 @@ export default function Home() {
                 <li><CheckIcon width={16} height={16} /> Unlimited saved favourites</li>
                 <li><CheckIcon width={16} height={16} /> Full activity history &amp; insights</li>
               </ul>
-              <Link className="cta cta-child" to="/parent">Choose Premium</Link>
+              <Link className="cta cta-child" to="/parent">Get Premium plan</Link>
             </div>
             {/* Ultra — the one plan with no "Most popular" badge, per
                 Kiefer's explicit call: that stays a single, unambiguous
@@ -384,23 +429,22 @@ export default function Home() {
                 <li><CheckIcon width={16} height={16} /> Everything in Premium</li>
                 <li><CheckIcon width={16} height={16} /> Unlimited child profiles</li>
               </ul>
-              <Link className="cta cta-parent" to="/parent">Choose Ultra</Link>
+              <Link className="cta cta-parent" to="/parent">Get Ultra plan</Link>
             </div>
           </div>
-          <p className="plan-note">Free to start, for one child profile, for as long as you like. Prototype: payments aren't live yet; pricing is set by the admin console.</p>
+          <p className="plan-note">Free to start, for one child profile, for as long as you like.</p>
         </section>
 
-        {/* UV04 — user reviews, illustrative — see the comment on REVIEWS
-            above for why this looks the way it does. */}
-        <section className="section section--tint">
-          <h2>What parents say</h2>
-          <p className="reviews-flag"><AlertIcon width={14} height={14} /> Illustrative examples — Pip has no live families yet, so nothing below is a real quote from a real parent.</p>
-          <div className="review-grid">
-            {REVIEWS.map((r) => (
-              <div className="review" key={r.text}>
-                <QuoteIcon className="review-quote" width={24} height={24} />
-                <p className="review-text">{r.text}</p>
-                <p className="review-name">Example parent reaction</p>
+        {/* UV04 — see TRUST_POINTS above for why this is a trust-badge grid
+            of real product claims, not invented user quotes. */}
+        <section className="section reveal" ref={reveal}>
+          <h2>Why families trust Pip</h2>
+          <div className="trust-grid">
+            {TRUST_POINTS.map((t) => (
+              <div className="trust-point" key={t.title}>
+                <div className="trust-icon"><t.icon width={20} height={20} /></div>
+                <h3>{t.title}</h3>
+                <p>{t.text}</p>
               </div>
             ))}
           </div>
@@ -408,20 +452,10 @@ export default function Home() {
 
         {/* Answers the objections a parent would actually have before
             signing up — real feature claims, not filler copy. */}
-        <section className="section">
+        <section className="section reveal" ref={reveal}>
           <h2>Questions parents ask</h2>
           <div className="faq-list">
-            {FAQS.map((f) => (
-              <details className="faq-item" key={f.q}>
-                <summary>
-                  <span className="faq-summary-inner">
-                    <span className="faq-icon"><f.icon width={16} height={16} /></span>
-                    <span className="faq-q">{f.q}</span>
-                  </span>
-                </summary>
-                <p>{f.a}</p>
-              </details>
-            ))}
+            {FAQS.map((f) => <FaqItem key={f.q} icon={f.icon} q={f.q} a={f.a} />)}
           </div>
         </section>
 
@@ -439,7 +473,7 @@ export default function Home() {
       </main>
 
       <footer className="landing-footer">
-        <p className="landing-footer-meta">FYP-26-S3-18 prototype build</p>
+        <p className="landing-footer-meta">© {new Date().getFullYear()} Pip. All rights reserved.</p>
         <p className="landing-footer-links">
           <Link to="/moderator" className="home-link">Moderator</Link> · <Link to="/admin" className="home-link">Admin</Link>
         </p>
@@ -463,5 +497,60 @@ function CatalogueCard({ item: c, ariaHidden }) {
         <h3>{curateTitle(c.title)}</h3>
       </div>
     </div>
+  )
+}
+
+// Native <details>/<summary> gives real keyboard/screen-reader semantics
+// for free, but snaps open/closed instantly — no CSS-only way to animate
+// its height across browsers. This drives that one thing manually with
+// the Web Animations API instead of replacing <details> with a custom
+// (less accessible) div-based accordion. `details.open` stays the DOM's
+// own source of truth (read directly, not mirrored into React state) —
+// letting React re-render `open` from state would fight the animation by
+// flipping the attribute instantly on every render.
+function FaqItem({ icon: Icon, q, a }) {
+  const detailsRef = useRef(null)
+  const animRef = useRef(null)
+  const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+  function onSummaryClick(e) {
+    e.preventDefault()
+    const details = detailsRef.current
+    if (!details) return
+    if (reducedMotion) { details.open = !details.open; return }
+
+    animRef.current?.cancel()
+    const summaryHeight = details.querySelector('summary').offsetHeight
+
+    if (!details.open) {
+      details.open = true
+      const fullHeight = details.scrollHeight
+      details.style.overflow = 'hidden'
+      animRef.current = details.animate(
+        { height: [`${summaryHeight}px`, `${fullHeight}px`] },
+        { duration: 260, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+      )
+      animRef.current.onfinish = () => { details.style.height = ''; details.style.overflow = '' }
+    } else {
+      const startHeight = details.offsetHeight
+      details.style.overflow = 'hidden'
+      animRef.current = details.animate(
+        { height: [`${startHeight}px`, `${summaryHeight}px`] },
+        { duration: 220, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+      )
+      animRef.current.onfinish = () => { details.open = false; details.style.height = ''; details.style.overflow = '' }
+    }
+  }
+
+  return (
+    <details className="faq-item" ref={detailsRef}>
+      <summary onClick={onSummaryClick}>
+        <span className="faq-summary-inner">
+          <span className="faq-icon"><Icon width={16} height={16} /></span>
+          <span className="faq-q">{q}</span>
+        </span>
+      </summary>
+      <p>{a}</p>
+    </details>
   )
 }
