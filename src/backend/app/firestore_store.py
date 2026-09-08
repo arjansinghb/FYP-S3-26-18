@@ -93,7 +93,19 @@ def _get_client():
     from firebase_admin import credentials, firestore
 
     if not firebase_admin._apps:
-        cred = credentials.Certificate(str(settings.firebase_admin_credentials_full_path))
+        # Vercel (and serverless platforms generally) have no writable/
+        # persistent filesystem to upload secrets/firebase-admin.json to —
+        # it's also deliberately gitignored, so a GitHub-triggered deploy
+        # wouldn't have the file even if the platform did support one. The
+        # real credential there is FIREBASE_ADMIN_CREDENTIALS_JSON, the
+        # service account key's raw JSON *content* pasted into a Vercel env
+        # var. Local dev keeps using the file path exactly as before —
+        # this only adds a second, env-var-based way in, doesn't remove
+        # the first.
+        if settings.FIREBASE_ADMIN_CREDENTIALS_JSON:
+            cred = credentials.Certificate(json.loads(settings.FIREBASE_ADMIN_CREDENTIALS_JSON))
+        else:
+            cred = credentials.Certificate(str(settings.firebase_admin_credentials_full_path))
         firebase_admin.initialize_app(cred, {"projectId": settings.FIREBASE_PROJECT_ID})
     _client = firestore.client()
     return _client

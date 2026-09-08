@@ -75,6 +75,12 @@ class Settings:
     # see app/firestore_store.py, the storage swap point) ---
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")
     FIREBASE_ADMIN_CREDENTIALS_PATH = os.getenv("FIREBASE_ADMIN_CREDENTIALS_PATH", "./secrets/firebase-admin.json")
+    # Vercel deploy path (2026-09-08) — the service account key's raw JSON
+    # *content*, pasted into a Vercel env var, since secrets/firebase-admin.json
+    # is deliberately gitignored (never committed) and a serverless platform
+    # has nothing to upload it TO even if it were. Local dev is untouched —
+    # this is empty there, so firestore_store.py keeps using the file path.
+    FIREBASE_ADMIN_CREDENTIALS_JSON = os.getenv("FIREBASE_ADMIN_CREDENTIALS_JSON", "")
 
     # --- Content source APIs (not wired into an endpoint yet — reserved for
     # a future CM03 "import from Google Books/YouTube" pass) ---
@@ -91,10 +97,13 @@ class Settings:
 
     @property
     def firebase_configured(self) -> bool:
-        """True once a real Firebase Admin service-account file + project id
-        exist. Until then, storage.py stays in-memory-only (same behaviour as
+        """True once a real Firebase Admin credential (either the local
+        JSON file, or FIREBASE_ADMIN_CREDENTIALS_JSON for a serverless
+        deploy — see that setting's own comment) + project id exist.
+        Until then, storage.py stays in-memory-only (same behaviour as
         before this pass) — see app/firestore_store.py."""
-        return bool(self.FIREBASE_PROJECT_ID) and self.firebase_admin_credentials_full_path.is_file()
+        has_cred = bool(self.FIREBASE_ADMIN_CREDENTIALS_JSON) or self.firebase_admin_credentials_full_path.is_file()
+        return bool(self.FIREBASE_PROJECT_ID) and has_cred
 
     @property
     def openai_configured(self) -> bool:
