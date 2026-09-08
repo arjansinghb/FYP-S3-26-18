@@ -15,8 +15,42 @@
       rel="stylesheet"
     />
     <title>Pip — Reading Buddy</title>
+    <!-- Boot splash: plain inline CSS (no dependency on index.css or the
+         Nunito webfont having loaded yet), removed by main.jsx once React
+         has actually mounted. Real value is masking real network latency
+         on a slow connection/production deploy, not this dev server —
+         but it also means the app never opens on a blank white flash. -->
+    <style>
+      #boot-splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+        background: #6a2ea0;
+        transition: opacity 0.35s ease, visibility 0.35s ease;
+      }
+      #boot-splash.boot-splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+      .boot-splash-mark {
+        width: 64px; height: 64px; border-radius: 50%;
+        background: #f3ecff;
+        animation: boot-pulse 1.4s ease-in-out infinite;
+      }
+      .boot-splash-label {
+        font-family: 'Nunito', system-ui, sans-serif;
+        color: #f3ecff; font-weight: 800; font-size: 15px; letter-spacing: 0.02em;
+      }
+      @keyframes boot-pulse {
+        0%, 100% { transform: scale(0.88); opacity: 0.85; }
+        50%      { transform: scale(1.05); opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash-mark { animation: none; }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" aria-hidden="true">
+      <div class="boot-splash-mark"></div>
+      <p class="boot-splash-label">Pip is waking up…</p>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

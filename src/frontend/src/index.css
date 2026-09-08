@@ -58,6 +58,24 @@
   /* ACCENT (amber) — ONE job: star ratings. Nothing else uses this. */
   --accent-600: #b8720f;
 
+  /* ON-PRIMARY — text/icon colour for anything sitting on a solid
+     --primary-700 fill (buttons, badges, filled panels). One job: contrast
+     against that one fill. Never used on any other background. */
+  --on-primary: #ffffff;
+  --on-primary-muted: rgba(255, 255, 255, 0.92);
+
+  /* STATUS (staff consoles only) — the moderator/admin workflows have real
+     approve/reject/error states the child and marketing surfaces never
+     needed, so purple+amber alone can't carry them; a deliberate, flagged
+     extension of the token system, not a quiet violation of it. "Pending"
+     deliberately does not get a third hue — it is the absence of a
+     verdict, so it stays neutral, reusing the border and muted tokens,
+     instead of spending a fourth colour on "no decision yet". */
+  --danger-700: #b0245c;  /* reject / remove / destructive actions, error text */
+  --danger-100: #fde2ec;  /* tinted background: danger badges, danger button fill */
+  --success-700: #1c7a4a; /* approved / success status only */
+  --success-100: #dcf6e8; /* tinted background: success badges */
+
   /* NEUTRALS — ink for headings, text for body, muted for the least
      important label on the page, never for a paragraph a user is
      meant to actually read. */

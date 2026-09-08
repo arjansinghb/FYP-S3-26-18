@@ -10,6 +10,7 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
+from .. import metrics
 from ..config import settings
 from ..deps import require_role
 from ..storage import db
@@ -46,6 +47,9 @@ def stats(admin: dict = Depends(require_role("admin"))):
         "tickets_open": sum(1 for t in db.tickets if t["status"] == "open"),
         "brain": settings.BRAIN_PROVIDER,
         "uptime_seconds": int(time.time() - db.started),
+        # SA08 — "API uptime, error rates, NLP/recommendation service
+        # latency" per the URS's own wording, not just request counts.
+        **metrics.snapshot(),
     }
 
 

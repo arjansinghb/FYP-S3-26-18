@@ -74,6 +74,14 @@ export async function askPip(message, sessionId) {
   return request('/api/chat', { method: 'POST', body: { message, session_id: sessionId }, auth: 'child' })
 }
 
+// Real genre counts off the child's own visible catalogue (age band/safety
+// settings already applied server-side) — used to build the starter chips
+// from what's actually in the catalogue instead of six always-the-same
+// guesses.
+export async function getTopics() {
+  return request('/api/chat/topics', { auth: 'child' })
+}
+
 // ----- child session (CH01/CH02 login, CH03 logout) -----
 // CH01: this device hasn't been activated for a child yet -> full code+PIN.
 // CH02: it has -> the device remembers which child (id only, nothing
@@ -117,6 +125,9 @@ export async function saveFavourite(contentId) {
 }
 export async function myFavourites() {
   return request('/api/chat/favourites', { auth: 'child' })
+}
+export async function removeFavourite(contentId) {
+  return request(`/api/chat/favourite/${contentId}`, { method: 'DELETE', auth: 'child' })
 }
 export async function sendFeedback(contentId, liked) {
   return request('/api/chat/feedback', { method: 'POST', body: { content_id: contentId, liked }, auth: 'child' })
@@ -209,8 +220,10 @@ export async function markNotificationRead(id) {
 export async function getSubscriptionStatus() {
   return request('/api/account/subscription', { auth: true })
 }
-export async function subscribePremium(billingCycle, paymentMethod) {
-  return request('/api/account/subscribe', { method: 'POST', body: { billing_cycle: billingCycle, payment_method: paymentMethod }, auth: true })
+// `tier`: 'premium' | 'ultra' (Ultra tier, 2026-09-07) — also the upgrade
+// path between the two paid tiers, not just Free -> paid.
+export async function subscribe(tier, billingCycle, paymentMethod) {
+  return request('/api/account/subscribe', { method: 'POST', body: { tier, billing_cycle: billingCycle, payment_method: paymentMethod }, auth: true })
 }
 export async function cancelPremium() {
   return request('/api/account/cancel-premium', { method: 'POST', auth: true })

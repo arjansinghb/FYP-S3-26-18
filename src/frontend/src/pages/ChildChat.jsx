@@ -1,32 +1,49 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import RecommendationCard from '../components/RecommendationCard'
 import ChildLogin from './ChildLogin'
 import {
-  askPip, getChildToken, getChildMe, childLogout, setChildAvatar,
-  saveFavourite, myFavourites, sendFeedback, startChatSession, endChatSession,
+  askPip, getChildToken, getChildMe, childLogout, setChildAvatar, getTopics,
+  saveFavourite, removeFavourite, myFavourites, sendFeedback, startChatSession, endChatSession,
 } from '../api'
-import { getReply } from '../placeholderBot'
+import { curateTitle } from '../curate'
 import {
-  BookIcon, CloseIcon, CompassIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
-  PaletteIcon, PawIcon, RefreshIcon, SendIcon, SparkleIcon, VideoIcon,
+  BookIcon, ChatIcon, CloseIcon, CompassIcon, FlameIcon, FlaskIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
+  PaletteIcon, PawIcon, SendIcon, SparkleIcon, SpeakerIcon, TrashIcon, VideoIcon,
 } from '../icons'
+import { recordVisit } from '../streak'
 import '../App.css'
 import './child.css'
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
-// A handful of ready-made openers so a child who isn't a confident typer (or
-// just doesn't know where to start) has a one-tap way in — shown only before
-// the first real message, so they don't clutter an in-progress conversation.
-const STARTER_PROMPTS = [
+// Two openers that aren't a "topic" (nothing in the catalogue is tagged
+// "surprise me") — always shown, real topic chips fill the rest of the row.
+const EVERGREEN_PROMPTS = [
   { icon: SparkleIcon, label: 'Surprise me', message: 'Surprise me with something fun!' },
+  { icon: MoonIcon, label: 'Something calm', message: 'I want something calm and cosy.' },
+]
+// Only used if /api/chat/topics hasn't returned yet (or came back empty) —
+// so the row is never sparse on first paint while the real data loads.
+const FALLBACK_TOPIC_PROMPTS = [
   { icon: BookIcon, label: 'A good book', message: "I'd like a good book to read." },
   { icon: VideoIcon, label: 'A fun video', message: "I'd like to watch something fun." },
   { icon: PawIcon, label: 'Animal stories', message: 'Do you have anything about animals?' },
   { icon: CompassIcon, label: 'Adventure', message: 'I want something exciting and adventurous.' },
-  { icon: MoonIcon, label: 'Something calm', message: 'I want something calm and cosy.' },
 ]
+const GENRE_ICONS = {
+  animals: PawIcon, nature: PawIcon,
+  adventure: CompassIcon, dinosaur: CompassIcon, mystery: CompassIcon, space: CompassIcon,
+  cosy: MoonIcon, calming: MoonIcon,
+  science: FlaskIcon,
+  funny: SparkleIcon, humor: SparkleIcon,
+}
+function iconForGenre(genre) {
+  return GENRE_ICONS[genre.toLowerCase()] || BookIcon
+}
+function capitalize(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
 
 function newId() {
   return Math.random().toString(36).slice(2)
@@ -42,7 +59,14 @@ export default function ChildChat() {
     getChildMe().then(setChild).catch(() => childLogout()).finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="child-login"><p className="muted">Loading…</p></div>
+  if (loading) {
+    return (
+      <div className="child-login">
+        <Avatar speaking={false} mood="happy" />
+        <p className="muted">Finding your buddy…</p>
+      </div>
+    )
+  }
   if (!child) return <ChildLogin onLoggedIn={setChild} />
   return <Experience child={child} setChild={setChild} onLogout={() => { childLogout(); setChild(null) }} />
 }
@@ -52,10 +76,16 @@ function Experience({ child, setChild, onLogout }) {
   // The visible transcript IS the context window (see storage.session_history
   // on the backend) — every turn shown here is exactly what gets sent back to
   // the brain as conversation memory, nothing hidden or summarised away.
+  //
+  // Placeholder text until the streak effect below replaces it — the streak
+  // itself is known almost instantly (localStorage, not a network call), so
+  // this is up on screen for at most a frame or two, not a visible flash of
+  // the wrong greeting.
   const [turns, setTurns] = useState([
     { id: 'greeting', role: 'pip', text: `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.` },
   ])
-  const [overlay, setOverlay] = useState(null)   // 'favourites' | 'avatar' | null
+  const [view, setView] = useState('chat')       // 'chat' | 'library' — Library is a real screen, not a modal
+  const [overlay, setOverlay] = useState(null)   // 'avatar' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
   const [video, setVideo] = useState(null)       // a rec item
@@ -63,8 +93,58 @@ function Experience({ child, setChild, onLogout }) {
   const [sessionId, setSessionId] = useState(null)  // CH04 — ties messages together for real conversation memory (CH07)
   const recognitionRef = useRef(null)
   const transcriptEndRef = useRef(null)
+  const lastBubbleRef = useRef(null)
 
   const hasChatted = turns.some((t) => t.role === 'child')
+
+  // Daily-streak badge — frontend-only (see streak.js), recorded once when
+  // the chat screen mounts for this child, not on every message. Pip's own
+  // opening line reflects it too (CH04: "a returning child's greeting
+  // should draw on prior [visits], so it doesn't feel like starting over
+  // at a blank screen every visit") — the streak lives in a badge already,
+  // but a companion who never actually *says* "welcome back" is still
+  // just a UI element wearing a character's name.
+  const [streak, setStreak] = useState(0)
+  useEffect(() => {
+    const s = recordVisit(child.id)
+    setStreak(s)
+    const greeting = s > 1
+      ? `Hi ${child.name}! You're back ${s} days in a row — I love that! What should we find today?`
+      : `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.`
+    setTurns([{ id: 'greeting', role: 'pip', text: greeting }])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [child.id])
+
+  // Loaded once on mount (not just lazily when the Favourites overlay
+  // opens) so a returning child sees "pick up where you left off" on the
+  // screen they actually land on, instead of it only existing one tap
+  // behind a header button. See the "Welcome back" strip below.
+  useEffect(() => {
+    myFavourites().then(setFavs).catch(() => {})
+  }, [child.id])
+
+  // Real topic chips (see FALLBACK_TOPIC_PROMPTS above for what shows
+  // while this is still loading or if it comes back empty).
+  const [topics, setTopics] = useState(null)
+  useEffect(() => {
+    getTopics().then(setTopics).catch(() => setTopics([]))
+  }, [child.id])
+
+  // Voice on/off — every Pip reply used to auto-narrate with no way to
+  // silence it short of the device's own volume. Persisted per child,
+  // same localStorage pattern as the streak counter.
+  const canSpeak = 'speechSynthesis' in window
+  const [muted, setMuted] = useState(() => {
+    try { return localStorage.getItem(`pip_muted_${child.id}`) === '1' } catch { return false }
+  })
+  function toggleMuted() {
+    setMuted((m) => {
+      const next = !m
+      try { localStorage.setItem(`pip_muted_${child.id}`, next ? '1' : '0') } catch { /* ignore */ }
+      if (next) window.speechSynthesis?.cancel()
+      return next
+    })
+  }
 
   // CH04 — a chat session starts once, when the child reaches this screen
   // (already-logged-in trigger, per the URS). Its id rides along on every
@@ -82,7 +162,22 @@ function Experience({ child, setChild, onLogout }) {
     // child switching apps mid-reply could come back to the reply scrolled
     // out of view. Instant scroll is a synchronous position set, not subject
     // to that — reliability here matters more than the animation.
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+    //
+    // Which target we scroll to differs on purpose: a reply that comes with
+    // recommendation cards is tall (bubble + cards + "something else"), and
+    // scrolling all the way to the transcript's own end hid Pip's own
+    // sentence above the fold — a child would see only cards, which reads
+    // exactly like a bare search-results list. For that case, scroll the
+    // reply bubble itself into view (top-aligned) so what Pip said is
+    // always visible before the cards. Every other case (plain text reply,
+    // the child's own just-sent message, the pending "thinking" bubble)
+    // keeps the original behaviour of scrolling to the true end.
+    const last = turns[turns.length - 1]
+    if (last?.role === 'pip' && !last.pending && last.recs?.length > 0) {
+      lastBubbleRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' })
+    } else {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+    }
   }, [turns])
 
   // CH05 — ends the session on logout ("before handing back a shared
@@ -96,7 +191,7 @@ function Experience({ child, setChild, onLogout }) {
   const color = child.avatar in AVATAR_COLORS ? child.avatar : 'purple'
 
   function speak(text) {
-    if (!('speechSynthesis' in window)) { setStatus('idle'); return }
+    if (!('speechSynthesis' in window) || muted) { setStatus('idle'); return }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     u.rate = 0.95
@@ -110,6 +205,23 @@ function Experience({ child, setChild, onLogout }) {
     u.onend = () => setStatus('idle')
     u.onerror = () => setStatus('idle')
     window.speechSynthesis.speak(u)
+  }
+
+  // Pip actually reacts to a save instead of it being silent UI-state on a
+  // button — Khan Academy Kids' "companion acknowledges what you did"
+  // principle, adapted narrowly: no new badge/chrome, just Pip's existing
+  // voice reused for one more real moment. Also fixes a real (if small)
+  // continuity bug: `favs` was only ever fetched on mount, so a freshly
+  // saved item didn't show up in the Library/Welcome-back strip until the
+  // next full reload.
+  // Async, and re-throws on failure (the free-favourites-cap 403 included)
+  // so RecommendationCard's own save() can show the real error instead of
+  // both of us assuming success — see that component for why this used to
+  // be a false-positive "Saved!" regardless of what the API actually did.
+  async function handleSave(item) {
+    await saveFavourite(item.id)
+    setFavs((prev) => (prev.some((f) => f.id === item.id) ? prev : [...prev, item]))
+    speak(`Saved it! I'll remember you like ${curateTitle(item.title)}.`)
   }
 
   async function ask(message) {
@@ -128,7 +240,18 @@ function Experience({ child, setChild, onLogout }) {
       )))
       speak(res.reply)
     } catch {
-      const fallback = getReply(message)
+      // Used to fall back to a local keyword-matched "brain" (placeholderBot.js
+      // — a leftover from before the real backend existed) that named
+      // specific book/video titles by itself. That's a real safety-principle
+      // violation, not just stale copy: this product's whole guarantee is
+      // that Pip can only ever recommend something a moderator already
+      // vetted, never invent one — and the failure path is exactly where a
+      // silent violation like that is easiest to miss (found during an
+      // audit, not by anyone hitting it live). An honest "something went
+      // wrong, try again" — with zero recommendations, same as any other
+      // real error — is the only fallback that keeps that guarantee even
+      // when the backend call itself fails.
+      const fallback = "Hmm, I'm having a little trouble right now. Can you try asking again in a moment?"
       setTurns((t) => t.map((turn) => (
         turn.id === pipId ? { ...turn, text: fallback, recs: [], pending: false } : turn
       )))
@@ -176,9 +299,40 @@ function Experience({ child, setChild, onLogout }) {
     return () => { window.speechSynthesis?.cancel(); recognitionRef.current?.abort?.() }
   }, [])
 
-  async function openFavourites() {
-    setOverlay('favourites')
-    try { setFavs(await myFavourites()) } catch { setFavs([]) }
+  const [favsError, setFavsError] = useState(false)
+  async function openLibrary() {
+    setView('library')
+    setFavsError(false)
+    try { setFavs(await myFavourites()) } catch { setFavsError(true) }
+  }
+
+  // CH16's missing half — without this, the free-tier 5-item cap (PA34) is
+  // permanent: once a Free child fills their library there's no way to make
+  // room for something new. Optimistic (unlike handleSave, a failed remove
+  // has no safety-relevant consequence to hide), but still reverts on a
+  // genuine failure rather than silently pretending it worked.
+  async function handleRemoveFavourite(item) {
+    setFavs((prev) => prev.filter((f) => f.id !== item.id))
+    try {
+      await removeFavourite(item.id)
+    } catch {
+      setFavs((prev) => (prev.some((f) => f.id === item.id) ? prev : [...prev, item]))
+    }
+  }
+
+  // Point 6 of the product brief: the "keep exploring by category" pattern
+  // from YouTube Kids/PBS Kids ("up next," character/topic rails), adapted
+  // narrowly — not copied as a browsable grid (that's exactly the
+  // search-engine pattern this product exists to not be). The moment a
+  // child is engaged enough to open Details or press Watch is the natural
+  // point to offer "more like this," using the item's own real genre tag
+  // (never a fabricated "recommended for you" claim) instead of a second
+  // affordance crammed onto every card.
+  function moreLikeThis(item) {
+    setDetails(null)
+    setVideo(null)
+    const genre = item.genres?.[0]
+    ask(genre ? `Do you have more ${item.type}s about ${genre}?` : `Do you have anything else like ${curateTitle(item.title)}?`)
   }
 
   async function pickAvatar(key) {
@@ -199,25 +353,50 @@ function Experience({ child, setChild, onLogout }) {
   return (
     <div className="child-screen">
       <div className="child-bar">
-        <span className="who">Hi, {child.name}!</span>
+        <h1 className="who">
+          Hi, {child.name}!
+          {streak > 1 && (
+            <span className="streak-badge"><FlameIcon width={14} height={14} /> {streak}-day streak</span>
+          )}
+        </h1>
         <div className="bar-btns">
-          <button className="pill" onClick={openFavourites}><HeartIcon width={16} height={16} /> Favourites</button>
+          {canSpeak && (
+            <button className="pill" onClick={toggleMuted} aria-label={muted ? "Turn Pip's voice on" : "Turn Pip's voice off"}>
+              <SpeakerIcon muted={muted} width={16} height={16} /> {muted ? 'Sound off' : 'Sound on'}
+            </button>
+          )}
+          <button
+            className={`pill ${view === 'library' ? 'pill--active' : ''}`}
+            onClick={() => (view === 'library' ? setView('chat') : openLibrary())}
+          >
+            <HeartIcon width={16} height={16} filled={view === 'library'} /> Library
+          </button>
           <button className="pill" onClick={() => setOverlay('avatar')}><PaletteIcon width={16} height={16} /> Avatar</button>
           <button className="pill" onClick={logoutAndEndSession}><LogoutIcon width={16} height={16} /> Log out</button>
         </div>
       </div>
 
+      {view === 'library' ? (
+        <LibraryView
+          favs={favs}
+          favsError={favsError}
+          onRetry={openLibrary}
+          onRemove={handleRemoveFavourite}
+          onTalkAbout={(title) => { setView('chat'); ask(`Tell me more about ${title}`) }}
+        />
+      ) : (
+      <>
       <div className="chat-shell">
         <div className="chat-presence">
-          <div className="chat-presence-glow" />
+          <div className={`chat-presence-glow ${speaking ? 'chat-presence-glow--active' : ''}`} />
           <Avatar speaking={speaking} mood={speaking ? 'idle' : 'happy'} color={color} />
-          <p className={`chat-status ${listening ? 'chat-status-listening' : ''}`}>{statusLine || ' '}</p>
+          <p className={`chat-status ${listening ? 'chat-status-listening' : ''}`} aria-live="polite">{statusLine || ' '}</p>
         </div>
 
-        <div className="chat-transcript">
-          {turns.map((turn) => (
+        <div className="chat-transcript" role="log" aria-live="polite">
+          {turns.map((turn, i) => (
             <div key={turn.id} className={`bubble-row bubble-row-${turn.role}`}>
-              <div className={`bubble bubble-${turn.role}`}>
+              <div ref={i === turns.length - 1 ? lastBubbleRef : null} className={`bubble bubble-${turn.role}`}>
                 {turn.pending ? (
                   <span className="bubble-dots" aria-label="Pip is thinking">
                     <span></span><span></span><span></span>
@@ -227,27 +406,71 @@ function Experience({ child, setChild, onLogout }) {
 
               {turn.recs?.length > 0 && (
                 <div className="bubble-recs">
-                  {turn.recs.map((item) => (
+                  {turn.recs.map((item, i) => (
                     <RecommendationCard
                       key={item.id}
                       item={item}
+                      topPick={i === 0 && turn.recs.length > 1}
                       onDetails={setDetails}
                       onWatch={setVideo}
-                      onSave={(it) => saveFavourite(it.id).catch(() => {})}
+                      onSave={handleSave}
                       onFeedback={(it, liked) => sendFeedback(it.id, liked).catch(() => {})}
                     />
                   ))}
+                  {/* A sparkle, not a reload icon — "show me another" is
+                      Pip offering a new idea, not the page retrying a
+                      failed request. */}
                   <button className="pill" onClick={() => ask(turn.sourceMessage)}>
-                    <RefreshIcon width={15} height={15} /> Show me another
+                    <SparkleIcon width={15} height={15} /> Something else, please!
                   </button>
                 </div>
               )}
             </div>
           ))}
 
+          {!hasChatted && (streak > 1 || favs.length > 0) && (
+            // A returning child's whole "product hub" is this screen — there's
+            // no separate browse-first homepage by design (that's the search-
+            // engine pattern this product exists to not be). So continuity has
+            // to live here: the streak they already earned, and real saved
+            // items they can jump straight back into talking about, instead of
+            // greeting a three-day regular exactly like a first-time visitor.
+            <div className="welcome-back">
+              <p className="welcome-back-lead">
+                {streak > 1 ? `Welcome back — ${streak} days in a row!` : 'Welcome back!'}
+              </p>
+              {favs.length > 0 && (
+                <div className="welcome-back-favs">
+                  <span className="welcome-back-favs-label">Pick up where you left off</span>
+                  <div className="welcome-back-fav-row">
+                    {favs.slice(0, 3).map((f) => (
+                      <button
+                        key={f.id}
+                        className="welcome-back-fav-chip"
+                        onClick={() => ask(`Tell me more about ${curateTitle(f.title)}`)}
+                      >
+                        {f.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />}
+                        {curateTitle(f.title)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {!hasChatted && (
             <div className="starter-row">
-              {STARTER_PROMPTS.map(({ icon: Icon, label, message }) => (
+              {[
+                ...EVERGREEN_PROMPTS,
+                ...(topics && topics.length > 0
+                  ? topics.slice(0, 4).map((t) => ({
+                      icon: iconForGenre(t.genre),
+                      label: capitalize(t.genre),
+                      message: `Do you have anything about ${t.genre}?`,
+                    }))
+                  : FALLBACK_TOPIC_PROMPTS),
+              ].map(({ icon: Icon, label, message }) => (
                 <button key={label} className="starter-chip" onClick={() => ask(message)}>
                   <Icon width={17} height={17} />
                   {label}
@@ -288,17 +511,7 @@ function Experience({ child, setChild, onLogout }) {
           <SendIcon width={18} height={18} />
         </button>
       </form>
-
-      {/* CH16 — favourites */}
-      {overlay === 'favourites' && (
-        <Overlay title="My Favourites" onClose={() => setOverlay(null)}>
-          {favs.length === 0 && <p className="muted">You haven't saved anything yet. Tap Save on a suggestion!</p>}
-          {favs.map((f) => (
-            <div key={f.id} className="fav-row">
-              {f.type === 'book' ? <BookIcon width={17} height={17} /> : <VideoIcon width={17} height={17} />} {f.title}
-            </div>
-          ))}
-        </Overlay>
+      </>
       )}
 
       {/* CH19/CH20 — choose / edit avatar */}
@@ -321,18 +534,25 @@ function Experience({ child, setChild, onLogout }) {
         </Overlay>
       )}
 
-      {/* CH14 — content details */}
+      {/* CH14 — content details. Deliberately shows ONLY the short,
+          curated `explanation` field, never the catalogue's raw scraped
+          `description` (real box-set/marketing listing text — verified
+          live to include asterisk-bullet lists and mid-word truncation).
+          That field is disposable ad copy, not something Pip would ever
+          say to a child; the explanation is the actual curated content. */}
       {details && (
-        <Overlay title={details.title} icon={details.type === 'book' ? BookIcon : VideoIcon} onClose={() => setDetails(null)}>
+        <Overlay title={curateTitle(details.title)} icon={details.type === 'book' ? BookIcon : VideoIcon} onClose={() => setDetails(null)}>
           {details.thumbnail && <img className="rec-cover" src={details.thumbnail} alt="" />}
-          <p>{details.description || details.explanation}</p>
-          <p className="muted">Why Pip picked it: {details.explanation}</p>
+          <p className="rec-why">{details.explanation}</p>
+          <button className="pill overlay-more-like" onClick={() => moreLikeThis(details)}>
+            <CompassIcon width={15} height={15} /> More like this
+          </button>
         </Overlay>
       )}
 
       {/* CH12 — watch embedded video */}
       {video && (
-        <Overlay title={video.title} icon={VideoIcon} onClose={() => setVideo(null)}>
+        <Overlay title={curateTitle(video.title)} icon={VideoIcon} onClose={() => setVideo(null)}>
           <div className="video-box">
             {video.external_ref ? (
               <iframe
@@ -345,18 +565,111 @@ function Experience({ child, setChild, onLogout }) {
               <span>This is where the video plays.<br />(Sample catalogue — real, curated videos get linked in later.)</span>
             )}
           </div>
+          <button className="pill overlay-more-like" onClick={() => moreLikeThis(video)}>
+            <CompassIcon width={15} height={15} /> More like this
+          </button>
         </Overlay>
       )}
     </div>
   )
 }
 
+// CH16 — a real screen, not a modal a child has to remember exists. Every
+// saved item leads back into an actual conversation with Pip about it
+// ("Talk about this"), not a dead-end shelf — the library and the chat
+// are one product, not two features bolted together. Remove closes the
+// free-tier cap dead-end (PA34's 5-item limit was otherwise permanent).
+function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
+  return (
+    <div className="library-view">
+      <div className="library-head">
+        <h2><HeartIcon width={22} height={22} filled /> My Library</h2>
+        <p className="muted">{favs.length === 0 ? 'Nothing saved yet' : `${favs.length} saved ${favs.length === 1 ? 'item' : 'items'}`}</p>
+      </div>
+
+      {favs.length === 0 && favsError && (
+        <div className="library-empty">
+          <p className="muted">Pip couldn't load your library right now.</p>
+          <button className="pill" onClick={onRetry}>Try again</button>
+        </div>
+      )}
+
+      {favs.length === 0 && !favsError && (
+        <div className="library-empty">
+          <SparkleIcon width={30} height={30} />
+          <p>Nothing here yet — when Pip finds something you love, tap <b>Save</b> and it'll show up in your library.</p>
+        </div>
+      )}
+
+      {favs.length > 0 && (
+        <div className="library-grid">
+          {favs.map((f) => (
+            <div className="library-card" key={f.id}>
+              {f.thumbnail ? (
+                <img className="library-cover" src={f.thumbnail} alt="" loading="lazy" />
+              ) : (
+                <div className="library-cover library-cover-empty">
+                  {f.type === 'book' ? <BookIcon width={26} height={26} /> : <VideoIcon width={26} height={26} />}
+                </div>
+              )}
+              <div className="library-card-body">
+                <p className="library-card-title">
+                  {f.type === 'book' ? <BookIcon width={13} height={13} /> : <VideoIcon width={13} height={13} />}
+                  {curateTitle(f.title)}
+                </p>
+                {f.genres?.length > 0 && (
+                  <div className="rec-tags">
+                    {f.genres.slice(0, 2).map((g) => <span className="rec-tag" key={g}>{g}</span>)}
+                  </div>
+                )}
+                <div className="library-card-actions">
+                  <button className="library-card-action" onClick={() => onTalkAbout(curateTitle(f.title))}>
+                    <ChatIcon width={14} height={14} /> Talk about this
+                  </button>
+                  <button
+                    className="library-card-action library-card-action--remove"
+                    onClick={() => onRemove(f)}
+                    aria-label={`Remove ${curateTitle(f.title)} from your library`}
+                  >
+                    <TrashIcon width={14} height={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Overlay({ title, icon: Icon, children, onClose }) {
+  const titleId = useId()
+  const closeRef = useRef(null)
+  const triggerRef = useRef(document.activeElement)
+
+  useEffect(() => {
+    // Move focus into the dialog on open, restore it to whatever opened
+    // the dialog on close, and let Escape dismiss it — none of that
+    // existed before (a keyboard/screen-reader user had no signal a
+    // modal had even opened, and no way out but a mouse click).
+    closeRef.current?.focus()
+    function onKeyDown(e) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      triggerRef.current?.focus?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <button className="pill close" onClick={onClose} aria-label="Close"><CloseIcon width={16} height={16} /></button>
-        <h2>{Icon && <Icon width={20} height={20} />} {title}</h2>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e) => e.stopPropagation()}>
+        <button ref={closeRef} className="pill close" onClick={onClose} aria-label="Close"><CloseIcon width={16} height={16} /></button>
+        <h2 id={titleId}>{Icon && <Icon width={20} height={20} />} {title}</h2>
         {children}
       </div>
     </div>

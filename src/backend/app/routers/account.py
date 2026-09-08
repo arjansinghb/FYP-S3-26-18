@@ -135,21 +135,28 @@ def subscription_status(account: dict = Depends(require_role("parent"))):
 def subscribe(body: SubscribeRequest, account: dict = Depends(require_role("parent"))):
     """PA24 — includes PA26 (Update Payment Method) in the same flow per the
     URS's Sub-Flows; a payment method must exist on file by the end of this
-    call, either passed in here or already set via PUT /payment-method."""
-    if account["tier"] == "premium" and not account.get("subscription_cancel_at"):
-        raise HTTPException(400, "Already on Premium")
+    call, either passed in here or already set via PUT /payment-method.
+    Also doubles as the upgrade/downgrade path BETWEEN paid tiers (e.g.
+    Premium -> Ultra) — only rejected if it's the exact same tier with no
+    pending cancellation, not any call while already paid."""
+    if account["tier"] == body.tier and not account.get("subscription_cancel_at"):
+        raise HTTPException(400, f"Already on {body.tier.capitalize()}")
     if not body.payment_method and not account.get("payment_method"):
         raise HTTPException(400, "A payment method is required to subscribe.")
-    db.subscribe(account, body.billing_cycle, body.payment_method.model_dump() if body.payment_method else None)
-    db.add_notification(account["id"], "subscription_started", "Welcome to Premium!",
-                        "Your Premium subscription is now active.")
+    db.subscribe(account, body.tier, body.billing_cycle, body.payment_method.model_dump() if body.payment_method else None)
+    db.add_notification(account["id"], "subscription_started", f"Welcome to {body.tier.capitalize()}!",
+                        f"Your {body.tier.capitalize()} subscription is now active.")
     return subscription_status(account)
 
 
 @router.post("/cancel-premium", response_model=SubscriptionStatusOut)
 def cancel_premium(account: dict = Depends(require_role("parent"))):
-    if account["tier"] != "premium":
-        raise HTTPException(400, "Not currently on Premium")
+    """Name kept as-is (existing route, existing frontend/tests call it) —
+    cancels whichever paid tier the account is actually on, Premium or
+    Ultra; "Not currently on Premium" -> "Not currently subscribed" so the
+    message is still accurate for an Ultra account cancelling."""
+    if account["tier"] == "free":
+        raise HTTPException(400, "Not currently subscribed")
     db.cancel_subscription(account)
     return subscription_status(account)
 

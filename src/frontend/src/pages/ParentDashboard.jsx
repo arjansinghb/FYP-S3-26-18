@@ -9,21 +9,31 @@ import {
   requestPasswordReset, confirmPasswordReset,
   giveConsent, getPrivacySettings, updatePrivacySettings,
   requestChildDataDeletion, listChildDataDeletions, cancelChildDataDeletion,
-  listNotifications, markNotificationRead,
-  getSubscriptionStatus, subscribePremium, cancelPremium, resumePremium, getBillingHistory,
+  listNotifications, markNotificationRead, getNotificationPreferences, updateNotificationPreferences,
+  getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
+  getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin,
   childReports, childTrends, compareChildren,
 } from '../api'
+import {
+  AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
+  PlusIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
+} from '../icons'
 import './parent.css'
 
 export default function ParentDashboard() {
   const [account, setAccount] = useState(null)
   const [checking, setChecking] = useState(true)
 
-  // Restore an existing session on load.
+  // Restore an existing session on load — role-checked, same as
+  // Moderator/AdminDashboard. Without this, a moderator/admin token sitting
+  // in the same browser (shared token storage) would render this page for
+  // that account instead of falling through to the parent login form,
+  // surfacing as a confusing "Not allowed for this role" error from the
+  // parent-only API calls below instead of a clean sign-in screen.
   useEffect(() => {
     if (!getToken()) { setChecking(false); return }
-    getMe().then(setAccount).catch(() => {}).finally(() => setChecking(false))
+    getMe().then((a) => { if (a.role === 'parent') setAccount(a) }).catch(() => {}).finally(() => setChecking(false))
   }, [])
 
   function handleDeleted() {
@@ -157,7 +167,7 @@ function ForgotPassword({ onBack }) {
       )}
       {step === 'confirm' && (
         <form onSubmit={confirm} className="card">
-          {note && <p className="muted">⚠️ {note}</p>}
+          {note && <p className="muted"><AlertIcon width={14} height={14} /> {note}</p>}
           <label>Reset token
             <input value={token} onChange={(e) => setToken(e.target.value)} required />
           </label>
@@ -170,7 +180,7 @@ function ForgotPassword({ onBack }) {
       )}
       {step === 'done' && (
         <div className="card">
-          <p>✅ Password updated — you can sign in with your new password now.</p>
+          <p><CheckIcon width={16} height={16} /> Password updated — you can sign in with your new password now.</p>
           <button onClick={onBack}>Back to sign in</button>
         </div>
       )}
@@ -195,10 +205,13 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
   return (
     <div className="parent">
       <header className="parent-header">
-        <div>
-          <Link className="home-link" to="/">← Home</Link>
-          <h1>Parent Dashboard</h1>
-          <p className="muted">Signed in as {account.name} ({account.email})</p>
+        <div className="parent-header-who">
+          <div className="parent-header-role"><UserIcon width={20} height={20} /></div>
+          <div>
+            <Link className="home-link" to="/">← Home</Link>
+            <h1>Parent Dashboard</h1>
+            <p className="muted">Signed in as {account.name} ({account.email})</p>
+          </div>
         </div>
         <div className="row">
           <NotificationsBell />
@@ -212,13 +225,15 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 
       <AccountPanel account={account} onUpdated={onAccountUpdated} onDeleted={onDeleted} />
 
+      <NotificationSettings />
+
       <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
 
       <PrivacyPanel account={account} />
 
       <AddChild account={account} onAccountUpdated={onAccountUpdated} onAdded={reload} childCount={children.length} />
 
-      <h2>Your children ({children.length})</h2>
+      <h2><UserIcon width={20} height={20} /> Your children ({children.length})</h2>
       {children.length === 0 && <p className="muted">No child profiles yet. Add one above.</p>}
 
       {children.length > 1 && (
@@ -267,8 +282,8 @@ function VerifyBanner({ account, onAccountUpdated }) {
   }
 
   return (
-    <div className="card" style={{ background: '#fff8e8', borderColor: '#f0dca0' }}>
-      <p><b>Please verify your email</b> — needed before you can add a child profile.</p>
+    <div className="card" style={{ background: 'var(--primary-100)', borderColor: 'var(--primary-border)' }}>
+      <p><AlertIcon width={16} height={16} /> <b>Please verify your email</b> — needed before you can add a child profile.</p>
       <p className="muted">Dev mode: no email service is configured yet, so verification happens with one click here instead of a real email link.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
@@ -303,7 +318,7 @@ function NotificationsBell() {
   return (
     <div style={{ position: 'relative' }}>
       <button className="ghost small" onClick={toggle}>
-        🔔 {loaded && unread > 0 ? `(${unread})` : ''}
+        <BellIcon width={16} height={16} /> {loaded && unread > 0 ? `(${unread})` : ''}
       </button>
       {open && (
         <div className="card" style={{ position: 'absolute', right: 0, top: '110%', width: 320, zIndex: 10, maxHeight: 360, overflowY: 'auto' }}>
@@ -311,7 +326,10 @@ function NotificationsBell() {
           {items.length === 0 && <p className="muted">Nothing yet.</p>}
           {items.map((n) => (
             <div key={n.id} className="activity-item" style={{ cursor: 'pointer', opacity: n.read ? 0.6 : 1 }} onClick={() => read(n)}>
-              <p className="said-child" style={{ margin: 0 }}>{n.read ? '' : '🔵 '}{n.title}</p>
+              <p className="said-child" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {!n.read && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary-500)', flexShrink: 0 }} />}
+                {n.title}
+              </p>
               <p className="muted" style={{ margin: '2px 0' }}>{n.body}</p>
               <p className="ts">{new Date(n.created_at * 1000).toLocaleString()}</p>
             </div>
@@ -319,6 +337,62 @@ function NotificationsBell() {
         </div>
       )}
     </div>
+  )
+}
+
+// ---------- PA22: notification preferences ----------
+// The backend already had a real, working endpoint and even correctly
+// respected the in_app toggle server-side (storage.py's add_notification
+// checks it before ever creating a notification) — nothing here was ever
+// exposed in the UI, so a parent had no way to actually turn it off.
+// Honest about scope: only in_app is real right now (no email/SMS service
+// or push subscription infra exists in this backend) — email/push persist
+// as a preference like every real channel does, but don't deliver
+// anything yet, same "flag it, don't fake it" rule the rest of this
+// project follows for anything simulated.
+function NotificationSettings() {
+  const [prefs, setPrefs] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { getNotificationPreferences().then(setPrefs).catch(() => {}) }, [])
+
+  async function toggle(channel) {
+    if (!prefs) return
+    const channels = { ...prefs.channels, [channel]: !prefs.channels[channel] }
+    setPrefs({ channels }) // optimistic — a preference toggle is low-stakes to revert if the save fails
+    setSaving(true); setError('')
+    try {
+      await updateNotificationPreferences(channels)
+    } catch (err) {
+      setError(err.message)
+      setPrefs(prefs) // revert on a genuine failure
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!prefs) return null
+
+  return (
+    <section className="card">
+      <h3><BellIcon width={18} height={18} /> Notifications</h3>
+      <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
+        In-app — shows in the bell icon above
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
+        Email
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
+        Push
+      </label>
+      <p className="muted">Email and push are saved as a preference but aren't wired to a real delivery service in this prototype yet — only in-app notifications actually appear right now.</p>
+      {error && <p className="error">{error}</p>}
+    </section>
   )
 }
 
@@ -365,10 +439,15 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
       {!editing ? (
         <>
           <p className="muted">Name: <b>{account.name}</b></p>
-          <p className="muted">Email: <b>{account.email}</b> {account.verified ? '✅ verified' : '⚠️ not verified'}</p>
+          <p className="muted">
+            Email: <b>{account.email}</b>{' '}
+            <span className={`badge ${account.verified ? 'badge-approved' : 'badge-pending'}`}>
+              {account.verified ? 'verified' : 'not verified'}
+            </span>
+          </p>
           <p className="muted">Plan: <b>{account.tier === 'premium' ? 'Premium' : 'Free'}</b></p>
           <div className="row">
-            <button className="danger small" onClick={remove}>Delete account</button>
+            <button className="danger small" onClick={remove}><TrashIcon width={15} height={15} /> Delete account</button>
           </div>
         </>
       ) : (
@@ -395,30 +474,55 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
 
 // ---------- PA23-27: subscription / billing (simulated) ----------
 
+// Ultra tier (2026-09-07, Kiefer's own ask) — same Premium features plus
+// unlimited child profiles (Premium stays capped at 4). Kept as one small
+// lookup instead of scattering "premium vs ultra" copy across the JSX
+// below, so the two tiers' descriptions/prices stay next to each other.
+const TIER_INFO = {
+  premium: { label: 'Premium', desc: 'Up to 4 child profiles, unlimited favourites, full activity trends, multi-child comparison.' },
+  ultra: { label: 'Ultra', desc: 'Everything in Premium, plus unlimited child profiles — no cap for larger families.' },
+}
+
 function SubscriptionPanel({ account, onAccountUpdated }) {
   const [status, setStatus] = useState(null)
+  const [plans, setPlans] = useState(null)
   const [history, setHistory] = useState([])
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const [upgradeTier, setUpgradeTier] = useState('premium')
   const [showHistory, setShowHistory] = useState(false)
   const [billingCycle, setBillingCycle] = useState('monthly')
   const [cardBrand, setCardBrand] = useState('Visa')
   const [cardLast4, setCardLast4] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // PA26 — the endpoint (PUT /account/payment-method) already existed and
+  // worked; nothing in the UI ever called it, so a Premium parent could
+  // subscribe with a card but never actually update it afterward.
+  const [editingCard, setEditingCard] = useState(false)
+  const [newCardBrand, setNewCardBrand] = useState('Visa')
+  const [newCardLast4, setNewCardLast4] = useState('')
+  const [cardBusy, setCardBusy] = useState(false)
+  const [cardError, setCardError] = useState('')
 
   async function reload() {
     try { setStatus(await getSubscriptionStatus()) } catch { /* ignore */ }
   }
   useEffect(() => { reload() }, [account.tier])
+  useEffect(() => { getPublicPlans().then(setPlans).catch(() => {}) }, [])
 
-  async function subscribe(e) {
+  function priceFor(tier, cycle) {
+    if (!plans) return null
+    return plans[`${tier}_${cycle}_price`]
+  }
+
+  async function subscribe(e, tier) {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
       const payment_method = status?.payment_method || (cardLast4 ? { brand: cardBrand, last4: cardLast4 } : undefined)
-      const s = await subscribePremium(billingCycle, payment_method)
+      const s = await subscribeApi(tier, billingCycle, payment_method)
       setStatus(s)
-      onAccountUpdated({ ...account, tier: 'premium' })
+      onAccountUpdated({ ...account, tier })
       setShowUpgrade(false)
     } catch (err) {
       setError(err.message)
@@ -428,7 +532,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   }
 
   async function cancel() {
-    if (!confirm('Cancel your Premium subscription? It stays active until the end of the current billing period.')) return
+    if (!confirm(`Cancel your ${TIER_INFO[status.tier]?.label} subscription? It stays active until the end of the current billing period.`)) return
     const s = await cancelPremium()
     setStatus(s)
   }
@@ -443,26 +547,118 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
     setShowHistory(!showHistory)
   }
 
+  async function updateCard(e) {
+    e.preventDefault()
+    setCardError(''); setCardBusy(true)
+    try {
+      const s = await updatePaymentMethod(newCardBrand, newCardLast4)
+      setStatus(s)
+      setEditingCard(false); setNewCardLast4('')
+    } catch (err) {
+      setCardError(err.message)
+    } finally {
+      setCardBusy(false)
+    }
+  }
+
   if (!status) return null
+  const price = priceFor(upgradeTier, billingCycle)
+
+  // Shared by both paid tiers below — card-on-file management + cancel/
+  // resume is identical either way, only the tier name/description
+  // differs. A plain function returning JSX, called inline (not
+  // `<PaidTierBody .../>`) — defining an actual component in here would
+  // give it a fresh identity every render, so React would remount its
+  // whole subtree (and drop input focus mid-keystroke in the card-update
+  // form below) every time any of this panel's own state changes.
+  function paidTierBody(tier) {
+    return (
+      <>
+        <p className="muted">{TIER_INFO[tier].desc}</p>
+        {status.payment_method && !editingCard && (
+          <p className="muted">
+            Card on file: {status.payment_method.brand} •••• {status.payment_method.last4}{' '}
+            <button className="linkbtn" onClick={() => { setNewCardBrand(status.payment_method.brand); setEditingCard(true) }}>Update</button>
+          </p>
+        )}
+        {editingCard && (
+          <form onSubmit={updateCard}>
+            <label>Card brand
+              <input value={newCardBrand} onChange={(e) => setNewCardBrand(e.target.value)} required />
+            </label>
+            <label>Card last 4 digits (simulated — no real charge)
+              <input value={newCardLast4} onChange={(e) => setNewCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} required />
+            </label>
+            {cardError && <p className="error">{cardError}</p>}
+            <div className="row">
+              <button type="submit" disabled={cardBusy}>{cardBusy ? 'Saving…' : 'Save card'}</button>
+              <button type="button" className="ghost" onClick={() => setEditingCard(false)}>Cancel</button>
+            </div>
+          </form>
+        )}
+        {tier === 'premium' && !status.cancel_at && (
+          <div className="row">
+            <button onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}>
+              <StarIcon width={16} height={16} /> Upgrade to Ultra
+            </button>
+          </div>
+        )}
+        {showUpgrade && upgradeTier === 'ultra' && tier === 'premium' && (
+          <form onSubmit={(e) => subscribe(e, 'ultra')}>
+            <label>Billing cycle
+              <select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
+                <option value="monthly">Monthly — ${priceFor('ultra', 'monthly')?.toFixed(2)}</option>
+                <option value="annual">Annual — ${priceFor('ultra', 'annual')?.toFixed(2)}</option>
+              </select>
+            </label>
+            {error && <p className="error">{error}</p>}
+            <div className="row">
+              <button type="submit" disabled={busy}>{busy ? 'Processing…' : 'Confirm upgrade'}</button>
+              <button type="button" className="ghost" onClick={() => setShowUpgrade(false)}>Cancel</button>
+            </div>
+          </form>
+        )}
+        {status.cancel_at
+          ? (
+            <>
+              <p className="muted"><AlertIcon width={14} height={14} /> Cancels on {new Date(status.cancel_at * 1000).toLocaleDateString()} — you'll drop to Free after that.</p>
+              <div className="row"><button className="ghost" onClick={resume}>Resume subscription</button></div>
+            </>
+          )
+          : <div className="row"><button className="danger" onClick={cancel}>Cancel subscription</button></div>}
+      </>
+    )
+  }
 
   return (
     <section className="card">
       <div className="child-top">
         <h3>Subscription</h3>
-        <span className={`badge ${status.tier === 'premium' ? 'badge-approved' : 'badge-pending'}`}>{status.tier}</span>
+        <span className={`badge ${status.tier === 'free' ? 'badge-pending' : 'badge-approved'}`}>{status.tier}</span>
       </div>
 
       {status.tier === 'free' && (
         <>
           <p className="muted">Free plan: 1 child profile, 5 saved favourites per child, basic activity log.</p>
           {!showUpgrade
-            ? <div className="row"><button onClick={() => setShowUpgrade(true)}>⭐ Upgrade to Premium</button></div>
+            ? (
+              <div className="row">
+                <button onClick={() => { setUpgradeTier('premium'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
+                <button className="ghost" onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Ultra</button>
+              </div>
+            )
             : (
-              <form onSubmit={subscribe}>
+              <form onSubmit={(e) => subscribe(e, upgradeTier)}>
+                <label>Plan
+                  <select value={upgradeTier} onChange={(e) => setUpgradeTier(e.target.value)}>
+                    <option value="premium">Premium — {TIER_INFO.premium.desc}</option>
+                    <option value="ultra">Ultra — {TIER_INFO.ultra.desc}</option>
+                  </select>
+                </label>
                 <label>Billing cycle
                   <select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
-                    <option value="monthly">Monthly — $9.99</option>
-                    <option value="annual">Annual — $99.00</option>
+                    <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
+                    <option value="annual">Annual — ${priceFor(upgradeTier, 'annual')?.toFixed(2)}</option>
                   </select>
                 </label>
                 <label>Card brand
@@ -473,7 +669,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
                 </label>
                 {error && <p className="error">{error}</p>}
                 <div className="row">
-                  <button type="submit" disabled={busy}>{busy ? 'Processing…' : 'Confirm subscription'}</button>
+                  <button type="submit" disabled={busy}>{busy ? 'Processing…' : `Confirm ${TIER_INFO[upgradeTier].label} subscription`}</button>
                   <button type="button" className="ghost" onClick={() => setShowUpgrade(false)}>Cancel</button>
                 </div>
               </form>
@@ -481,20 +677,8 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
         </>
       )}
 
-      {status.tier === 'premium' && (
-        <>
-          <p className="muted">Up to 4 child profiles, unlimited favourites, full activity trends, multi-child comparison.</p>
-          {status.payment_method && <p className="muted">Card on file: {status.payment_method.brand} •••• {status.payment_method.last4}</p>}
-          {status.cancel_at
-            ? (
-              <>
-                <p className="muted">⚠️ Cancels on {new Date(status.cancel_at * 1000).toLocaleDateString()} — you'll drop to Free after that.</p>
-                <div className="row"><button className="ghost" onClick={resume}>Resume subscription</button></div>
-              </>
-            )
-            : <div className="row"><button className="danger" onClick={cancel}>Cancel subscription</button></div>}
-        </>
-      )}
+      {status.tier === 'premium' && paidTierBody('premium')}
+      {status.tier === 'ultra' && paidTierBody('ultra')}
 
       <div className="row">
         <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
@@ -576,7 +760,7 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
   }
 
   return (
-    <form onSubmit={submit} className="card" style={{ background: '#faf6ff' }}>
+    <form onSubmit={submit} className="card" style={{ background: 'var(--primary-100)' }}>
       <h3>Before you add a child…</h3>
       <p className="muted">
         Under PDPA, we need your verifiable consent before collecting any data about your child —
@@ -620,7 +804,7 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   if (!open) {
     return (
       <button className="add-btn" onClick={() => setOpen(true)}>
-        ➕ Add a child profile {childCount >= 1 && account.tier !== 'premium' ? '(Premium required for more than 1)' : ''}
+        <PlusIcon width={16} height={16} /> Add a child profile {childCount >= 1 && account.tier !== 'premium' ? '(Premium required for more than 1)' : ''}
       </button>
     )
   }
@@ -686,15 +870,45 @@ function CompareChildrenPanel() {
   )
 }
 
+// PA14 — activity used to be one undifferentiated flat feed of every
+// message ever sent, oldest mixed with newest, with no sense of "this was
+// one conversation." The backend already tags every entry with the real
+// chat session it happened in (CH04's session_id — chat.py logs it on
+// every turn); this just groups by that instead of inventing new data.
+// Titled the way a chat-history sidebar titles a thread: off the first
+// real thing the child said, not a fabricated summary.
+function groupBySession(entries) {
+  const bySession = new Map()
+  for (const e of entries) {
+    const key = e.session_id || 'unknown'
+    if (!bySession.has(key)) bySession.set(key, [])
+    bySession.get(key).push(e)
+  }
+  const sessions = []
+  for (const [id, group] of bySession) {
+    const chrono = [...group].sort((a, b) => a.ts - b.ts)
+    sessions.push({
+      id,
+      entries: chrono,
+      title: chrono[0]?.message?.slice(0, 60) || 'Conversation',
+      lastTs: Math.max(...group.map((e) => e.ts)),
+      count: group.length,
+    })
+  }
+  return sessions.sort((a, b) => b.lastTs - a.lastTs)
+}
+
 function ChildCard({ child, account, onChanged }) {
   const [view, setView] = useState(null) // 'activity' | 'favourites' | 'edit' | 'safety' | 'reports' | 'insights' | 'privacy' | null
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [overrides, setOverrides] = useState({})
+  const [openSessionId, setOpenSessionId] = useState(null)
 
   async function toggle(which) {
     if (view === which) { setView(null); return }
     setView(which)
+    setOpenSessionId(null)
     setLoading(true)
     try {
       if (which === 'activity') setData(await childActivity(child.id))
@@ -758,14 +972,16 @@ function ChildCard({ child, account, onChanged }) {
     <div className="child-card">
       <div className="child-top">
         <div>
-          <h3>{child.name} {child.locked && <span className="badge badge-rejected">🔒 locked</span>}</h3>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {child.name} {child.locked && <span className="badge badge-rejected"><LockIcon width={10} height={10} /> locked</span>}
+          </h3>
           <p className="muted">Age {child.age_band}{child.reading_level ? ` · ${child.reading_level}` : ''}</p>
         </div>
         <button className="ghost small" onClick={remove}>Delete</button>
       </div>
 
       {child.locked && (
-        <div className="card" style={{ background: '#fdeef4', margin: '10px 0' }}>
+        <div className="card" style={{ background: 'var(--danger-100)', margin: '10px 0' }}>
           <p className="muted">Too many wrong PIN attempts — {child.name} is locked out of the chat until you unlock it.</p>
           <div className="row"><button onClick={unlock}>Unlock profile</button></div>
         </div>
@@ -796,30 +1012,62 @@ function ChildCard({ child, account, onChanged }) {
           {loading && <p className="muted">Loading…</p>}
           {!loading && data.length === 0 && <p className="muted">Nothing here yet.</p>}
 
-          {!loading && view === 'activity' && data.map((a, i) => (
-            <div key={i} className="activity-item">
-              <p className="said-child">🧒 {a.message}</p>
-              <p className="said-pip">🤖 {a.reply}</p>
-              <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
-            </div>
-          ))}
+          {/* PA14 — a real session list (like a chat-history sidebar: pick
+              a past conversation, see what was actually said in it), not
+              one long undifferentiated feed. */}
+          {!loading && view === 'activity' && (() => {
+            const sessions = groupBySession(data)
+            const open = sessions.find((s) => s.id === openSessionId) || null
+            return (
+              <div className="session-browser">
+                <div className="session-list">
+                  {sessions.map((s) => (
+                    <button
+                      key={s.id}
+                      className={`session-row ${s.id === openSessionId ? 'session-row--active' : ''}`}
+                      onClick={() => setOpenSessionId(s.id === openSessionId ? null : s.id)}
+                    >
+                      <ChatIcon width={14} height={14} />
+                      <span className="session-row-body">
+                        <span className="session-row-title">{s.title}</span>
+                        <span className="session-row-meta">
+                          <ClockIcon width={11} height={11} /> {new Date(s.lastTs * 1000).toLocaleString()} · {s.count} {s.count === 1 ? 'message' : 'messages'}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {open && (
+                  <div className="session-transcript">
+                    {open.entries.map((a, i) => (
+                      <div key={i} className="activity-item">
+                        <p className="said-child"><UserIcon width={14} height={14} /> {a.message}</p>
+                        <p className="said-pip"><ChatIcon width={14} height={14} /> {a.reply}</p>
+                        <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {!loading && view === 'favourites' && data.map((f) => (
             <div key={f.id} className="fav-item">
-              <span>{f.type === 'book' ? '📚' : '🎬'} {f.title}</span>
+              <span>{f.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />} {f.title}</span>
               <div className="row">
                 {f.type === 'book' && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
                 <button
                   className={`ghost small ${overrides[f.id] === 'approve' ? 'on' : ''}`}
                   onClick={() => override(f, overrides[f.id] === 'approve' ? undefined : 'approve')}
                   title="Always allow this item for this child, even outside their age band"
-                >✅ Approve</button>
+                ><CheckIcon width={14} height={14} /> Approve</button>
                 <button
                   className={`ghost small ${overrides[f.id] === 'hide' ? 'on' : ''}`}
                   onClick={() => override(f, overrides[f.id] === 'hide' ? undefined : 'hide')}
                   title="Never recommend this item to this child"
-                >🚫 Block</button>
-                <button className="ghost small" onClick={() => report(f)}>Report</button>
+                ><LockIcon width={14} height={14} /> Block</button>
+                <button className="ghost small" onClick={() => report(f)}><FlagIcon width={14} height={14} /> Report</button>
               </div>
             </div>
           ))}
@@ -833,10 +1081,22 @@ function ChildCard({ child, account, onChanged }) {
 
           {!loading && view === 'insights' && data.map((t, i) => (
             <div key={i}>
-              <p className="muted">{t.total_messages} messages · {t.total_recommendations} recommendations · {t.favourites_count} favourites</p>
+              {/* A glance, not a paragraph — same stat-tile pattern the
+                  Admin console's System Health uses, so a parent scanning
+                  for "is everything okay" doesn't have to read a sentence
+                  to get three numbers. */}
+              <div className="stat-grid">
+                <div className="stat"><div className="stat-num">{t.total_messages}</div><div className="stat-label">Messages</div></div>
+                <div className="stat"><div className="stat-num">{t.total_recommendations}</div><div className="stat-label">Recommendations</div></div>
+                <div className="stat"><div className="stat-num">{t.favourites_count}</div><div className="stat-label">Favourites</div></div>
+              </div>
               {t.total_messages < 3
-                ? <p className="muted">Not enough activity yet to show trends — check back after a few more chats.</p>
-                : <p>Top genres: <b>{t.top_genres.join(', ') || '—'}</b></p>}
+                ? <p className="muted" style={{ marginTop: 10 }}>Not enough activity yet to show trends — check back after a few more chats.</p>
+                : (
+                  <p className="muted" style={{ marginTop: 10 }}>
+                    Top genres: <b style={{ color: 'var(--ink)' }}>{t.top_genres.join(', ') || '—'}</b>
+                  </p>
+                )}
             </div>
           ))}
         </div>
@@ -965,7 +1225,7 @@ function ChildDataPrivacy({ child }) {
       <p className="muted">Request deletion of {child.name}'s stored chat history and favourites (separate from deleting the whole profile).</p>
       {pending ? (
         <>
-          <p className="muted">⏳ Deletion scheduled for {new Date(pending.scheduled_for * 1000).toLocaleDateString()}.</p>
+          <p className="muted"><ClockIcon width={14} height={14} /> Deletion scheduled for {new Date(pending.scheduled_for * 1000).toLocaleDateString()}.</p>
           <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
         </>
       ) : (

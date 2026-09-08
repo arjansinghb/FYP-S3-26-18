@@ -213,3 +213,180 @@ export function LogoutIcon(props) {
     </svg>
   )
 }
+
+// The daily-streak badge (see streak.js) — the one filled icon in this
+// otherwise-stroke set, same exception QuoteIcon/StarIcon already make for
+// a mark that reads better solid than outlined.
+export function FlameIcon(props) {
+  return (
+    <svg {...base} fill="currentColor" stroke="none" {...props}>
+      <path d="M12 2c1 3-3 4.5-3 8a3 3 0 0 0 6 0c1 1 1.5 2.4 1.5 3.5A4.5 4.5 0 0 1 12 22a5 5 0 0 1-5-5c0-3 1.8-4.3 2.5-6.5C10 8.5 11 5 12 2Z" />
+    </svg>
+  )
+}
+
+// Pip's voice on/off toggle. `muted` swaps in a slash instead of a second
+// icon component, same pattern HeartIcon/StarIcon use for their own boolean.
+export function SpeakerIcon({ muted = false, ...props }) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 9v6h4l5 4V5L8 9H4Z" />
+      {!muted && <path d="M17 8a5 5 0 0 1 0 8" />}
+      {muted && <path d="M19 8l-5 8M14 8l5 8" />}
+    </svg>
+  )
+}
+
+// ---------- moderator/staff console set ----------
+export function PlusIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+export function EditIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 20h4l11-11a2.5 2.5 0 0 0-4-4L4 16v4Z" />
+      <path d="M13.5 6.5l4 4" />
+    </svg>
+  )
+}
+
+export function TrashIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M5 7h14" />
+      <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      <path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  )
+}
+
+export function FlagIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M5 3v18" />
+      <path d="M5 4h11l-2.5 4L16 12H5" />
+    </svg>
+  )
+}
+
+export function InboxIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 12h4l2 3h4l2-3h4" />
+      <path d="M5.5 5h13l2.5 7v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6l2.5-7Z" />
+    </svg>
+  )
+}
+
+export function GridIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+      <rect x="13" y="13" width="7" height="7" rx="1.5" />
+    </svg>
+  )
+}
+
+// ---------- parent/admin console set ----------
+export function BellIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6H4c0.5-0.5 2-2 2-6Z" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </svg>
+  )
+}
+
+export function LockIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+export function ClockIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l3 2" />
+    </svg>
+  )
+}
+
+export function AlertIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 3.5 21 19H3L12 3.5Z" />
+      <path d="M12 10v4" />
+      <circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function ChatIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 6h16v10H9l-5 4V6Z" />
+    </svg>
+  )
+}
+
+export function UserIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c1-4 4-6 7-6s6 2 7 6" />
+    </svg>
+  )
+}
+
+export function ChartIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M5 19V10M12 19V5M19 19v-6" />
+      <path d="M3 19h18" />
+    </svg>
+  )
+}
+
+export function SettingsIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2-1.2L14.2 3H9.8l-.4 2.6a7 7 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-.9c.6.5 1.3.9 2 1.2l.4 2.6h4.4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.3.9 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z" />
+    </svg>
+  )
+}
+
+export function LifeBuoyIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M6.2 6.2l3.3 3.3M18 18l-3.3-3.3M6.2 18l3.3-3.3M18 6l-3.3 3.3" />
+    </svg>
+  )
+}
+
+// Staff-facing only (CM03 search & import) — the child/landing surfaces
+// deliberately never show a magnifying glass anywhere (see §2.1's "not a
+// search engine" rule); a moderator searching Google Books/YouTube for
+// import candidates is a completely different, legitimate use.
+export function SearchIcon(props) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </svg>
+  )
+}

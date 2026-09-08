@@ -74,6 +74,70 @@ def _visible_catalogue(child: dict | None) -> list[dict]:
     return [c for c in catalogue if _keep(c)]
 
 
+def _shown_ids(child_id: str, session_id: str | None) -> set[str]:
+    """CH18 — every item already recommended *in this session*, derived from
+    the activity log's own `rec_ids` (no new field needed — the data was
+    already being logged, just never read back). Excluding these from the
+    next retrieval is what makes "show me another" actually show another,
+    instead of the same 1-2 items the deterministic embedding match would
+    otherwise hand back for a near-identical follow-up message."""
+    if not child_id or not session_id:
+        return set()
+    ids: set[str] = set()
+    for entry in db.activity.get(child_id, []):
+        if entry.get("session_id") == session_id:
+            ids.update(entry.get("rec_ids") or [])
+    return ids
+
+
+def _disliked_ids(child_id: str) -> set[str]:
+    """CH17 — "Not for me" now actually means something: once a child
+    dislikes an item, it's excluded from every future recommendation for
+    them, not just this session. (Liked items aren't specially re-ranked in
+    this pass — see PA31/oversight's genre trends for where "liked" data
+    already surfaces instead; hard-excluding dislikes is the one behaviour
+    change that's both safe and directly verifiable.)"""
+    return {f["content_id"] for f in db.feedback.get(child_id, []) if f.get("liked") is False}
+
+
+@router.get("/topics")
+def topics(creds: HTTPAuthorizationCredentials | None = Depends(optional_bearer)):
+    """Real starter-chip entry points, derived from the same visible
+    catalogue a recommendation would actually draw from (age band, PA21/
+    PA18 settings and overrides all already applied) — so a chip never
+    promises a topic that would come back empty. Still just topic *labels*
+    that map to a chat message, the same device the hardcoded starter
+    chips already used — not a browsable result list (see §2.1: this
+    product never shows the catalogue itself to a child, only genre words
+    counted off it)."""
+    child = _optional_child(creds)
+    catalogue = _visible_catalogue(child)
+    counts: dict[str, int] = {}
+    for item in catalogue:
+        for genre in item.get("genres", []):
+            counts[genre] = counts.get(genre, 0) + 1
+
+    # Personalise: genres from items this child has actually liked or
+    # saved get real priority, so a returning child's chips reflect what
+    # they've told Pip they enjoy — not just what's most common across the
+    # whole catalogue. A fresh child with no signal yet just gets the
+    # catalogue-popularity ranking; nothing here fabricates a preference
+    # that doesn't exist. Closes the exact gap PA31/oversight's genre
+    # trends already surface to a *parent* — the child never saw their own
+    # preferences reflected back at them before this.
+    preferred: set[str] = set()
+    if child:
+        liked_ids = {f["content_id"] for f in db.feedback.get(child["id"], []) if f.get("liked") is True}
+        saved_ids = {f["content_id"] for f in db.favourites.get(child["id"], [])}
+        for content_id in liked_ids | saved_ids:
+            item = db.content.get(content_id)
+            if item:
+                preferred.update(item.get("genres", []))
+
+    ranked = sorted(counts.items(), key=lambda kv: (kv[0] not in preferred, -kv[1], kv[0]))
+    return [{"genre": genre, "count": count, "preferred": genre in preferred} for genre, count in ranked[:8]]
+
+
 @router.post("", response_model=ChatResponse)
 def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends(optional_bearer)):
     child = _optional_child(creds)
@@ -88,10 +152,29 @@ def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends
         if session and session["child_id"] == child["id"]:
             history = db.session_history(child["id"], body.session_id)
 
-    # Age filtering already happened in _visible_catalogue above (so PA18
-    # overrides can affect it) — pass age_band=None so the brain trusts the
-    # pool it's given instead of re-filtering it.
-    result = get_brain().respond(body.message, None, catalogue, history=history)
+    # CH17/CH18 — exclude what this child has already been shown this
+    # session, and what they've told Pip they don't like, before retrieval
+    # ever sees the pool. Doing it here (not inside the brain) means both
+    # PlaceholderBrain and OpenAIBrain get the fix for free, and it composes
+    # with the PA21/PA18/age-band narrowing above the same way.
+    if child:
+        exclude = _shown_ids(child["id"], body.session_id) | _disliked_ids(child["id"])
+        if exclude:
+            catalogue = [c for c in catalogue if c["id"] not in exclude]
+
+    # Age eligibility (and PA18 overrides) is already fully resolved by
+    # _visible_catalogue above — the brain never re-filters by age_band
+    # (see brain.py's own comments on this). What's passed here now is
+    # purely for the LLM's *language* — age-appropriate sentence length/
+    # vocabulary, and (PA13) the parent's reading-level guidance, if set.
+    # Both used to be silently thrown away: age_band was hardcoded to None
+    # (so Pip's phrasing never actually adapted per child), and
+    # reading_level was never read anywhere in this path at all despite a
+    # parent being able to set it.
+    result = get_brain().respond(
+        body.message, child["age_band"] if child else None, catalogue,
+        history=history, reading_level=child.get("reading_level") if child else None,
+    )
 
     # log to the child's activity so parents can review it later (PA14)
     if child:
@@ -136,14 +219,29 @@ def save_favourite(body: FeedbackRequest, creds: HTTPAuthorizationCredentials = 
     favs = db.favourites[child["id"]]
     if not any(f["content_id"] == body.content_id for f in favs):
         parent = db.accounts.get(child["parent_id"])
-        is_premium = bool(parent and parent.get("tier") == "premium")  # PA34
-        if not is_premium and len(favs) >= FREE_FAVOURITES_LIMIT:
+        is_free_tier = not parent or parent.get("tier", "free") == "free"  # PA34 — Premium AND Ultra both get unlimited
+        if is_free_tier and len(favs) >= FREE_FAVOURITES_LIMIT:
             raise HTTPException(
                 403,
                 f"You've saved {FREE_FAVOURITES_LIMIT} favourites — ask a grown-up about "
                 "Premium to save unlimited favourites!",
             )
         favs.append({"content_id": body.content_id, "ts": time.time()})
+    return {"ok": True}
+
+
+@router.delete("/favourite/{content_id}")
+def remove_favourite(content_id: str, creds: HTTPAuthorizationCredentials = Depends(require_bearer)):
+    """CH16's real missing half — the free-tier 5-item cap (PA34) is
+    permanent for a Free child without this: once they hit 5, "Save" just
+    403s forever with no way to make room. Removing a favourite doesn't
+    need `content_id` to still exist in the catalogue (a moderator could
+    have retired it since); only the child's own favourites list is
+    touched, and dropping an unknown id is a no-op, not a 404 — the child's
+    intent ("this shouldn't be in my library") is satisfied either way."""
+    child = _require_child(creds)
+    favs = db.favourites[child["id"]]
+    db.favourites[child["id"]] = [f for f in favs if f["content_id"] != content_id]
     return {"ok": True}
 
 
@@ -160,12 +258,21 @@ def list_favourites(creds: HTTPAuthorizationCredentials = Depends(require_bearer
             out.append({
                 "id": item["id"], "title": item["title"], "type": item["type"],
                 "description": item.get("description", ""), "thumbnail": item.get("thumbnail"),
+                "genres": item.get("genres", []),
             })
     return out
 
 
 @router.post("/feedback")
 def feedback(body: FeedbackRequest, creds: HTTPAuthorizationCredentials = Depends(require_bearer)):
+    """CH17 — used to be acknowledged and discarded. Now actually persisted
+    (`db.feedback`) and read back by `_disliked_ids` above, so a "Not for
+    me" tap has a real, verifiable effect on what this child sees next —
+    not just an animation on the button."""
     child = _require_child(creds)
-    # For the prototype we just acknowledge it; later this tunes recommendations.
+    if body.content_id not in db.content:
+        raise HTTPException(404, "Content not found")
+    db.feedback.setdefault(child["id"], []).append({
+        "content_id": body.content_id, "liked": body.liked, "ts": time.time(),
+    })
     return {"ok": True, "liked": body.liked}

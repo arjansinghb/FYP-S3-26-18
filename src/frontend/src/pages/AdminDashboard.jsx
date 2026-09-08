@@ -5,6 +5,10 @@ import {
   adminStats, adminSearchUsers, adminUserDetails, adminResetPassword, adminSuspend, adminUnsuspend,
   adminGetConfig, adminSetConfig, adminTickets, adminResolveTicket,
 } from '../api'
+import {
+  ChartIcon, CheckIcon, ClockIcon, FlagIcon, GridIcon, HeartIcon, LifeBuoyIcon, LockIcon,
+  SettingsIcon, UserIcon, UsersIcon,
+} from '../icons'
 import './parent.css'
 
 export default function AdminDashboard() {
@@ -57,23 +61,33 @@ function AdminLogin({ onAuthed }) {
   )
 }
 
+const ADMIN_TABS = [
+  { key: 'overview', label: 'Overview', icon: ChartIcon },
+  { key: 'users', label: 'Users', icon: UsersIcon },
+  { key: 'settings', label: 'Settings', icon: SettingsIcon },
+  { key: 'support', label: 'Support', icon: LifeBuoyIcon },
+]
+
 function Tools({ account, onLogout }) {
   const [tab, setTab] = useState('overview')
   return (
     <div className="parent">
       <header className="parent-header">
-        <div>
-          <Link className="home-link" to="/">← Home</Link>
-          <h1>Admin Console</h1>
-          <p className="muted">Signed in as {account.name}</p>
+        <div className="parent-header-who">
+          <div className="parent-header-role"><SettingsIcon width={20} height={20} /></div>
+          <div>
+            <Link className="home-link" to="/">← Home</Link>
+            <h1>Admin Console</h1>
+            <p className="muted">Signed in as {account.name}</p>
+          </div>
         </div>
         <button className="ghost" onClick={onLogout}>Log out</button>
       </header>
 
       <div className="tabs">
-        {['overview', 'users', 'settings', 'support'].map((t) => (
-          <button key={t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
-            {t[0].toUpperCase() + t.slice(1)}
+        {ADMIN_TABS.map((t) => (
+          <button key={t.key} className={tab === t.key ? 'tab active' : 'tab'} onClick={() => setTab(t.key)}>
+            <t.icon width={16} height={16} /> {t.label}
           </button>
         ))}
       </div>
@@ -86,22 +100,55 @@ function Tools({ account, onLogout }) {
   )
 }
 
-// SA08 — system health
+// SA08 — system health. Each tile gets an icon (same tinted-chip language
+// as the rest of the product, not a bare number) and the four tiles that
+// represent something needing a human look (pending review, open reports/
+// tickets, suspended accounts) switch to the danger tint the moment
+// they're non-zero — real signal ("something here needs you"), not
+// decoration; a tile that's always the same colour regardless of value
+// would just be noise.
 function Overview() {
   const [s, setS] = useState(null)
   useEffect(() => { adminStats().then(setS) }, [])
   if (!s) return <p className="muted">Loading…</p>
   const tiles = [
-    ['Users', s.users], ['Parents', s.parents], ['Children', s.children],
-    ['Catalogue', s.content_total], ['Approved', s.content_approved], ['Pending', s.content_pending],
-    ['Open reports', s.reports_open], ['Open tickets', s.tickets_open], ['Suspended', s.suspended],
+    { label: 'Users', val: s.users, icon: UserIcon },
+    { label: 'Parents', val: s.parents, icon: UsersIcon },
+    { label: 'Children', val: s.children, icon: HeartIcon },
+    { label: 'Catalogue', val: s.content_total, icon: GridIcon },
+    { label: 'Approved', val: s.content_approved, icon: CheckIcon },
+    { label: 'Pending', val: s.content_pending, icon: ClockIcon, attention: true },
+    { label: 'Open reports', val: s.reports_open, icon: FlagIcon, attention: true },
+    { label: 'Open tickets', val: s.tickets_open, icon: LifeBuoyIcon, attention: true },
+    { label: 'Suspended', val: s.suspended, icon: LockIcon, attention: true },
+  ]
+  // SA08's URS wording is specific — "API uptime, error rates, NLP/
+  // recommendation service latency" — so these three are real, computed
+  // numbers from app/metrics.py's rolling window, not just process uptime.
+  // Rolling window starts empty on a fresh boot, so latency/error tiles
+  // show "—" rather than a fabricated 0 until real traffic exists.
+  const perfTiles = [
+    { label: 'Error rate', val: `${(s.error_rate * 100).toFixed(1)}%`, icon: FlagIcon, attention: s.error_rate > 0 },
+    { label: 'Avg latency', val: s.avg_latency_ms != null ? `${s.avg_latency_ms} ms` : '—', icon: ClockIcon },
+    { label: 'NLP latency', val: s.nlp_avg_latency_ms != null ? `${s.nlp_avg_latency_ms} ms` : '—', icon: ChartIcon },
   ]
   return (
     <section>
-      <h2>System health</h2>
+      <h2><ChartIcon width={20} height={20} /> System health</h2>
       <div className="stat-grid">
-        {tiles.map(([label, val]) => (
-          <div className="stat" key={label}>
+        {tiles.map(({ label, val, icon: Icon, attention }) => (
+          <div className={`stat ${attention && val > 0 ? 'stat--attention' : ''}`} key={label}>
+            <div className="stat-icon"><Icon width={18} height={18} /></div>
+            <div className="stat-num">{val}</div>
+            <div className="stat-label">{label}</div>
+          </div>
+        ))}
+      </div>
+      <h3 className="admin-subhead">Performance <span className="muted">(last {s.sample_size} requests{s.nlp_sample_size ? `, ${s.nlp_sample_size} chat` : ''})</span></h3>
+      <div className="stat-grid">
+        {perfTiles.map(({ label, val, icon: Icon, attention }) => (
+          <div className={`stat ${attention ? 'stat--attention' : ''}`} key={label}>
+            <div className="stat-icon"><Icon width={18} height={18} /></div>
             <div className="stat-num">{val}</div>
             <div className="stat-label">{label}</div>
           </div>
@@ -156,10 +203,10 @@ function Users() {
           </div>
           <div className="row">
             <button className="ghost small" onClick={() => showDetails(u)}>{details[u.id] ? 'Hide' : 'Details'}</button>
-            <button className="ghost small" onClick={() => reset(u)}>Reset password</button>
+            <button className="ghost small" onClick={() => reset(u)}><LockIcon width={14} height={14} /> Reset password</button>
             {u.role !== 'admin' && (
               <button className={u.suspended ? 'small' : 'danger small'} onClick={() => toggleSuspend(u)}>
-                {u.suspended ? 'Unsuspend' : 'Suspend'}
+                {u.suspended ? 'Unsuspend' : <><LockIcon width={14} height={14} /> Suspend</>}
               </button>
             )}
           </div>
@@ -203,7 +250,13 @@ const CONFIG_SECTIONS = [
   { key: 'billing', title: 'Billing Configuration (SA13)', fields: [
     { name: 'provider', label: 'Payment provider', type: 'text' },
     { name: 'currency', label: 'Currency', type: 'text' },
-    { name: 'monthly_price', label: 'Monthly price', type: 'number' },
+    // One price pair per paid tier (Ultra tier, 2026-09-07) — these are
+    // the real prices `subscribe()` charges now, not just display copy
+    // (see storage.py's `subscribe()` docstring on the bug that fixed).
+    { name: 'premium_monthly_price', label: 'Premium — monthly price', type: 'number' },
+    { name: 'premium_annual_price', label: 'Premium — annual price', type: 'number' },
+    { name: 'ultra_monthly_price', label: 'Ultra — monthly price', type: 'number' },
+    { name: 'ultra_annual_price', label: 'Ultra — annual price', type: 'number' },
     { name: 'billing_enabled', label: 'Billing enabled', type: 'bool' },
   ] },
 ]
@@ -233,7 +286,7 @@ function ConfigCard({ section }) {
           className="card"
           style={{
             margin: '0 0 8px', padding: 12,
-            background: values.openai_zdr_status === 'confirmed' ? '#dcf6e8' : '#fdeef4',
+            background: values.openai_zdr_status === 'confirmed' ? 'var(--success-100)' : 'var(--danger-100)',
           }}
         >
           <p style={{ margin: 0 }}>
@@ -274,7 +327,7 @@ function ConfigCard({ section }) {
       ))}
       <div className="row">
         <button onClick={save}>Save</button>
-        {saved && <span className="muted">Saved ✓</span>}
+        {saved && <span className="muted"><CheckIcon width={14} height={14} /> Saved</span>}
       </div>
     </div>
   )
@@ -289,8 +342,8 @@ function Support() {
 
   return (
     <section>
-      <h2>Support tickets ({tix.filter((t) => t.status === 'open').length} open)</h2>
-      {tix.length === 0 && <p className="muted">No tickets.</p>}
+      <h2><LifeBuoyIcon width={20} height={20} /> Support tickets ({tix.filter((t) => t.status === 'open').length} open)</h2>
+      {tix.length === 0 && <p className="empty-state"><CheckIcon width={18} height={18} /> No tickets.</p>}
       {tix.map((t) => (
         <div className="card" key={t.id}>
           <div className="child-top">
@@ -299,7 +352,7 @@ function Support() {
           </div>
           <p className="muted">{t.message}</p>
           {t.status === 'open' && (
-            <div className="row"><button className="small" onClick={() => resolve(t.id)}>Mark resolved</button></div>
+            <div className="row"><button className="small" onClick={() => resolve(t.id)}><CheckIcon width={14} height={14} /> Mark resolved</button></div>
           )}
         </div>
       ))}

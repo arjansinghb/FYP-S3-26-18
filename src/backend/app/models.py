@@ -4,6 +4,12 @@ from pydantic import BaseModel, Field
 
 AgeBand = Literal["5-8", "9-12"]
 ContentType = Literal["book", "video"]
+# PA33/34/35 gating. "ultra" added 2026-09-07 (Kiefer's own ask) — same
+# Premium features plus unlimited child profiles (Premium stays capped at
+# 4). Every "!= premium" gate elsewhere in the app was audited and changed
+# to "== free" so Ultra inherits every Premium-gated feature as a superset,
+# not a separate track that has to re-earn each one.
+AccountTier = Literal["free", "premium", "ultra"]
 
 # ----- accounts / auth -----
 
@@ -25,7 +31,7 @@ class AccountOut(BaseModel):
     name: str
     role: str
     verified: bool
-    tier: Literal["free", "premium"] = "free"  # PA33/34/35 gating
+    tier: AccountTier = "free"
 
 
 class AccountUpdate(BaseModel):
@@ -141,12 +147,13 @@ class PaymentMethodOut(BaseModel):
 
 
 class SubscribeRequest(BaseModel):
+    tier: Literal["premium", "ultra"] = "premium"
     billing_cycle: Literal["monthly", "annual"] = "monthly"
     payment_method: Optional[PaymentMethodIn] = None  # PA24 includes PA26 in the same flow
 
 
 class SubscriptionStatusOut(BaseModel):
-    tier: Literal["free", "premium"]
+    tier: AccountTier
     billing_cycle: Optional[str] = None
     started_at: Optional[float] = None
     cancel_at: Optional[float] = None
@@ -302,6 +309,9 @@ class Recommendation(BaseModel):
     description: str = ""
     external_ref: Optional[str] = None  # YouTube id for videos, once curated
     thumbnail: Optional[str] = None  # CH14 "cover"
+    genres: list[str] = []  # CM10 tags, already on every catalogue item — was
+    # computed at moderation time and then never sent to the child client, so
+    # a card had no structured signal beyond one sentence of prose.
 
 
 class ChatResponse(BaseModel):

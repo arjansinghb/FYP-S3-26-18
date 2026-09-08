@@ -1,18 +1,26 @@
 /* Flat, not soft-gradient — chunky, tactile buttons (a solid darker edge,
-   not a blurry drop shadow) and a scattered illustration cluster instead of
-   a single icon floating in a white card. Every value is still a design
-   token (see index.css); the CHANGE here is the finish (flat vs. glow), not
-   a return to arbitrary spacing/colour. One primary action on this page
-   ("I'm a child — talk to Pip"); everything else is quieter than it. */
+   not a blurry drop shadow). Every value is still a design token (see
+   index.css). One primary action on this page ("Talk to Pip"); everything
+   else is quieter than it.
+
+   Redesign pass 3 (design-critique fixes): retired the "every section is
+   the same bordered card" pattern (see .how-*, .diff-* below), retired the
+   3-equal-column comparison grid, and made solid-primary-fill mean exactly
+   one thing on this page — the pricing plan you pay for — instead of also
+   standing in for "biggest feature" and "the right answer". */
 
 .landing {
   background: var(--surface);
   min-height: 100svh;
+  /* Safety net for the alternating-section-tint trick below (a 100vw pseudo-
+     element can round up past the viewport by a scrollbar's width in some
+     browsers) — clips it rather than letting the page ever scroll sideways. */
+  overflow-x: clip;
 }
 
 .announce {
   background: var(--primary-700);
-  color: #fff;
+  color: var(--on-primary);
   text-align: center;
   padding: var(--space-3) var(--space-4);
   font-weight: 700;
@@ -20,7 +28,7 @@
 
 /* ---------- nav ---------- */
 .landing-nav {
-  max-width: 1120px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: var(--space-6) var(--space-6) 0;
   display: flex;
@@ -38,7 +46,7 @@
 .landing-brand .avatar { width: 34px; height: 34px; }
 .landing-nav-cta {
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   font-size: var(--text-sm);
   color: var(--primary-700);
   text-decoration: none;
@@ -49,10 +57,15 @@
   transition: border-color 0.12s;
 }
 .landing-nav-cta:hover { border-color: var(--primary-500); }
+.landing-nav-cta:focus-visible,
+.cta:focus-visible {
+  outline: 2px solid var(--primary-500);
+  outline-offset: 2px;
+}
 
 /* ---------- hero ---------- */
 .hero {
-  max-width: 1120px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: var(--space-9) var(--space-6) var(--space-8);
   display: grid;
@@ -75,8 +88,7 @@
   color: var(--text);
   max-width: 46ch;
 }
-.hero-cta { display: flex; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-7) 0 var(--space-3); }
-.hero-sub { color: var(--muted); font-size: var(--text-xs); margin: var(--space-1) 0 0; font-weight: 700; }
+.hero-cta { display: flex; gap: var(--space-4); flex-wrap: wrap; margin: var(--space-7) 0 0; }
 
 /* Chunky, tactile buttons — a solid darker bottom edge instead of a blurry
    drop shadow, and a real "press" on click (see :active). */
@@ -90,7 +102,7 @@
 .cta:active { transform: translateY(2px); border-bottom-width: 2px; }
 /* The one primary action on the page: solid fill, boldest edge. */
 .cta-child {
-  background: var(--primary-700); color: #fff;
+  background: var(--primary-700); color: var(--on-primary);
   border-bottom-color: color-mix(in srgb, var(--primary-700) 65%, black);
 }
 /* Secondary action: outlined, no fill — same size so it isn't *hard* to
@@ -101,8 +113,9 @@
 }
 .cta-parent:active { border-bottom-width: 2px; }
 
-/* ---------- hero illustration: a loose, hand-placed cluster — not a
-   card, not grid-aligned. Every colour is still primary-family only. ---------- */
+/* ---------- hero illustration: a loose, hand-placed cluster of small
+   illustration pieces (illustrations.jsx) — not the app's own UI icon set,
+   not a card, not grid-aligned. Every colour is still primary-family. ---------- */
 .hero-visual {
   position: relative;
   height: 340px; /* definite, not min-height — .hero-cluster's height:100%
@@ -111,6 +124,29 @@
                     flips to the wrong side of the container (a real bug
                     caught on mobile, where the pieces overlapped the CTA
                     buttons above them). */
+  width: 100%; /* Explicit, not left to `auto` — every actual child of this
+                    box is either `position: absolute` (the cluster pieces,
+                    taken out of flow entirely) or a percentage width
+                    (`.hero-cluster`, 100% of *this* box, so circular). With
+                    nothing contributing real intrinsic content size, `auto`
+                    width here shrink-fits to 0 — a real bug caught live
+                    (max-width alone still measured 0px). `width:100%` gives
+                    the browser a definite size (the grid track) to clamp
+                    below via max-width, instead of asking it to shrink-wrap
+                    content that has none. */
+  max-width: 560px; /* .hero's own max-width grew (see the 1120→1320 change
+                    just above) so the page doesn't sit as a narrow card
+                    with huge dead gutters on a wide monitor — but every
+                    cluster piece below is hand-placed in pixels against
+                    this box's own size, not the grid column's. Letting the
+                    box itself stretch with the wider column would just
+                    move the "too much empty space" problem inside the
+                    illustration instead of fixing it. Capped + centred in
+                    its column instead. */
+  /* `.hero-visual` is a grid item (child of `.hero`'s `display:grid`) —
+     `margin: 0 auto` does not reliably center a grid item; `justify-self`
+     is the grid-native way to center an item narrower than its track. */
+  justify-self: center;
 }
 .hero-cluster {
   position: relative;
@@ -124,37 +160,53 @@
   justify-content: center;
   border-radius: var(--radius-lg);
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.06);
+  transform: rotate(var(--rot, 0deg));
+  /* One authored moment on page load — each piece pops in on its own
+     beat, at its own resting rotation (kept constant through the
+     animation via --rot, see @keyframes below), instead of a generic
+     fade applied uniformly everywhere on the page. */
+  animation: cluster-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .cluster-avatar {
   top: 30px; left: 90px;
   width: 190px; height: 190px;
   background: var(--primary-100);
   border-radius: 50%;
+  animation-delay: 0s;
 }
 .cluster-avatar .avatar { width: 140px; height: 140px; }
 .cluster-book {
   top: 0; left: 0;
   width: 64px; height: 64px;
-  background: var(--primary-700); color: #fff;
-  transform: rotate(-12deg);
+  background: var(--primary-700); color: var(--on-primary);
+  --rot: -12deg;
+  animation-delay: 0.16s;
 }
 .cluster-video {
   top: 40px; right: 30px;
   width: 58px; height: 58px;
-  background: var(--primary-500); color: #fff;
-  transform: rotate(9deg);
+  background: var(--primary-500); color: var(--on-primary);
+  --rot: 9deg;
+  animation-delay: 0.28s;
 }
 .cluster-star {
   bottom: 100px; left: 10px;
   width: 50px; height: 50px;
-  background: var(--accent-600); color: #fff;
-  transform: rotate(-6deg);
+  background: var(--accent-600); color: var(--on-primary);
+  --rot: -6deg;
+  animation-delay: 0.4s;
 }
 .cluster-sparkle {
   top: 190px; right: 60px;
   width: 46px; height: 46px;
   background: var(--primary-100); color: var(--primary-700);
-  transform: rotate(14deg);
+  --rot: 14deg;
+  animation-delay: 0.52s;
+}
+
+@keyframes cluster-pop {
+  from { opacity: 0; transform: rotate(var(--rot, 0deg)) scale(0.5); }
+  to   { opacity: 1; transform: rotate(var(--rot, 0deg)) scale(1); }
 }
 .cluster-caption {
   position: absolute;
@@ -172,60 +224,116 @@
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   text-align: center;
+  opacity: 0;
+  animation: caption-in 0.4s ease-out 0.65s both;
+}
+@keyframes caption-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cluster-piece, .cluster-caption { animation: none; opacity: 1; }
 }
 
 /* ---------- sections ---------- */
-.section { max-width: 1120px; margin: 0 auto; padding: var(--space-8) var(--space-6); }
+/* Grew from space-8 (40px) — with every section sharing the same white
+   background and no divider, 40px+40px between two headings read as
+   "squeezed together," not as two distinct sections (caught from a live
+   screenshot, not assumed). space-10 gives each section real room to
+   breathe. */
+.section { max-width: 1320px; margin: 0 auto; padding: var(--space-10) var(--space-6); position: relative; }
 /* A section that ends in a disclaimer note needs less bottom padding — the
    note is fine print, not a peer of the next section's heading, so it
    shouldn't float in as much open space as a full section gap creates
    (that read as an orphaned, disconnected sentence, not attached fine
    print). */
 .section:has(.plan-note) { padding-bottom: var(--space-5); }
+/* Alternating full-bleed tint band, on an explicit `.section--tint` class
+   from Home.jsx — not `:nth-of-type(even)` (the previous approach): two
+   of this page's sections only render conditionally (the live demo reply,
+   the catalogue peek), so odd/even position shifted depending on what had
+   loaded, and the *wrong* sections ended up tinted on a fresh load. An
+   explicit class is stable regardless of what's rendered.
+   Redesign pass 4 (2026-09-07): the tint itself used to be `var(--bg)`
+   (#fdf9f2) against `var(--surface)` (#ffffff) — technically two different
+   colours, but close enough to read as "no colour at all" at a glance,
+   which is exactly the "page feels flat/all one block" note this fixes.
+   `--primary-100` is a real, visible lavender wash (ties back to the brand
+   purple instead of an arbitrary neutral), plus a hairline top/bottom rule
+   so a band's edge is crisp even at a glance, not just a soft gradient.
+   The ::before trick (not a background on .section itself) is what makes
+   the tint span edge-to-edge while .section's own content stays capped at
+   1320px — .section only needed `position:relative` for this to anchor to. */
+.section--tint::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  background: var(--primary-100);
+  border-top: 1px solid var(--primary-border);
+  border-bottom: 1px solid var(--primary-border);
+  z-index: -1;
+}
 .section h2 {
   text-align: center; font-size: var(--text-2xl); margin: 0 0 var(--space-7);
   font-weight: 800;
 }
 
-/* ---------- bento grid — flat cards, solid border, no blur shadow ---------- */
-.bento-grid {
+/* ---------- how it works: one spotlighted idea + a plain list, not four
+   identical bordered cards ---------- */
+.how-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: 168px;
-  gap: var(--space-4);
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-7);
+  align-items: stretch;
+  /* Same fix as .diff-layout just below — a short spotlight box + a
+     3-item list don't have enough content to fill .section's full (now
+     1320px) width without turning into mostly padding. */
+  max-width: 1000px;
+  margin: 0 auto;
 }
-.bento-tile {
-  background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-6);
-  display: flex; flex-direction: column; justify-content: center;
-  transition: border-color 0.15s;
-  grid-column: span 1; grid-row: span 1;
+/* Both were `background: var(--primary-100)` — fine on the old plain white
+   section, but this section now carries that same lavender wash itself
+   (`.section--tint`), so these would blend straight into it instead of
+   reading as a card. Swapped to solid white so they pop as an object
+   sitting ON the tinted band, the classic "card on a colour field" look. */
+.how-spotlight {
+  background: var(--surface);
+  border: 2px solid var(--primary-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
-.bento-tile:hover { border-color: var(--primary-500); }
-.bento-tile-large {
-  grid-column: span 2; grid-row: span 2;
-  background: var(--primary-700);
-  border-color: var(--primary-700);
-  color: #fff;
-  justify-content: flex-end;
-}
-.bento-tile:nth-child(2) { grid-column: span 2; }
-.bento-icon {
-  width: 48px; height: 48px; border-radius: var(--radius-sm);
+.how-spotlight-icon {
+  width: 56px; height: 56px; border-radius: var(--radius-sm);
   display: flex; align-items: center; justify-content: center;
-  background: var(--primary-100); color: var(--primary-700); margin-bottom: var(--space-4);
+  background: var(--primary-700); color: var(--on-primary);
+  margin-bottom: var(--space-4);
 }
-.bento-tile-large .bento-icon { background: rgba(255, 255, 255, 0.18); color: #fff; }
-.bento-tile h3 {
-  margin: 0 0 var(--space-2); font-size: var(--text-lg);
-  font-weight: 700; line-height: var(--leading-snug);
+.how-spotlight h3 { margin: 0 0 var(--space-3); font-size: var(--text-xl); font-weight: 800; color: var(--primary-700); }
+.how-spotlight p { margin: 0; font-size: var(--text-md); line-height: var(--leading-body); color: var(--text); }
+
+.how-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; justify-content: center; gap: var(--space-5); }
+.how-list li { display: flex; gap: var(--space-4); align-items: flex-start; padding-bottom: var(--space-5); border-bottom: 1px solid var(--primary-border); }
+.how-list li:last-child { border-bottom: none; padding-bottom: 0; }
+.how-list-icon {
+  flex-shrink: 0;
+  width: 40px; height: 40px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--primary-700);
 }
-.bento-tile-large h3 { color: #fff; font-size: var(--text-xl); }
-.bento-tile p { margin: 0; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-body); }
-.bento-tile-large p { color: rgba(255, 255, 255, 0.92); font-size: var(--text-md); }
+.how-list h4 { margin: 0 0 var(--space-1); font-size: var(--text-base); font-weight: 700; color: var(--ink); }
+.how-list p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); color: var(--text); }
 
 /* ---------- plans ---------- */
+/* max-width grew from 660px (fit for exactly 2 cards) to fit 3 side by
+   side now that Ultra (2026-09-07) joined Free/Premium — still wraps to
+   fewer columns on a narrower viewport via auto-fit, same as before. */
 .plan-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-5); max-width: 660px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-5); max-width: 1000px; margin: 0 auto;
 }
 .plan {
   position: relative; background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-7); text-align: center;
@@ -233,7 +341,7 @@
 .plan-featured { border-color: var(--primary-700); border-width: 3px; }
 .plan-badge {
   position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
-  background: var(--primary-700); color: #fff; font-size: var(--text-xs); font-weight: 700; padding: var(--space-1) var(--space-4); border-radius: var(--radius-pill);
+  background: var(--primary-700); color: var(--on-primary); font-size: var(--text-xs); font-weight: 700; padding: var(--space-1) var(--space-4); border-radius: var(--radius-pill);
 }
 .plan h3 { margin: 0 0 var(--space-2); font-size: var(--text-lg); font-weight: 700; }
 .plan-price { font-size: var(--text-xl); font-weight: 800; color: var(--primary-700); margin: var(--space-2) 0 var(--space-5); }
@@ -247,20 +355,144 @@
    itself; without this the whole thing sat flush against the left edge. */
 .plan-note { text-align: center; color: var(--muted); font-size: var(--text-xs); margin: var(--space-3) auto 0; }
 
-/* ---------- reviews ---------- */
+/* ---------- reviews — illustrative, clearly flagged as such (see the
+   comment above Home.jsx's REVIEWS constant for why this looks the way it
+   does — round 2 after the first version's fake-named-people mistake). ---------- */
+/* The flag is its own visible line ABOVE the cards, same tinted-chip
+   treatment every other badge on this page already uses — not fine print
+   underneath, which is exactly what made the first "sample testimonials"
+   attempt still read as real at a glance. */
+.reviews-flag {
+  display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+  max-width: fit-content; margin: 0 auto var(--space-6);
+  padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill);
+  background: var(--primary-100); color: var(--primary-700);
+  font-size: var(--text-sm); font-weight: 700;
+}
+.reviews-flag svg { flex-shrink: 0; }
 .review-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-5);
 }
 .review {
-  position: relative; background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-6) var(--space-5) var(--space-5);
+  background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-5) var(--space-5);
 }
 .review-quote { color: var(--primary-border); margin-bottom: var(--space-2); }
-.stars { display: flex; gap: 2px; color: var(--accent-600); margin-bottom: var(--space-3); }
 .review-text { color: var(--text); margin: 0 0 var(--space-4); line-height: var(--leading-body); }
-.review-name { color: var(--muted); font-size: var(--text-sm); margin: 0; font-weight: 700; }
+/* Deliberately a plain label, never a name — the whole point of this round
+   of the section is that nothing here claims to be a real person. */
+.review-name { color: var(--muted); font-size: var(--text-xs); font-weight: 600; font-style: italic; margin: 0; }
+
+/* ---------- "See Pip in action" — a real chat exchange, same bubble/card
+   language as the actual product (child.css's .bubble-/.rec-* families),
+   rebuilt at landing-page scale rather than importing that stylesheet
+   wholesale into a page that otherwise never needs it.
+
+   Redesign pass 5 (2026-09-07): used to render the whole exchange at once,
+   fully formed, the instant the (fast) API call resolved — visually inert,
+   nothing for a visitor to actually watch happen. Now plays out beat by
+   beat once the section scrolls into view (Home.jsx's `demoStage`, same
+   visibility-poll pattern the final-CTA avatar already used) — question,
+   then a real "thinking" pause, then the reply, then the card — closer to
+   watching a short recorded moment than reading a finished screenshot.
+   Every beat is still the one real API response fetched on load; only the
+   reveal PACING is new, nothing here is scripted or faked. ---------- */
+/* min-height matches the finished exchange's own rough height (child
+   bubble + Pip row + card, with their gaps) — reserved from the very
+   first paint so the beat-by-beat reveal below (each beat adds a new
+   element) never makes anything BELOW this section jump down partway
+   through as it plays out. No loading state needed here any more —
+   DEMO_EXCHANGE (see Home.jsx) is static, nothing to wait on. */
+.demo-chat { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-4); min-height: 360px; }
+.demo-bubble {
+  padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg);
+  font-size: var(--text-md); line-height: var(--leading-body);
+}
+.demo-bubble-child {
+  align-self: flex-end; max-width: 80%;
+  background: var(--primary-700); color: var(--on-primary);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.demo-row { display: flex; align-items: flex-end; gap: var(--space-3); }
+.demo-row .avatar { width: 48px; height: 48px; flex-shrink: 0; }
+.demo-bubble-pip {
+  background: var(--surface); border: 2px solid var(--border); color: var(--text);
+  border-bottom-left-radius: var(--radius-sm); max-width: 80%;
+  min-width: 64px; /* holds the thinking dots' row height steady so the
+                       reply text landing doesn't visibly resize the bubble */
+}
+
+/* Each beat pops in on its own — a quick settle, not a generic fade,
+   matching the hero cluster's own `cluster-pop` entrance elsewhere on this
+   page (same animation language, reused rather than a new one invented). */
+.demo-beat-in { animation: demo-pop 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes demo-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* "Pip is thinking" — the exact same three-dot language child.css's real
+   chat screen uses mid-request (own copy, not a shared import — this page
+   doesn't otherwise need child.css), so the promise "not a scripted
+   example" reads true even in the pause before the reply. */
+.demo-dots { display: inline-flex; gap: var(--space-1); align-items: center; min-height: 1em; }
+.demo-dots span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--primary-500);
+  animation: demo-dot-bounce 1.2s infinite ease-in-out;
+}
+.demo-dots span:nth-child(2) { animation-delay: 0.15s; }
+.demo-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes demo-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+  40%           { transform: translateY(-5px); opacity: 1; }
+}
+
+.demo-card {
+  display: flex; gap: var(--space-4); align-items: flex-start;
+  margin-left: calc(48px + var(--space-3)); /* lines up under the Pip bubble, not the child's */
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-4); box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 8%, transparent);
+}
+/* The card itself still gets a beat-in pop (below); the cover on top of
+   that gets its own slower "camera push-in" — starts zoomed in tighter
+   than its resting frame and settles outward, the close-up Kiefer asked
+   for, not just another fade. `overflow: hidden` on the frame is load-
+   bearing: without it the zoomed image spills past the card's rounded
+   corners/border for the first ~1.4s of the animation. */
+.demo-card-in { animation: demo-pop 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.demo-card-cover-frame {
+  width: 84px; height: 112px; border-radius: var(--radius-sm);
+  overflow: hidden; flex-shrink: 0; border: 1px solid var(--border);
+}
+.demo-card-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
+.demo-card-cover-zoom { animation: demo-cover-zoom 1.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes demo-cover-zoom {
+  from { transform: scale(1.55); }
+  to   { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .demo-beat-in, .demo-card-in, .demo-card-cover-zoom, .demo-dots span { animation: none; opacity: 1; }
+}
+.demo-card-body h3 { margin: var(--space-1) 0; font-size: var(--text-lg); }
+.demo-card-body p { margin: 0; color: var(--text); font-size: var(--text-sm); }
+
+/* ---------- avatar/buddy showcase ---------- */
+.buddy-grid {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: var(--space-7);
+}
+.buddy-item { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+.buddy-item .avatar { width: 92px; height: 92px; }
+.buddy-item span { font-size: var(--text-sm); font-weight: 700; color: var(--muted); }
 
 .landing-footer { text-align: center; color: var(--muted); font-size: var(--text-xs); padding: var(--space-8) var(--space-6) var(--space-11); }
-.home-link { color: var(--primary-700); text-decoration: none; font-weight: 600; }
+.landing-footer p { margin: 0 0 var(--space-2); max-width: none; }
+.landing-footer p:last-child { margin-bottom: 0; }
+.home-link {
+  color: var(--primary-700); text-decoration: none; font-weight: 600;
+  display: inline-block; padding: var(--space-3) var(--space-2); /* was untouched
+    24px-tall text with no padding — failed the 44px touch-target minimum */
+}
 .home-link:hover { text-decoration: underline; }
 
 /* Centered lead paragraph under a section heading — margin-inline:auto is
@@ -275,19 +507,45 @@
   margin: 0 auto var(--space-7);
 }
 
-/* ---------- catalogue preview: real, moderator-approved items ---------- */
-.catalogue-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr); /* fixed 5 columns — 10 items = a
-                                             clean 2 full rows, not a
-                                             leftover single item on its
-                                             own row (see the responsive
-                                             overrides below for narrower
-                                             screens, same pattern as
-                                             .bento-grid) */
+/* ---------- catalogue preview: real, moderator-approved items, an
+   auto-scrolling shelf (see the JSX comment above .catalogue-scroller for
+   why — real content kept continuous, not a copied Epic! visual). ---------- */
+.catalogue-scroller {
+  overflow: hidden;
+  /* Fades the two edges instead of a hard clip — reads as "the shelf
+     keeps going both directions," not a ragged cut-off card. */
+  -webkit-mask-image: linear-gradient(to right, transparent, black 48px, black calc(100% - 48px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 48px, black calc(100% - 48px), transparent);
+}
+.catalogue-track {
+  display: flex;
   gap: var(--space-4);
+  width: max-content;
+  /* Slowed down a lot from the first pass (2.4s/card read as a ticker, not
+     a shelf) — checked getepic.com live for an actual reference speed to
+     copy and it doesn't run a scrolling shelf on its own homepage, so
+     there's no real number to match; ~7px/s is a judgment call for "calm,
+     easy to read mid-scroll," not a benchmarked figure. Scales with how
+     many real cards actually exist (Home.jsx duplicates the list once for
+     the seamless loop, so this covers exactly half the track). */
+  animation: catalogue-scroll calc(var(--n, 12) * 8s) linear infinite;
+}
+/* Pause on hover AND keyboard focus (a card's title is the only thing in
+   a moving row a screen-reader-off, mouse-using visitor can actually stop
+   to read; :focus-within covers a keyboard user tabbing through). */
+.catalogue-scroller:hover .catalogue-track,
+.catalogue-scroller:focus-within .catalogue-track {
+  animation-play-state: paused;
+}
+@keyframes catalogue-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .catalogue-track { animation: none; }
 }
 .catalogue-card {
+  flex: 0 0 220px;
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: var(--radius-lg);
@@ -316,12 +574,16 @@
   align-items: center;
   gap: var(--space-1);
   font-size: var(--text-xs);
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--primary-500);
+  /* primary-700, not primary-500 — primary-500 measured 3.53:1 against
+     white at this size/weight, below the 4.5:1 WCAG AA requirement;
+     primary-700 clears it comfortably (~8.4:1, verified elsewhere on
+     this page at the same size). */
+  color: var(--primary-700);
 }
-.catalogue-card h4 {
+.catalogue-card h3 {
   margin: var(--space-2) 0 0;
   font-size: var(--text-base);
   font-weight: 700;
@@ -334,52 +596,115 @@
   overflow: hidden;
 }
 
-/* ---------- differentiation: what this replaces, structurally ---------- */
-.diff-grid {
+/* ---------- differentiation: an asymmetric "old ways vs. Pip" layout —
+   not the generic three-equal-column comparison-card row. ---------- */
+.diff-layout {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-4);
-}
-.diff-card {
-  background: var(--surface);
-  border: 2px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-6);
-}
-.diff-card h3 { margin: 0 0 var(--space-2); font-size: var(--text-lg); font-weight: 700; }
-.diff-card p { margin: 0; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-body); }
-.diff-card-good {
-  background: var(--primary-700);
-  border-color: var(--primary-700);
-  color: #fff;
-}
-.diff-card-good .bento-icon { background: rgba(255, 255, 255, 0.18); color: #fff; }
-.diff-card-good h3 { color: #fff; }
-.diff-card-good p { color: rgba(255, 255, 255, 0.92); }
-
-/* ---------- FAQ: native <details>, no JS state needed ---------- */
-.faq-list {
-  max-width: 760px;
+  grid-template-columns: 1fr 1.2fr;
+  gap: var(--space-7);
+  align-items: stretch;
+  /* Capped like .plan-grid/.faq-list are — .section's own max-width grew
+     (1120→1320, see the width-fit fix) but this grid has no text long
+     enough to use that much room; without its own cap, .diff-answer's box
+     stretches far past its (globally 62ch-capped) paragraph, leaving a
+     wide strip of empty padding on one side instead of a considered box. */
+  max-width: 1000px;
   margin: 0 auto;
+}
+.diff-old { display: flex; flex-direction: column; justify-content: center; gap: var(--space-6); }
+.diff-old-item { display: flex; gap: var(--space-3); align-items: flex-start; }
+.diff-old-icon {
+  flex-shrink: 0;
+  width: 36px; height: 36px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--border); color: var(--muted);
+}
+.diff-old-item h3 { margin: 0 0 var(--space-1); font-size: var(--text-base); font-weight: 700; color: var(--ink); }
+.diff-old-item p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); color: var(--muted); }
+
+.diff-answer {
+  background: var(--primary-100);
+  border: 3px solid var(--primary-700);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  justify-content: center;
+}
+.diff-answer-icon {
+  width: 52px; height: 52px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--primary-700); color: var(--on-primary);
+  margin-bottom: var(--space-4);
+}
+.diff-answer h3 { margin: 0 0 var(--space-3); font-size: var(--text-xl); font-weight: 800; color: var(--primary-700); }
+.diff-answer p { margin: 0; font-size: var(--text-md); line-height: var(--leading-body); color: var(--text); }
+
+/* ---------- FAQ: native <details>, no JS state needed. A 2-column grid of
+   4 real questions (not a bare single-file stack — the "polos" complaint
+   was fair: plain white bordered rows in a single column read as an
+   afterthought at this page's width) + an icon per question tying each
+   answer to what it's actually about, same pattern the rest of the page
+   already uses (icon-led rows in How it works, Why not just search). ---------- */
+.faq-list {
+  max-width: 920px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  /* `stretch` (grid's own default, spelled out for clarity), not `start` —
+     `start` was letting each item keep its own intrinsic height, so a
+     row with one 2-line question and one 1-line question ended up with
+     two visibly different-sized boxes side by side (caught live). Every
+     item in a row now fills that row's full height instead. */
+  align-items: stretch;
 }
 .faq-item {
   background: var(--surface);
   border: 2px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-4) var(--space-5);
+  padding: 0 var(--space-5);
+  /* Stretching the grid item alone isn't enough — <details> is only as
+     tall as its own content by default, so without this it'd sit at the
+     TOP of the now-taller box instead of actually filling it (border
+     would still look right height-wise, but the collapsed triangle/
+     question row wouldn't be vertically centered in the shorter card).
+     flex + centering the closed state is what makes both boxes in a row
+     actually read as matching, not just technically the same height. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
+.faq-item[open] { justify-content: flex-start; }
 .faq-item summary {
   cursor: pointer;
-  font-weight: 700;
-  color: var(--ink);
-  font-size: var(--text-base);
+  padding: var(--space-4) 0; /* was unpadded, ~26px tall — failed the 44px
+    touch-target minimum; kept native display (not flex) on <summary> itself
+    so the browser's own disclosure-triangle marker still renders — the
+    icon+text row lives on an inner span instead (.faq-summary-inner). */
 }
+.faq-summary-inner {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  font-weight: 700; color: var(--ink); font-size: var(--text-base);
+  width: 100%;
+}
+.faq-icon {
+  flex-shrink: 0; width: 32px; height: 32px; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--primary-100); color: var(--primary-700);
+}
+/* The actual bug fix: {f.q} used to sit in the flex row as a bare text
+   node (an anonymous flex item), which some browsers size to its full
+   unwrapped width instead of letting it wrap inside the row — the visible
+   result was the icon rendering on its own, detached, for whichever
+   question was long enough to need 2 lines. A real element with
+   `flex: 1; min-width: 0` is the standard fix: it gives the text a proper
+   flex item to wrap normally inside, instead of being measured as one
+   unbreakable run. */
+.faq-q { flex: 1; min-width: 0; padding-top: 2px; }
 .faq-item summary:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
-.faq-item[open] summary { margin-bottom: var(--space-3); }
-.faq-item p { margin: 0; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-body); }
+.faq-item[open] summary { padding-bottom: var(--space-2); }
+.faq-item p { margin: 0 0 var(--space-4) 44px; color: var(--text); font-size: var(--text-sm); line-height: var(--leading-body); }
 
 /* ---------- final CTA: the hero's own action, repeated once ---------- */
 .final-cta {
@@ -400,19 +725,17 @@
 @media (max-width: 860px) {
   .hero { grid-template-columns: 1fr; text-align: center; padding-top: var(--space-7); }
   .hero-copy h1 { font-size: var(--text-3xl); }
-  .hero-tag, .hero-sub { margin-left: auto; margin-right: auto; }
+  .hero-tag { margin-left: auto; margin-right: auto; }
   .hero-cta { justify-content: center; }
   .hero-visual { height: 300px; margin-top: var(--space-3); }
   .hero-cluster { max-width: 320px; margin: 0 auto; }
-  .bento-grid { grid-template-columns: 1fr 1fr; grid-auto-rows: auto; }
-  .bento-tile, .bento-tile-large, .bento-tile:nth-child(2) { grid-column: span 2; grid-row: span 1; min-height: 150px; }
-  .diff-grid { grid-template-columns: 1fr; }
-  .catalogue-grid { grid-template-columns: repeat(3, 1fr); }
+  .how-grid { grid-template-columns: 1fr; }
+  .diff-layout { grid-template-columns: 1fr; }
+  .diff-old { gap: var(--space-5); }
+  .faq-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
   .landing-nav-cta { display: none; }
-  .hero-copy h1 { font-size: 36px; }
-  .bento-grid { grid-template-columns: 1fr; }
-  .bento-tile, .bento-tile-large, .bento-tile:nth-child(2) { grid-column: span 1; }
-  .catalogue-grid { grid-template-columns: 1fr 1fr; }
+  .hero-copy h1 { font-size: var(--text-2xl); } /* was a hardcoded 36px, outside the type scale — --text-2xl (34px) is the nearest real step */
+  .catalogue-card { flex-basis: 168px; } /* smaller cards on a narrow phone — the shelf still scrolls, just shows less of the next card at rest */
 }

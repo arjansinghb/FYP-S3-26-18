@@ -30,6 +30,10 @@ class Database:
         self.content: dict[str, dict] = {}
         self.favourites: dict[str, list] = {}   # child_id -> [ {content_id, ts} ]
         self.activity: dict[str, list] = {}      # child_id -> [ {ts, message, reply, rec_ids} ]
+        # CH17 — was previously acknowledged and discarded ("later this tunes
+        # recommendations"); now actually persisted and read back by the
+        # brain (see chat.py's `chat()` / brain.py's exclusion logic).
+        self.feedback: dict[str, list] = {}      # child_id -> [ {content_id, liked, ts} ]
         self.reports: list[dict] = []
         self.tokens: dict[str, dict] = {}         # token -> {kind, id} — session-only, never persisted
         self.tickets: list[dict] = []             # escalated support tickets (SA14)
@@ -72,7 +76,17 @@ class Database:
                 "openai_zdr_status": settings.ZDR_STATUS,
             },
             "website": {"site_title": "Pip — Reading Buddy", "tagline": "Safe, age-appropriate books & videos for kids", "announcement": ""},
-            "billing": {"provider": "none", "currency": "SGD", "monthly_price": 9.9, "billing_enabled": False},
+            # One price pair per paid tier (SA13) — used to be a single
+            # `monthly_price` covering "Premium" only; `subscribe()` below
+            # never actually read it (charged a hardcoded 999/9900 cents
+            # regardless of what an admin set here) until the Ultra tier
+            # pass (2026-09-07) wired both tiers' real prices through for
+            # real, not just displayed them.
+            "billing": {
+                "provider": "none", "currency": "SGD", "billing_enabled": False,
+                "premium_monthly_price": 9.9, "premium_annual_price": 99.0,
+                "ultra_monthly_price": 19.9, "ultra_annual_price": 199.0,
+            },
         }
         self.started = time.time()
 
@@ -89,6 +103,12 @@ class Database:
         self.content = state.get("content", {})
         self.favourites = state.get("favourites", {})
         self.activity = state.get("activity", {})
+        self.feedback = state.get("feedback", {})
+        # Older saved snapshots predate `feedback` entirely — every existing
+        # child needs an entry or the first feedback write for them 404s
+        # against a missing key instead of appending.
+        for child_id in self.children:
+            self.feedback.setdefault(child_id, [])
         self.reports = state.get("reports", [])
         self.tickets = state.get("tickets", [])
         self.content_overrides = state.get("content_overrides", {})
@@ -140,6 +160,7 @@ class Database:
             "content": self.content,
             "favourites": self.favourites,
             "activity": self.activity,
+            "feedback": self.feedback,
             "reports": self.reports,
             "tickets": self.tickets,
             "content_overrides": self.content_overrides,
@@ -304,6 +325,7 @@ class Database:
                 if child_id in self.children:  # child may have been deleted separately (PA09) already
                     self.activity[child_id] = []
                     self.favourites[child_id] = []
+                    self.feedback[child_id] = []
                 record["status"] = "completed"
 
     # ---------- PA20/22 notifications ----------
@@ -334,18 +356,24 @@ class Database:
 
     # ---------- PA23-27 billing (simulated) ----------
 
-    def subscribe(self, account: dict, billing_cycle: str, payment_method: dict | None = None) -> dict:
+    def subscribe(self, account: dict, tier: str, billing_cycle: str, payment_method: dict | None = None) -> dict:
+        """`tier` is "premium" or "ultra" (SubscribeRequest). Price actually
+        comes from `system.billing`'s admin-configured values now — this
+        used to charge a hardcoded 999/9900 cents regardless of what SA13's
+        own admin panel had set, a real gap found while wiring the Ultra
+        tier through (2026-09-07), fixed alongside it rather than left."""
         if payment_method:
             self.set_payment_method(account, payment_method["brand"], payment_method["last4"])
-        account["tier"] = "premium"
+        account["tier"] = tier
         account["subscription_billing_cycle"] = billing_cycle
         account["subscription_started_at"] = time.time()
         account["subscription_cancel_at"] = None
-        price_cents = 999 if billing_cycle == "monthly" else 9900
+        b = self.system["billing"]
+        price = b[f"{tier}_{billing_cycle}_price"]
         self.billing_records.append({
             "id": _new_id(), "parent_id": account["id"],
-            "description": f"Premium subscription ({billing_cycle})",
-            "amount_cents": price_cents, "ts": time.time(),
+            "description": f"{tier.capitalize()} subscription ({billing_cycle})",
+            "amount_cents": round(price * 100), "ts": time.time(),
         })
         return account
 
@@ -470,6 +498,7 @@ class Database:
         self.children[child["id"]] = child
         self.favourites[child["id"]] = []
         self.activity[child["id"]] = []
+        self.feedback[child["id"]] = []
         return child
 
     def children_of(self, parent_id: str) -> list[dict]:

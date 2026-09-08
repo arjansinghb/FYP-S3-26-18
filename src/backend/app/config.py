@@ -61,6 +61,16 @@ class Settings:
     # status: real defense-in-depth either way, on by default.
     PII_SCRUB_ENABLED = os.getenv("PII_SCRUB_ENABLED", "true").lower() != "false"
 
+    # Screens a child's message through OpenAI's (free) Moderation API
+    # before it reaches the main chat model — a real, separate layer from
+    # PII_SCRUB_ENABLED above (that hides identifying details; this checks
+    # whether the message itself is steering toward an unsafe topic and
+    # redirects instead of answering). Documented as part of this
+    # project's safety stack from early on but never actually implemented
+    # until now — see app/moderation.py. On by default, same reasoning as
+    # PII scrubbing.
+    INPUT_MODERATION_ENABLED = os.getenv("INPUT_MODERATION_ENABLED", "true").lower() != "false"
+
     # --- Firebase (Firestore persistence for the prototype's storage.py —
     # see app/firestore_store.py, the storage swap point) ---
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")

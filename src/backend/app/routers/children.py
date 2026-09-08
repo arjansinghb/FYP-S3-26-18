@@ -15,6 +15,9 @@ router = APIRouter(tags=["children"])
 
 FREE_CHILD_LIMIT = 1
 PREMIUM_CHILD_LIMIT = 4  # PA33
+ULTRA_CHILD_LIMIT = float("inf")  # Ultra tier (2026-09-07) — genuinely unlimited, not just "a bigger number"
+
+_TIER_CHILD_LIMITS = {"free": FREE_CHILD_LIMIT, "premium": PREMIUM_CHILD_LIMIT, "ultra": ULTRA_CHILD_LIMIT}
 
 
 def _child_out(c: dict) -> ChildOut:
@@ -37,17 +40,19 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     """PA07. Gated behind UV06 (email verified) and PA28 (consent given) —
     "a child profile isn't allowed to exist without it" is the whole point
     of verifiable parental consent, not a checkbox nobody enforces. Also
-    enforces PA33's tier cap (free: 1 child, Premium: up to 4)."""
+    enforces PA33's tier cap (free: 1 child, Premium: up to 4, Ultra:
+    unlimited)."""
     if not parent.get("verified"):
         raise HTTPException(403, "Please verify your email before adding a child profile.")
     if not parent.get("consent"):
         raise HTTPException(403, "Please provide parental consent before adding a child profile.")
     existing = db.children_of(parent["id"])
-    limit = PREMIUM_CHILD_LIMIT if parent.get("tier") == "premium" else FREE_CHILD_LIMIT
+    tier = parent.get("tier", "free")
+    limit = _TIER_CHILD_LIMITS[tier]
     if len(existing) >= limit:
-        msg = ("Free accounts can have 1 child profile — upgrade to Premium for up to 4."
-               if limit == FREE_CHILD_LIMIT else
-               "You've reached the Premium limit of 4 child profiles.")
+        msg = ("Free accounts can have 1 child profile — upgrade to Premium for up to 4, or Ultra for unlimited."
+               if tier == "free" else
+               "You've reached the Premium limit of 4 child profiles — upgrade to Ultra for unlimited.")
         raise HTTPException(403, msg)
     # PIN/linking code is system-generated inside create_child now, not
     # parent-typed — see models.ChildCreate's docstring for why. No
@@ -63,11 +68,20 @@ def list_children(parent: dict = Depends(require_role("parent"))):
 
 @router.patch("/api/children/{child_id}", response_model=ChildOut)
 def update_child(child_id: str, body: ChildUpdate, parent: dict = Depends(require_role("parent"))):
+    """`exclude_unset` (not `getattr(...) is not None`) is what makes
+    clearing `reading_level` back to empty actually work — every field on
+    `ChildUpdate` is `Optional[...] = None`, so an old `is not None` check
+    can't tell "the parent didn't touch this field" from "the parent
+    explicitly cleared it" — both look identical (`None`) once they reach
+    here. The frontend's own edit form always sends `reading_level: null`
+    on purpose when the field is cleared (see EditChild in
+    ParentDashboard.jsx), so silently ignoring that was a real, if small,
+    bug: PA13 guidance could be set but never removed again."""
     child = _owned_child(child_id, parent)
+    updates = body.model_dump(exclude_unset=True)
     for f in ("name", "age_band", "reading_level"):
-        val = getattr(body, f)
-        if val is not None:
-            child[f] = val
+        if f in updates:
+            child[f] = updates[f]
     return _child_out(child)
 
 

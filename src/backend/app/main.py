@@ -6,10 +6,12 @@ Run from src/backend/ with:
 Interactive API docs are then at http://localhost:8000/docs
 """
 import logging
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import metrics
 from .config import settings
 from .routers import account, admin, auth, chat, child, children, content, health, oversight, public, reports
 from .storage import db
@@ -57,6 +59,17 @@ async def persist_state(request: Request, call_next):
     response = await call_next(request)
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and response.status_code < 400:
         db.save()
+    return response
+
+
+@app.middleware("http")
+async def track_request(request: Request, call_next):
+    """SA08 — feeds app/metrics.py's rolling window so admin/stats can show
+    real error rate + NLP (chat) latency, not just raw counts. See
+    metrics.py's own docstring for why this exists."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    metrics.record(time.perf_counter() - start, response.status_code, request.url.path)
     return response
 
 
