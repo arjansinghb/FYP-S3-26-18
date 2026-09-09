@@ -46,22 +46,24 @@ class AuthOut(BaseModel):
 
 
 class SignupOut(AuthOut):
-    # Dev mode only (see VerifyRequestOut) — lets the signup response itself
-    # carry the verification token instead of nothing happening because no
-    # email service is configured.
+    # Only set in dev mode (see VerifyRequestOut) — real-email mode (Resend
+    # configured, app/email_service.py) leaves this null so the token never
+    # rides along in an API response that anyone could read; the recipient
+    # has to actually open the email.
     verify_token: Optional[str] = None
 
 
 # ----- UV06 email verification / PA03 password reset -----
-# Dev-mode: no email service is configured, so both flows return the token
-# directly in the API response instead of emailing it — same honest pattern
-# the other branch uses for its own no-email-service gaps. A teammate with
-# SMTP/Firebase credentials can swap the "return token" step for an actual
-# send later without touching the confirm side.
+# Two modes, decided per-request by whether app/email_service.py's Resend
+# key is configured (settings.resend_configured):
+#   - dev mode (no key): unchanged from before — the token comes back
+#     directly in the API response instead of being emailed, `note` says so.
+#   - real mode (key set): a real email is sent, `token` stays null in the
+#     response, `note` says to check the inbox instead.
 
 
 class VerifyRequestOut(BaseModel):
-    token: str
+    token: Optional[str] = None
     note: str = "Dev mode: no email service configured, so the token is returned here directly instead of being emailed."
 
 

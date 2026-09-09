@@ -2,11 +2,15 @@
 (email verification), PA03 (password reset), and the moderator/admin logins
 (CM01/SA01) through one shared mechanism.
 
-LATER: Firebase Authentication replaces this; UV06/PA03 become real emailed
-Firebase flows instead of the dev-mode token-in-response approach below.
+UV06/PA03 send a real email via app/email_service.py once a Resend API key
+is configured (settings.resend_configured) — see each handler below for the
+dev-mode-vs-real branch. No key -> unchanged dev-mode behaviour, the token
+comes back directly in the API response instead of being emailed.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import email_service
+from ..config import settings
 from ..deps import current_account
 from ..models import (
     AccountOut, AccountUpdate, AuthOut, LoginRequest, PasswordResetConfirm,
@@ -26,16 +30,19 @@ def _account_out(acc: dict) -> AccountOut:
 @router.post("/signup", response_model=SignupOut)
 def signup(body: SignupRequest):
     """UV05. Per the URS, signup creates the account "pending email
-    verification" (UV06) — a verification token is minted right away so the
-    client can immediately offer to confirm it (dev mode: no email service is
-    configured, see VerifyRequestOut's own note, so the token comes back in
-    the signup response instead of being emailed)."""
+    verification" (UV06) — a verification token is minted right away. If a
+    real email service is configured it's sent for real and never rides
+    along in this response; otherwise (dev mode) the token comes back here
+    directly, same as before."""
     try:
         acc = db.create_account(body.email, body.password, body.name, role="parent")
     except ValueError as e:
         raise HTTPException(409, str(e))
     token = db.issue_token("account", acc["id"])
     verify_token = db.request_email_verification(acc)
+    if settings.resend_configured:
+        email_service.send_verification_email(acc["email"], verify_token)
+        verify_token = None
     return SignupOut(token=token, account=_account_out(acc), verify_token=verify_token)
 
 
@@ -86,6 +93,9 @@ def request_verification(account: dict = Depends(current_account)):
     if account["verified"]:
         raise HTTPException(400, "Account is already verified")
     token = db.request_email_verification(account)
+    if settings.resend_configured:
+        email_service.send_verification_email(account["email"], token)
+        return VerifyRequestOut(token=None, note=f"Check {account['email']} for your verification code.")
     return VerifyRequestOut(token=token)
 
 
@@ -103,9 +113,18 @@ def confirm_verification(body: VerifyConfirm):
 def request_password_reset(body: PasswordResetRequest):
     """Doesn't reveal whether the email is registered (same non-enumeration
     principle as child_login's shared error message) — always 200, but the
-    token is only actually minted (and returned, dev-mode) if it matches a
-    real account."""
+    token is only actually minted (and, dev-mode, returned — real mode,
+    emailed) if it matches a real account. Note text stays generic either
+    way ("if this address is registered...") so a real-mode response can't
+    be used to probe which emails have accounts, the same way the token's
+    presence/absence already couldn't in dev mode."""
     token = db.request_password_reset(body.email)
+    if token and settings.resend_configured:
+        email_service.send_password_reset_email(body.email, token)
+        return PasswordResetRequestOut(
+            token=None,
+            note="If that email is registered, a reset code has been sent to it.",
+        )
     return PasswordResetRequestOut(token=token)
 
 

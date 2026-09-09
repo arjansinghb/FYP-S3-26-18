@@ -35,7 +35,13 @@ class Database:
         # brain (see chat.py's `chat()` / brain.py's exclusion logic).
         self.feedback: dict[str, list] = {}      # child_id -> [ {content_id, liked, ts} ]
         self.reports: list[dict] = []
-        self.tokens: dict[str, dict] = {}         # token -> {kind, id} — session-only, never persisted
+        # token -> {kind, id}. Persisted (see save()/_restore()) — Vercel can
+        # route consecutive requests to different warm instances, each with
+        # its own copy of this dict; without persistence, a token issued by
+        # the instance that handled login is invisible to whichever instance
+        # handles the very next request (see resolve_token()'s reload-on-miss
+        # fallback, the other half of this fix).
+        self.tokens: dict[str, dict] = {}
         self.tickets: list[dict] = []             # escalated support tickets (SA14)
         # PA18 — per-child overrides on top of the global catalogue status.
         self.content_overrides: dict[str, dict] = {}   # child_id -> {content_id: "approve"|"hide"}
@@ -47,8 +53,9 @@ class Database:
         self.chat_sessions: dict[str, dict] = {}
         # PA30 — data-deletion requests (logged, not just silently executed).
         self.deletion_requests: list[dict] = []
-        # UV06/PA03 — short-lived, session-like, deliberately NOT persisted
-        # (same reasoning as `tokens` above: meant to expire, not survive a restart).
+        # UV06/PA03 — same cross-instance reasoning as `tokens` above, and
+        # persisted for the same reason (a reset/verify link can just as
+        # easily be requested and confirmed against two different instances).
         self.verify_tokens: dict[str, dict] = {}   # token -> {account_id}
         self.reset_tokens: dict[str, dict] = {}    # token -> {account_id, expires}
         # System configuration sections the admin can edit (SA09-SA13). Reflects
@@ -116,6 +123,9 @@ class Database:
         self.billing_records = state.get("billing_records", [])
         self.chat_sessions = state.get("chat_sessions", {})
         self.deletion_requests = state.get("deletion_requests", [])
+        self.tokens = state.get("tokens", {})
+        self.verify_tokens = state.get("verify_tokens", {})
+        self.reset_tokens = state.get("reset_tokens", {})
         # Merge rather than replace: keeps any new config keys a later code
         # change adds, even if the saved snapshot predates them.
         for section, values in state.get("system", {}).items():
@@ -151,9 +161,17 @@ class Database:
 
     def save(self) -> None:
         """Persist the full prototype state to Firestore (no-op if
-        unconfigured). `tokens`/`verify_tokens`/`reset_tokens` are
-        deliberately excluded — short-lived, meant to expire, not survive
-        a restart."""
+        unconfigured). `tokens`/`verify_tokens`/`reset_tokens` ARE included
+        (see the 2026-09-08 fix below, resolve_token()'s docstring) — an
+        earlier version of this deliberately excluded them as "short-lived,
+        meant to expire, not survive a restart," which was true for a
+        restart but missed the real failure mode on Vercel: multiple warm
+        instances running *concurrently*, not sequentially, each with its
+        own copy of this dict. A token issued by whichever instance handled
+        login was invisible to whichever instance handled the very next
+        request — reproduced live (login succeeds, the immediate follow-up
+        `/api/children` call 401s "Invalid or expired token", and a page
+        reload seconds later logs the user out entirely)."""
         firestore_store.save_state({
             "accounts": self.accounts,
             "children": self.children,
@@ -169,6 +187,9 @@ class Database:
             "chat_sessions": self.chat_sessions,
             "deletion_requests": self.deletion_requests,
             "system": self.system,
+            "tokens": self.tokens,
+            "verify_tokens": self.verify_tokens,
+            "reset_tokens": self.reset_tokens,
         })
 
     # ---------- accounts ----------
@@ -248,7 +269,23 @@ class Database:
         self.tokens.pop(token, None)
 
     def resolve_token(self, token: str):
-        return self.tokens.get(token)
+        entry = self.tokens.get(token)
+        if entry is not None:
+            return entry
+        # Cross-instance fallback (2026-09-08 fix — see save()'s docstring
+        # for the bug this closes). This instance's own in-memory `tokens`
+        # doesn't have it, but another concurrently-warm instance may have
+        # issued it and already saved it to Firestore (issuing a token
+        # always happens inside a mutating POST, which main.py's
+        # persist_state middleware saves right after). Reload once before
+        # concluding the token is genuinely invalid — a no-op in local dev
+        # (firestore_store.load_state() returns None when Firebase isn't
+        # configured, same as today).
+        saved = firestore_store.load_state()
+        if saved:
+            self._restore(saved)
+            entry = self.tokens.get(token)
+        return entry
 
     # ---------- UV06 email verification ----------
 

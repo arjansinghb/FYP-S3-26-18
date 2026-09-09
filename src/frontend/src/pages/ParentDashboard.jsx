@@ -264,15 +264,32 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 function VerifyBanner({ account, onAccountUpdated }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [sent, setSent] = useState(false)
+  // Dev mode only: signup (or a resend below) can hand back a real token
+  // when no email service is configured — prefilling it keeps local/no-key
+  // testing exactly as easy as before this change. In real-email mode the
+  // backend never sends a token back, so this just stays empty and the
+  // parent has to actually check their inbox and type the code in.
+  const [code, setCode] = useState(account.verify_token || '')
 
-  async function verifyNow() {
+  async function sendCode() {
     setBusy(true); setError('')
     try {
-      // Dev mode: no email service exists, so the token comes back from the
-      // API directly instead of being emailed — use the one from signup if
-      // we still have it, otherwise request a fresh one.
-      const token = account.verify_token || (await requestVerification()).token
-      const updated = await confirmVerification(token)
+      const res = await requestVerification()
+      if (res.token) setCode(res.token)
+      setSent(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function verifyNow(e) {
+    e.preventDefault()
+    setBusy(true); setError('')
+    try {
+      const updated = await confirmVerification(code)
       onAccountUpdated({ ...account, ...updated })
     } catch (err) {
       setError(err.message)
@@ -281,14 +298,27 @@ function VerifyBanner({ account, onAccountUpdated }) {
     }
   }
 
+  const haveCode = sent || !!code
+
   return (
     <div className="card" style={{ background: 'var(--primary-100)', borderColor: 'var(--primary-border)' }}>
       <p><AlertIcon width={16} height={16} /> <b>Please verify your email</b> — needed before you can add a child profile.</p>
-      <p className="muted">Dev mode: no email service is configured yet, so verification happens with one click here instead of a real email link.</p>
+      <p className="muted">
+        {code
+          ? 'Dev mode: no email service is configured, so your code is filled in below already.'
+          : `We'll send a verification code to ${account.email}.`}
+      </p>
       {error && <p className="error">{error}</p>}
-      <div className="row">
-        <button onClick={verifyNow} disabled={busy}>{busy ? 'Verifying…' : 'Verify now'}</button>
-      </div>
+      <form onSubmit={verifyNow} className="row">
+        {!haveCode && <button type="button" onClick={sendCode} disabled={busy}>{busy ? 'Sending…' : 'Send verification code'}</button>}
+        {haveCode && (
+          <>
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code from email" required style={{ maxWidth: 160 }} />
+            <button type="submit" disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
+            <button type="button" className="linkbtn" onClick={sendCode} disabled={busy}>Resend code</button>
+          </>
+        )}
+      </form>
     </div>
   )
 }

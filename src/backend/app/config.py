@@ -87,6 +87,16 @@ class Settings:
     GOOGLE_BOOKS_API_KEY = os.getenv("GOOGLE_BOOKS_API_KEY", "")
     YOUTUBE_DATA_API_KEY = os.getenv("YOUTUBE_DATA_API_KEY", "")
 
+    # --- UV06/PA03 real email delivery (app/email_service.py). No key ->
+    # both flows fall back to the original dev-mode "token comes back in the
+    # API response instead of being emailed" behaviour, same as before this
+    # setting existed. RESEND_FROM defaults to Resend's own shared testing
+    # sender, which works with zero domain setup — good enough for a
+    # prototype; swap in a verified custom domain address for anything more
+    # than that.
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+    RESEND_FROM = os.getenv("RESEND_FROM", "Pip <onboarding@resend.dev>")
+
     # Allow the React dev server (any localhost port) to call the API.
     CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"http://localhost:\d+")
 
@@ -108,6 +118,10 @@ class Settings:
     @property
     def openai_configured(self) -> bool:
         return bool(self.OPENAI_API_KEY)
+
+    @property
+    def resend_configured(self) -> bool:
+        return bool(self.RESEND_API_KEY)
 
 
 settings = Settings()
