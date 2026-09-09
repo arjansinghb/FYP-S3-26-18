@@ -12,7 +12,7 @@ import {
   listNotifications, markNotificationRead, getNotificationPreferences, updateNotificationPreferences,
   getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
   getPublicPlans,
-  setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin,
+  setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
   childReports, childTrends, compareChildren,
 } from '../api'
 import {
@@ -20,6 +20,15 @@ import {
   PlusIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import './parent.css'
+
+// A book/video type icon in a tinted chip — same "icon-led title" pattern
+// ModeratorDashboard.jsx's queue rows already use, applied here to the
+// favourites list so a book/video isn't just a flat monochrome glyph
+// sitting next to plain text (see .fav-icon in parent.css).
+function TypeIcon({ type }) {
+  const Icon = type === 'book' ? BookIcon : VideoIcon
+  return <span className={`fav-icon fav-icon--${type}`}><Icon width={16} height={16} /></span>
+}
 
 export default function ParentDashboard() {
   const [account, setAccount] = useState(null)
@@ -204,11 +213,11 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 
   return (
     <div className="parent">
+      <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><UserIcon width={20} height={20} /></div>
           <div>
-            <Link className="home-link" to="/">← Home</Link>
             <h1>Parent Dashboard</h1>
             <p className="muted">Signed in as {account.name} ({account.email})</p>
           </div>
@@ -224,12 +233,6 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
       {!account.verified && <VerifyBanner account={account} onAccountUpdated={onAccountUpdated} />}
 
       <AccountPanel account={account} onUpdated={onAccountUpdated} onDeleted={onDeleted} />
-
-      <NotificationSettings />
-
-      <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
-
-      <PrivacyPanel account={account} />
 
       <AddChild account={account} onAccountUpdated={onAccountUpdated} onAdded={reload} childCount={children.length} />
 
@@ -255,6 +258,12 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
           <ChildCard key={c.id} child={c} account={account} onChanged={reload} />
         ))}
       </div>
+
+      <NotificationSettings />
+
+      <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
+
+      <PrivacyPanel account={account} />
     </div>
   )
 }
@@ -330,8 +339,19 @@ function NotificationsBell() {
   const [items, setItems] = useState([])
   const [loaded, setLoaded] = useState(false)
 
+  // Fetch on mount, not just lazily when the bell is first clicked — a
+  // badge that only appears after you've already opened the panel once
+  // defeats the point of having one. Real found gap, not just a restyle:
+  // a parent had no way to *notice* something new happened (e.g. their
+  // child just activated their device) without already checking.
+  useEffect(() => {
+    listNotifications().then((n) => { setItems(n); setLoaded(true) }).catch(() => {})
+  }, [])
+
   async function toggle() {
-    if (!open && !loaded) {
+    if (!open) {
+      // Refresh on every open too, so marking something read elsewhere
+      // (or a new notification landing while this was closed) isn't stale.
       try { setItems(await listNotifications()); setLoaded(true) } catch { /* ignore */ }
     }
     setOpen(!open)
@@ -346,23 +366,27 @@ function NotificationsBell() {
   const unread = items.filter((n) => !n.read).length
 
   return (
-    <div style={{ position: 'relative' }}>
-      <button className="ghost small" onClick={toggle}>
-        <BellIcon width={16} height={16} /> {loaded && unread > 0 ? `(${unread})` : ''}
+    <div className="notif-bell">
+      <button className="notif-trigger" onClick={toggle} aria-label="Notifications" aria-expanded={open}>
+        <BellIcon width={18} height={18} />
+        {loaded && unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
       </button>
       {open && (
-        <div className="card" style={{ position: 'absolute', right: 0, top: '110%', width: 320, zIndex: 10, maxHeight: 360, overflowY: 'auto' }}>
-          <h3 style={{ margin: 0 }}>Notifications</h3>
-          {items.length === 0 && <p className="muted">Nothing yet.</p>}
+        <div className="notif-panel">
+          <div className="notif-panel-header">
+            <h3>Notifications</h3>
+            {loaded && unread > 0 && <span className="notif-unread-label">{unread} new</span>}
+          </div>
+          {items.length === 0 && <p className="muted notif-empty">Nothing yet — you'll see updates here as they happen.</p>}
           {items.map((n) => (
-            <div key={n.id} className="activity-item" style={{ cursor: 'pointer', opacity: n.read ? 0.6 : 1 }} onClick={() => read(n)}>
-              <p className="said-child" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                {!n.read && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--primary-500)', flexShrink: 0 }} />}
-                {n.title}
-              </p>
-              <p className="muted" style={{ margin: '2px 0' }}>{n.body}</p>
-              <p className="ts">{new Date(n.created_at * 1000).toLocaleString()}</p>
-            </div>
+            <button key={n.id} className={`notif-item${n.read ? ' notif-item--read' : ''}`} onClick={() => read(n)}>
+              <span className="notif-dot" />
+              <span className="notif-text">
+                <span className="notif-title">{n.title}</span>
+                <span className="notif-body">{n.body}</span>
+                <span className="notif-ts">{new Date(n.created_at * 1000).toLocaleString()}</span>
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -993,8 +1017,14 @@ function ChildCard({ child, account, onChanged }) {
   }
 
   async function regeneratePin() {
-    if (!confirm(`Generate a new code for ${child.name}? The old one (${child.linking_code}) will stop working immediately.`)) return
+    if (!confirm(`Generate a new PIN for ${child.name}? The old one (${child.pin}) will stop working immediately.`)) return
     await regenerateChildPin(child.id)
+    onChanged()
+  }
+
+  async function regenerateLoginId() {
+    if (!confirm(`Generate a new Login ID for ${child.name}? The old one (${child.login_id}) will stop working immediately.`)) return
+    await regenerateChildLoginId(child.id)
     onChanged()
   }
 
@@ -1018,9 +1048,17 @@ function ChildCard({ child, account, onChanged }) {
       )}
 
       <div className="linking">
-        <span className="muted">Linking code / PIN (give to your child — it's the same 6-digit number, generated automatically):</span>
-        <code className="code">{child.linking_code}</code>
-        <button className="ghost small" onClick={regeneratePin}>Generate new code</button>
+        <span className="muted">Give these to your child to sign in — both generated automatically:</span>
+        <div className="linking-row">
+          <span className="linking-label">Login ID</span>
+          <code className="code">{child.login_id}</code>
+          <button className="ghost small" onClick={regenerateLoginId}>Generate new</button>
+        </div>
+        <div className="linking-row">
+          <span className="linking-label">PIN</span>
+          <code className="code">{child.pin}</code>
+          <button className="ghost small" onClick={regeneratePin}>Generate new</button>
+        </div>
       </div>
 
       <div className="row">
@@ -1070,9 +1108,15 @@ function ChildCard({ child, account, onChanged }) {
                 {open && (
                   <div className="session-transcript">
                     {open.entries.map((a, i) => (
-                      <div key={i} className="activity-item">
-                        <p className="said-child"><UserIcon width={14} height={14} /> {a.message}</p>
-                        <p className="said-pip"><ChatIcon width={14} height={14} /> {a.reply}</p>
+                      <div key={i} className="activity-entry">
+                        <div className="activity-line activity-line--child">
+                          <span className="activity-avatar activity-avatar--child"><UserIcon width={13} height={13} /></span>
+                          <span className="activity-bubble activity-bubble--child">{a.message}</span>
+                        </div>
+                        <div className="activity-line activity-line--pip">
+                          <span className="activity-avatar activity-avatar--pip"><ChatIcon width={13} height={13} /></span>
+                          <span className="activity-bubble activity-bubble--pip">{a.reply}</span>
+                        </div>
                         <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
                       </div>
                     ))}
@@ -1084,7 +1128,13 @@ function ChildCard({ child, account, onChanged }) {
 
           {!loading && view === 'favourites' && data.map((f) => (
             <div key={f.id} className="fav-item">
-              <span>{f.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />} {f.title}</span>
+              <span className="fav-info">
+                <TypeIcon type={f.type} />
+                <span className="fav-text">
+                  <span className="fav-title">{f.title}</span>
+                  <span className="fav-type">{f.type === 'book' ? 'Book' : 'Video'}</span>
+                </span>
+              </span>
               <div className="row">
                 {f.type === 'book' && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
                 <button

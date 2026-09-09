@@ -31,17 +31,20 @@ def _account_out(acc: dict) -> AccountOut:
 def signup(body: SignupRequest):
     """UV05. Per the URS, signup creates the account "pending email
     verification" (UV06) — a verification token is minted right away. If a
-    real email service is configured it's sent for real and never rides
-    along in this response; otherwise (dev mode) the token comes back here
-    directly, same as before."""
+    real email service is configured AND the send actually succeeds, it's
+    sent for real and never rides along in this response; otherwise (no
+    email service configured, OR a real send attempt failed — e.g. Resend's
+    sandbox mode rejecting a recipient that isn't the account's own verified
+    address) the token falls back to coming back here directly, same as
+    dev mode, so a delivery failure never leaves the parent with zero way
+    to verify."""
     try:
         acc = db.create_account(body.email, body.password, body.name, role="parent")
     except ValueError as e:
         raise HTTPException(409, str(e))
     token = db.issue_token("account", acc["id"])
     verify_token = db.request_email_verification(acc)
-    if settings.resend_configured:
-        email_service.send_verification_email(acc["email"], verify_token)
+    if settings.resend_configured and email_service.send_verification_email(acc["email"], verify_token):
         verify_token = None
     return SignupOut(token=token, account=_account_out(acc), verify_token=verify_token)
 
@@ -93,10 +96,14 @@ def request_verification(account: dict = Depends(current_account)):
     if account["verified"]:
         raise HTTPException(400, "Account is already verified")
     token = db.request_email_verification(account)
-    if settings.resend_configured:
-        email_service.send_verification_email(account["email"], token)
+    if settings.resend_configured and email_service.send_verification_email(account["email"], token):
         return VerifyRequestOut(token=None, note=f"Check {account['email']} for your verification code.")
-    return VerifyRequestOut(token=token)
+    note = (
+        "Couldn't email a code to this address right now, so here it is directly instead."
+        if settings.resend_configured
+        else "Dev mode: no email service configured, so the token is returned here directly instead of being emailed."
+    )
+    return VerifyRequestOut(token=token, note=note)
 
 
 @router.post("/verify/confirm", response_model=AccountOut)
@@ -119,8 +126,7 @@ def request_password_reset(body: PasswordResetRequest):
     be used to probe which emails have accounts, the same way the token's
     presence/absence already couldn't in dev mode."""
     token = db.request_password_reset(body.email)
-    if token and settings.resend_configured:
-        email_service.send_password_reset_email(body.email, token)
+    if token and settings.resend_configured and email_service.send_password_reset_email(body.email, token):
         return PasswordResetRequestOut(
             token=None,
             note="If that email is registered, a reset code has been sent to it.",

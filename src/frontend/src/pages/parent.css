@@ -11,7 +11,10 @@
 /* ---------- shared ---------- */
 .home-link {
   display: inline-block;
-  margin-bottom: var(--space-3);
+  /* Pulls flush to the true page edge, past .parent's own left padding —
+     otherwise this reads as oddly indented sitting above content that's
+     itself already inset from the edge. */
+  margin: 0 0 var(--space-3) calc(var(--space-5) * -1);
   color: var(--primary-700);
   text-decoration: none;
   font-size: var(--text-sm);
@@ -245,7 +248,12 @@ button.add-btn:hover { background: var(--primary-100); }
 /* child cards */
 .child-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  /* auto-fit (not auto-fill): with just one child (the common case for a
+     Free-tier account — and literally every demo account right now), fill
+     collapses the unused reserved columns so that one card stretches to
+     the container's full width instead of being stuck at ~300px with a
+     visually cramped, wrapped tab row and a narrow scroll panel below it. */
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: var(--space-4);
 }
 .child-card {
@@ -260,8 +268,16 @@ button.add-btn:hover { background: var(--primary-100); }
 .child-top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3); }
 .child-card h3 { margin: 0; color: var(--ink); font-size: var(--text-md); }
 .linking {
-  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: var(--space-2);
   margin: var(--space-3) 0; padding: var(--space-3); background: var(--primary-100); border-radius: var(--radius-sm);
+}
+/* login_id (identifier) and pin (secret) are two separate values as of
+   2026-09-09 — each gets its own row, own code chip, own regenerate
+   button, rather than a single shared value doing both jobs. */
+.linking-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.linking-label {
+  min-width: 62px; font-size: var(--text-xs); font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.03em;
 }
 .code {
   font-family: ui-monospace, Consolas, monospace;
@@ -295,9 +311,15 @@ button.add-btn:hover { background: var(--primary-100); }
   border: 1px solid transparent; background: none; color: var(--text);
   transition: background 0.12s, border-color 0.12s;
 }
-.session-row:hover { background: var(--primary-100); }
+/* The global `button:hover:not(:disabled)` rule (above, dark solid fill —
+   meant for real CTA buttons) otherwise ties/wins here on specificity
+   alone over a plain `.session-row:hover`, since .session-row is a bare
+   `<button>` — that's what was making a hovered/open session unreadable
+   (dark fill, barely-visible text). Scoped through the parent container
+   for a clean specificity win, not a source-order tie. */
+.session-list .session-row:hover { background: var(--primary-100); color: var(--ink); }
 .session-row svg { flex-shrink: 0; margin-top: 3px; color: var(--muted); }
-.session-row--active { background: var(--primary-100); border-color: var(--primary-border); }
+.session-list button.session-row.session-row--active { background: var(--primary-100); border-color: var(--primary-border); color: var(--ink); }
 .session-row--active svg { color: var(--primary-700); }
 .session-row-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .session-row-title {
@@ -318,10 +340,110 @@ button.add-btn:hover { background: var(--primary-100); }
 .said-child { margin: var(--space-1) 0; color: var(--ink); }
 .said-pip { margin: var(--space-1) 0; color: var(--text); }
 .ts { margin: var(--space-1) 0; font-size: var(--text-xs); color: var(--muted); }
+
+/* PA14 transcript, as a real mini chat instead of two plain text lines —
+   child and Pip each get their own avatar chip + speech-bubble tint, same
+   visual language (icon-in-a-circle) this shell already uses elsewhere. */
+.activity-entry {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--border);
+}
+.activity-entry:last-child { border-bottom: none; }
+.activity-line { display: flex; align-items: flex-start; gap: var(--space-2); }
+.activity-avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+}
+.activity-avatar--child { background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+.activity-avatar--pip { background: var(--primary-100); color: var(--primary-700); }
+.activity-bubble {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink);
+  line-height: var(--leading-snug); max-width: 88%;
+}
+.activity-line--pip .activity-bubble { background: var(--primary-100); border-color: var(--primary-border); }
 .fav-item {
   display: flex; justify-content: space-between; align-items: center;
-  padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-2); border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-sm); transition: background 0.15s ease;
 }
+.fav-item:hover { background: var(--bg); }
+
+/* PA15/PA18 favourites list — a book/video used to be a flat monochrome
+   glyph sitting next to plain text (see the moderator queue's own
+   .item-type-icon, which already got the nicer tinted-chip treatment);
+   this brings that same "icon-led" language over so the row reads as a
+   real content item, not a bare line of text with a decoration in front. */
+.fav-info { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.fav-icon {
+  flex: none; width: 34px; height: 34px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.fav-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.fav-title {
+  font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 32ch;
+}
+.fav-type {
+  font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+/* ---------- PA20 notification bell — was a plain "🔔 (1)" ghost button
+   with an inline-styled dropdown (every rule below used to be a `style={}`
+   prop, borrowed .activity-item/.said-child from the transcript view) —
+   a real count badge + its own proper panel instead. ---------- */
+.notif-bell { position: relative; }
+.notif-trigger {
+  position: relative; width: 38px; height: 38px; padding: 0; border-radius: 50%;
+  background: var(--surface); color: var(--primary-700); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+}
+.notif-trigger:hover:not(:disabled) { background: var(--primary-100); border-color: var(--primary-border); }
+.notif-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px;
+  border-radius: var(--radius-pill); background: var(--primary-700); color: var(--on-primary);
+  font-size: 11px; font-weight: 800; line-height: 18px; text-align: center;
+  border: 2px solid var(--surface);
+}
+.notif-panel {
+  position: absolute; right: 0; top: calc(100% + var(--space-2)); z-index: 10;
+  width: 340px; max-height: 400px; overflow: hidden auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(36, 31, 54, 0.14);
+  animation: notif-pop 0.15s ease-out;
+}
+@keyframes notif-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.notif-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-4) var(--space-4) var(--space-2);
+}
+.notif-panel-header h3 { margin: 0; font-size: var(--text-md); }
+.notif-unread-label {
+  font-size: var(--text-xs); font-weight: 700; color: var(--primary-700);
+  background: var(--primary-100); padding: 2px var(--space-2); border-radius: var(--radius-pill);
+}
+.notif-empty { padding: var(--space-2) var(--space-4) var(--space-4); margin: 0; }
+.notif-item {
+  display: flex; align-items: flex-start; gap: var(--space-2); width: 100%;
+  padding: var(--space-3) var(--space-4); text-align: left; background: none; border: none;
+  border-top: 1px solid var(--border); border-radius: 0; color: inherit; cursor: pointer;
+  transition: background 0.15s ease;
+}
+.notif-item:hover:not(:disabled) { background: var(--bg); }
+.notif-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; margin-top: 7px;
+  background: var(--primary-500);
+}
+.notif-item--read .notif-dot { background: transparent; }
+.notif-item--read { opacity: 0.6; }
+.notif-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.notif-title { font-weight: 700; color: var(--ink); font-size: var(--text-sm); }
+.notif-body { color: var(--text); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.notif-ts { color: var(--muted); font-size: var(--text-xs); margin-top: 1px; }
 
 /* ---------- moderator console: card polish (icon-led titles, item meta) ---------- */
 .item-title {
@@ -333,6 +455,28 @@ button.add-btn:hover { background: var(--primary-100); }
   display: flex; align-items: center; justify-content: center;
   background: var(--primary-100); color: var(--primary-700);
 }
+/* CM06/CM13 — a moderator reviewing/browsing content is exactly the case
+   where seeing the actual cover matters most (catching a mismatched or
+   wrong-content thumbnail is part of the job, not just decoration), so a
+   card here used to be title-and-text-only even though every item already
+   carries a real thumbnail URL (CM03 import already fetches it). Same
+   size as CM03's own .search-result-cover for visual consistency across
+   the console, and the same book/video split as the child-side rec cards
+   (see child.css's .rec-cover--book/--video) — `contain` + white
+   letterbox for portrait book covers so nothing gets cropped into an
+   illegible sliver, `cover` for already-landscape video thumbnails. */
+.item-thumb {
+  flex-shrink: 0; width: 64px; height: 86px; box-sizing: border-box;
+  border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface);
+}
+.item-thumb--video { object-fit: cover; }
+.item-thumb--book { object-fit: contain; padding: var(--space-1); }
+/* Groups the thumbnail + title/description together as one unit so
+   .child-top's own `justify-content: space-between` (badge pushed to the
+   far right) still only has two things to split between — without this,
+   a 3rd top-level flex child here would space itself out evenly from
+   both neighbours instead of sitting flush against the title text. */
+.item-with-thumb { display: flex; gap: var(--space-3); min-width: 0; }
 .empty-state {
   display: flex; align-items: center; gap: var(--space-2);
   color: var(--muted); font-size: var(--text-sm);

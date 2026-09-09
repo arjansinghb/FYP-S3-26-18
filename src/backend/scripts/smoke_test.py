@@ -87,24 +87,38 @@ def main() -> int:
     r = c.post("/api/children", headers=ph, json={"name": "Kid A1", "age_band": "5-8"})
     check("PA07 create child (after consent)", r.status_code == 201, r.text)
     child_a1 = r.json()
-    pin_a = child_a1["linking_code"]  # system-generated, not supplied by this test — see models.ChildCreate
-    check("PA07 system-generated linking code is 6 digits", bool(pin_a) and len(pin_a) == 6 and pin_a.isdigit(), pin_a)
+    # login_id (alphanumeric identifier) and pin (numeric secret) are two
+    # genuinely separate system-generated values as of 2026-09-09 — see
+    # storage.create_child's docstring — not supplied by this test.
+    login_id_a = child_a1["login_id"]
+    pin_a = child_a1["pin"]
+    check("PA07 system-generated login ID is 6 alphanumeric chars",
+          bool(login_id_a) and len(login_id_a) == 6 and login_id_a.isalnum(), login_id_a)
+    check("PA07 system-generated PIN is 6 digits", bool(pin_a) and len(pin_a) == 6 and pin_a.isdigit(), pin_a)
 
     # No more "supply a colliding PIN" test — there's no longer a way to:
     # the whole point of generating it server-side is that two families can
     # never collide by construction. Verify that directly instead: a second
-    # child (different family) gets a DIFFERENT code, not the same one.
+    # child (different family) gets a DIFFERENT login ID, not the same one.
     r = c.post("/api/children", headers=bh, json={"name": "Kid B1", "age_band": "5-8"})
     check("PA07 create child for a different family", r.status_code == 201, r.text)
     child_b1 = r.json()
-    check("system-generated codes differ across families", child_b1["linking_code"] != pin_a,
-          f"{child_b1['linking_code']} vs {pin_a}")
+    check("system-generated login IDs differ across families", child_b1["login_id"] != login_id_a,
+          f"{child_b1['login_id']} vs {login_id_a}")
 
     r = c.post(f"/api/children/{child_a1['id']}/regenerate-pin", headers=ph)
     check("PA10 regenerate PIN", r.status_code == 200, r.text)
     regenerated = r.json()
-    check("PA10 regenerated code actually changes", regenerated["linking_code"] != pin_a, regenerated["linking_code"])
-    pin_a = regenerated["linking_code"]  # the old one is dead from here on
+    check("PA10 regenerated PIN actually changes", regenerated["pin"] != pin_a, regenerated["pin"])
+    check("PA10 regenerating the PIN doesn't touch login_id", regenerated["login_id"] == login_id_a, regenerated["login_id"])
+    pin_a = regenerated["pin"]  # the old one is dead from here on
+
+    r = c.post(f"/api/children/{child_a1['id']}/regenerate-login-id", headers=ph)
+    check("PA10 regenerate login ID", r.status_code == 200, r.text)
+    regenerated = r.json()
+    check("PA10 regenerated login ID actually changes", regenerated["login_id"] != login_id_a, regenerated["login_id"])
+    check("PA10 regenerating the login ID doesn't touch pin", regenerated["pin"] == pin_a, regenerated["pin"])
+    login_id_a = regenerated["login_id"]  # the old one is dead from here on
 
     r = c.patch(f"/api/children/{child_a1['id']}", headers=ph, json={"reading_level": "early"})
     check("PA08 edit child", r.status_code == 200, r.text)
@@ -152,8 +166,8 @@ def main() -> int:
     r = c.post("/api/children", headers=ph, json={"name": "Kid A2", "age_band": "9-12"})
     check("PA33 second child allowed on premium", r.status_code == 201, r.text)
     child_a2 = r.json()
-    check("second child in the same family also gets its own distinct code",
-          child_a2["linking_code"] != pin_a, child_a2["linking_code"])
+    check("second child in the same family also gets its own distinct login ID",
+          child_a2["login_id"] != login_id_a, child_a2["login_id"])
 
     r = c.get(f"/api/children/{child_a1['id']}/trends", headers=ph)
     check("PA31 child trends (premium)", r.status_code == 200, r.text)
@@ -176,9 +190,12 @@ def main() -> int:
 
     # ---------- CH: Child ----------
     print("\n== Child ==")
-    r = c.post("/api/children/link", json={"code": pin_a, "pin": pin_a})
-    check("CH01 link with code+PIN", r.status_code == 200, r.text)
+    r = c.post("/api/children/link", json={"login_id": login_id_a, "pin": pin_a})
+    check("CH01 link with login ID + PIN", r.status_code == 200, r.text)
     ch1 = {"Authorization": f"Bearer {r.json()['token']}"}
+
+    r = c.post("/api/children/link", json={"login_id": login_id_a, "pin": "000000"})
+    check("CH01 rejects a login ID with a non-matching PIN", r.status_code in (401, 403), r.text)
 
     r = c.post(f"/api/children/{child_a1['id']}/login", json={"pin": pin_a})
     check("CH02 return login (PIN only)", r.status_code == 200, r.text)

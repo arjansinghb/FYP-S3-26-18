@@ -6,11 +6,15 @@ from fastapi.testclient import TestClient
 
 
 def test_pa07_create_child_generates_unique_code(client: TestClient, child: dict):
-    """`child` fixture already did PA07 (after consent) — check its shape."""
+    """`child` fixture already did PA07 (after consent) — check its shape.
+    login_id/pin are two genuinely separate values (2026-09-09) — alphanumeric
+    identifier vs. numeric secret, see storage.create_child's docstring."""
     assert child["name"] == "Test Kid"
     assert child["age_band"] == "5-8"
-    code = child["linking_code"]
-    assert code.isdigit() and len(code) == 6
+    login_id, pin = child["login_id"], child["pin"]
+    assert len(login_id) == 6 and login_id.isalnum() and login_id == login_id.upper()
+    assert pin.isdigit() and len(pin) == 6
+    assert login_id != pin
 
 
 def test_pa33_free_tier_capped_at_one_child(client: TestClient, active_parent: dict, child: dict):
@@ -34,13 +38,27 @@ def test_pa08_edit_child_and_pa13_reading_level(client: TestClient, active_paren
 
 
 def test_pa10_regenerate_pin(client: TestClient, active_parent: dict, child: dict):
-    old_code = child["linking_code"]
+    old_pin = child["pin"]
     r = client.post(f"/api/children/{child['id']}/regenerate-pin", headers=active_parent["headers"])
     assert r.status_code == 200
-    new_code = r.json()["linking_code"]
-    assert new_code != old_code
-    assert new_code.isdigit() and len(new_code) == 6
-    child["linking_code"] = new_code  # keep the fixture in sync for later tests in this module
+    body = r.json()
+    new_pin = body["pin"]
+    assert new_pin != old_pin
+    assert new_pin.isdigit() and len(new_pin) == 6
+    assert body["login_id"] == child["login_id"]  # regenerating the PIN doesn't touch login_id
+    child["pin"] = new_pin  # keep the fixture in sync for later tests in this module
+
+
+def test_pa10_regenerate_login_id(client: TestClient, active_parent: dict, child: dict):
+    old_login_id = child["login_id"]
+    r = client.post(f"/api/children/{child['id']}/regenerate-login-id", headers=active_parent["headers"])
+    assert r.status_code == 200
+    body = r.json()
+    new_login_id = body["login_id"]
+    assert new_login_id != old_login_id
+    assert len(new_login_id) == 6 and new_login_id.isalnum()
+    assert body["pin"] == child["pin"]  # regenerating the login ID doesn't touch the PIN
+    child["login_id"] = new_login_id  # keep the fixture in sync for later tests in this module
 
 
 def test_pa21_safety_settings(client: TestClient, active_parent: dict, child: dict):
@@ -68,30 +86,36 @@ def test_pa18_content_overrides(client: TestClient, active_parent: dict, child: 
     assert r.status_code == 204
 
 
-def test_ch01_link_with_code_and_pin(client: TestClient, child: dict):
-    code = child["linking_code"]
-    r = client.post("/api/children/link", json={"code": code, "pin": code})
+def test_ch01_link_with_login_id_and_pin(client: TestClient, child: dict):
+    r = client.post("/api/children/link", json={"login_id": child["login_id"], "pin": child["pin"]})
     assert r.status_code == 200
     body = r.json()
     assert body["child"]["id"] == child["id"]
     assert "token" in body
 
 
+def test_ch01_link_rejects_login_id_without_matching_pin(client: TestClient, child: dict):
+    """The whole point of splitting login_id/pin — knowing one alone must
+    not be enough."""
+    r = client.post("/api/children/link", json={"login_id": child["login_id"], "pin": "000000"})
+    assert r.status_code in (401, 403)
+
+
 def test_ch02_return_login_and_lockout(client: TestClient, active_parent: dict, child: dict):
-    code = child["linking_code"]
-    r = client.post(f"/api/children/{child['id']}/login", json={"pin": code})
+    pin = child["pin"]
+    r = client.post(f"/api/children/{child['id']}/login", json={"pin": pin})
     assert r.status_code == 200
 
     for _ in range(5):
         client.post(f"/api/children/{child['id']}/login", json={"pin": "000000"})
-    r = client.post(f"/api/children/{child['id']}/login", json={"pin": code})  # right PIN, but now locked
+    r = client.post(f"/api/children/{child['id']}/login", json={"pin": pin})  # right PIN, but now locked
     assert r.status_code == 403
 
     r = client.post(f"/api/children/{child['id']}/unlock", headers=active_parent["headers"])
     assert r.status_code == 200
     assert r.json()["locked"] is False
 
-    r = client.post(f"/api/children/{child['id']}/login", json={"pin": code})
+    r = client.post(f"/api/children/{child['id']}/login", json={"pin": pin})
     assert r.status_code == 200
 
 

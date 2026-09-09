@@ -9,14 +9,17 @@ Also supports an anonymous "demo" mode: if there is no child token, it still
 answers using the whole approved catalogue, so the avatar prototype works
 without logging in.
 """
+import io
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from ..brain import get_brain
+from ..config import settings
 from ..models import (
-    ChatRequest, ChatResponse, ChatSessionOut, FeedbackRequest, Recommendation,
+    ChatRequest, ChatResponse, ChatSessionOut, FeedbackRequest, Recommendation, SpeechRequest,
 )
 from ..storage import db
 
@@ -32,7 +35,12 @@ def _optional_child(creds: HTTPAuthorizationCredentials | None):
         return None
     entry = db.resolve_token(creds.credentials)
     if entry and entry["kind"] == "child":
-        return db.children.get(entry["id"])
+        # refresh_child (not a plain dict lookup) — same cross-instance
+        # staleness fix as deps.py's current_child/current_account (see
+        # storage.py's refresh_account docstring for the real bug this
+        # closes), applied here too since this router has its own
+        # child-auth helper instead of going through deps.py.
+        return db.refresh_child(entry["id"])
     return None
 
 
@@ -188,6 +196,43 @@ def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends
 
     recs = [Recommendation(**r) for r in result.recommendations]
     return ChatResponse(reply=result.reply, recommendations=recs)
+
+
+# CH11 — real TTS for Pip's voice, replacing the browser's own Web Speech
+# API (whose voice quality/availability is entirely device/OS-dependent —
+# some devices only have a flat, robotic voice with no warmer option at
+# all). Same optional-bearer pattern as POST /api/chat above, so the
+# anonymous "demo" mode keeps working too — this endpoint never touches a
+# child's own data, it just voices text Pip already decided to say.
+_MAX_SPEECH_CHARS = 600  # generous for one Pip reply; guards against abuse/cost
+
+
+@router.post("/speech")
+def speech(body: SpeechRequest, creds: HTTPAuthorizationCredentials | None = Depends(optional_bearer)):
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "No text to speak")
+    text = text[:_MAX_SPEECH_CHARS]
+
+    if not settings.openai_configured:
+        # No key configured (local-dev/placeholder mode) — let the frontend
+        # fall back to the browser's own Web Speech API instead of erroring.
+        raise HTTPException(503, "Real voice isn't configured — falling back to browser voice")
+
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    try:
+        resp = client.audio.speech.create(
+            model=settings.OPENAI_TTS_MODEL,
+            voice=settings.OPENAI_TTS_VOICE,
+            input=text,
+            response_format="mp3",
+        )
+    except Exception:
+        raise HTTPException(502, "Voice generation failed — try again")
+
+    return StreamingResponse(io.BytesIO(resp.content), media_type="audio/mpeg")
 
 
 # ---------- CH04/05: chat session lifecycle ----------

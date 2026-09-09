@@ -152,12 +152,17 @@ class Database:
         for child in self.children.values():
             child.setdefault("failed_pin_attempts", 0)
             child.setdefault("locked", False)
-            # Older saved children may have a random hex linking_code that no
-            # longer matches their (unchanged) pin under the new "same value"
-            # rule — bring it in line rather than leave a child permanently
-            # unable to log in after this change.
-            if child.get("linking_code") != child.get("pin"):
-                child["linking_code"] = child.get("pin")
+            # 2026-09-09 — login_id/pin split (see create_child's docstring).
+            # A snapshot saved before this change has `linking_code` (the old
+            # single value) but no `login_id` yet — backfill a real, unique
+            # one now rather than leave an existing child (e.g. the demo
+            # account) unable to activate a new device. `pin` itself needs
+            # no migration — it already existed as its own field and this
+            # change only removed a uniqueness constraint on it, not the
+            # field.
+            if "login_id" not in child:
+                child["login_id"] = self._generate_unique_login_id()
+            child.pop("linking_code", None)
 
     def save(self) -> None:
         """Persist the full prototype state to Firestore (no-op if
@@ -268,6 +273,17 @@ class Database:
     def revoke_token(self, token: str):
         self.tokens.pop(token, None)
 
+    def _reload_from_firestore(self) -> bool:
+        """Shared by resolve_token/refresh_account/refresh_child below — one
+        cheap single-document Firestore read (see firestore_store.py's own
+        docstring: the whole prototype state is one snapshot, not
+        per-record documents), no-op in local dev where Firebase isn't
+        configured (`load_state()` returns None)."""
+        saved = firestore_store.load_state()
+        if saved:
+            self._restore(saved)
+        return bool(saved)
+
     def resolve_token(self, token: str):
         entry = self.tokens.get(token)
         if entry is not None:
@@ -278,14 +294,40 @@ class Database:
         # issued it and already saved it to Firestore (issuing a token
         # always happens inside a mutating POST, which main.py's
         # persist_state middleware saves right after). Reload once before
-        # concluding the token is genuinely invalid — a no-op in local dev
-        # (firestore_store.load_state() returns None when Firebase isn't
-        # configured, same as today).
-        saved = firestore_store.load_state()
-        if saved:
-            self._restore(saved)
+        # concluding the token is genuinely invalid.
+        if self._reload_from_firestore():
             entry = self.tokens.get(token)
         return entry
+
+    def refresh_account(self, account_id: str):
+        """2026-09-09 fix — the OTHER half of the cross-instance problem
+        `resolve_token`'s reload-on-miss above only closes for the token
+        itself, not for what it points to. Real bug reproduced: a parent
+        verifies their email (write served + persisted by instance A), then
+        a *different*, already-warm instance B — which cached this same
+        account token earlier and so never takes resolve_token's miss/
+        reload path at all — keeps answering `current_account()` calls from
+        its own now-stale in-memory `accounts` snapshot, so PA07's
+        `parent.get("verified")` check still sees the old `False` and
+        rejects "Create profile" with "please verify your email" even
+        though the account genuinely is verified. Logging out and back in
+        "worked around" it (a fresh request has a decent chance of landing
+        on a different/fresher instance) without actually fixing anything.
+
+        Real fix: reload the full snapshot on every authenticated request,
+        not only when a token lookup misses — see deps.py's
+        `current_account`. Cheap enough at this prototype's scale (a
+        handful of users/children) to not worry about the extra read."""
+        self._reload_from_firestore()
+        return self.accounts.get(account_id)
+
+    def refresh_child(self, child_id: str):
+        """Same fix as refresh_account, for the child-session side of auth
+        (deps.py's `current_child`) — e.g. a PA18 safety-setting change or a
+        PA21/lock-state update made via one instance should be visible to
+        the very next chat request even if it lands on a different one."""
+        self._reload_from_firestore()
+        return self.children.get(child_id)
 
     # ---------- UV06 email verification ----------
 
@@ -484,43 +526,54 @@ class Database:
 
     # ---------- children ----------
 
-    def _generate_unique_pin(self) -> str:
-        """System-generated, not parent-typed — see the real-collision bug
-        this replaces (below). 6 digits = 1,000,000 possible values; retry
-        is only ever needed if today's actual collision hits (astronomically
-        unlikely at this system's realistic scale), never surfaced to a
-        parent as an error."""
+    # Excludes visually-ambiguous characters (0/O, 1/I/L) — this gets
+    # read off a screen and typed back in by a young child, so every
+    # character needs to survive that round-trip unambiguously.
+    _LOGIN_ID_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+    def _generate_unique_login_id(self) -> str:
+        """CH01's device-activation identifier (2026-09-09 — replaces the
+        earlier "linking code IS the PIN" design). Alphanumeric, not
+        numeric-only: it only has to be typed once, during a parent-assisted
+        one-time device setup, never independently by the child day-to-day
+        (see PinOnlyLogin/CH02, which never asks for this again) — so it can
+        afford to be a real, separate, non-secret identifier instead of
+        doubling as the login credential itself. Kept unique across ALL
+        children (not just one parent's own), same reasoning pin_in_use used
+        to have: it's the lookup key CH01 resolves a child from."""
         for _ in range(20):
-            candidate = f"{secrets.randbelow(1_000_000):06d}"
-            if not self.pin_in_use(candidate):
+            candidate = "".join(secrets.choice(self._LOGIN_ID_ALPHABET) for _ in range(6))
+            if not self.login_id_in_use(candidate):
                 return candidate
-        raise RuntimeError("Could not generate a unique PIN after 20 attempts — the 6-digit space is far more saturated than expected.")
+        raise RuntimeError("Could not generate a unique login ID after 20 attempts — the code space is far more saturated than expected.")
+
+    def _generate_pin(self) -> str:
+        """The actual secret, checked only ever alongside a specific child's
+        own login_id (never used on its own to look a child up) — so unlike
+        login_id, this does NOT need to be globally unique. Two different
+        families' children can perfectly reasonably land on the same 6-digit
+        PIN, the same way two people can share a 4-digit ATM PIN once it's
+        paired with a distinguishing account number."""
+        return f"{secrets.randbelow(1_000_000):06d}"
 
     def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None) -> dict:
-        """Real bug found via testing, not hypothetical (see pin_in_use's own
-        docstring): letting a PARENT freely type the PIN, while also
-        requiring it to double as CH01's globally-unique linking code,
-        means two different families can't both pick "123456" even though
-        that's a completely reasonable, independent thing for each of them
-        to want — and the 1,000,000-value space gets real collision
-        pressure as the user base grows, since humans cluster on the same
-        "easy" numbers. The system generates it instead: unique by
-        construction, no user-facing "PIN already taken" retry loop ever,
-        and — as a side benefit — not a predictable parent-chosen number
-        (birthdate, "123456") in the first place."""
-        pin = self._generate_unique_pin()
+        """PA07/PA10/CH01. Two separate system-generated values, not one
+        doing double duty (see _generate_unique_login_id's docstring for why
+        this changed from the original single-code design): `login_id`
+        identifies the child (shown on the parent dashboard, typed once at
+        CH01 device setup — usually parent-assisted); `pin` is the actual
+        secret, typed by the child on every login (CH01 and CH02 alike).
+        Neither is parent-chosen, for the same reason as before: nothing
+        about either needs to be memorable to the parent, and system
+        generation avoids predictable values (birthdates, "123456")."""
         child = {
             "id": _new_id(),
             "parent_id": parent_id,
             "name": name,
             "age_band": age_band,
             "reading_level": reading_level,
-            "pin": pin,
-            # URS: CH01's "linking code" and PA10's PIN are the same 6-digit
-            "linking_code": pin,
-            # value — one system-generated code activates the device (CH01)
-            # AND is used for every login after that (CH02), not two
-            # separate codes a young child would need to keep straight.
+            "login_id": self._generate_unique_login_id(),
+            "pin": self._generate_pin(),
             "avatar": "purple",  # avatar colour variant the child can change
             "settings": {
                 "allow_books": True,
@@ -541,36 +594,40 @@ class Database:
     def children_of(self, parent_id: str) -> list[dict]:
         return [c for c in self.children.values() if c["parent_id"] == parent_id]
 
-    def find_child_by_code(self, code: str):
-        code = code.strip()
-        return next((c for c in self.children.values() if c["linking_code"] == code), None)
+    def find_child_by_login_id(self, login_id: str):
+        login_id = login_id.strip().upper()
+        return next((c for c in self.children.values() if c["login_id"] == login_id), None)
 
-    def regenerate_pin(self, child: dict) -> dict:
-        """PA10 — a parent resets the code (lost/shared with the wrong
-        person). Same system-generated, unique-by-construction path as
-        create_child, not a free-typed replacement value — see
-        _generate_unique_pin's docstring for why."""
-        new_pin = self._generate_unique_pin()
-        child["pin"] = new_pin
-        child["linking_code"] = new_pin
-        # a fresh code deserves a fresh lockout state too — otherwise a parent
-        # regenerating specifically to fix a locked-out child would see the
-        # profile still locked against a code that no longer exists.
+    def regenerate_login_id(self, child: dict) -> dict:
+        """PA10 — a parent resets the ID (lost, or handed to the wrong
+        device). Same system-generated, unique-by-construction path as
+        create_child."""
+        child["login_id"] = self._generate_unique_login_id()
+        # A fresh ID deserves a fresh lockout state too, same reasoning as
+        # regenerate_pin below — a parent regenerating specifically to fix a
+        # locked-out child shouldn't still see it locked afterward.
         child["failed_pin_attempts"] = 0
         child["locked"] = False
         return child
 
-    def pin_in_use(self, pin: str, exclude_child_id: str | None = None) -> bool:
-        """Real bug found via testing (not hypothetical): since the linking
-        code IS the PIN now (a parent-chosen 6-digit value, not a randomly
-        generated one), two different families could pick the same PIN —
-        without this check, `find_child_by_code` would nondeterministically
-        return whichever child happens to be first in the dict, meaning one
-        family's child could land in a *different* family's chat/favourites/
-        history. Must be checked globally (across ALL parents), not scoped
-        to one parent's own children."""
+    def regenerate_pin(self, child: dict) -> dict:
+        """PA10 — a parent resets the PIN (lost/shared with the wrong
+        person). Same system-generated path as create_child."""
+        child["pin"] = self._generate_pin()
+        child["failed_pin_attempts"] = 0
+        child["locked"] = False
+        return child
+
+    def login_id_in_use(self, login_id: str, exclude_child_id: str | None = None) -> bool:
+        """Must be checked globally (across ALL parents), not scoped to one
+        parent's own children — this is CH01's lookup key, so a collision
+        would mean `find_child_by_login_id` nondeterministically resolves to
+        whichever child happens to be first in the dict, letting one
+        family's child land in a *different* family's chat/favourites/
+        history. (The PIN itself has no equivalent check — see
+        _generate_pin's docstring for why it doesn't need one.)"""
         return any(
-            c["linking_code"] == pin and c["id"] != exclude_child_id
+            c.get("login_id") == login_id and c["id"] != exclude_child_id
             for c in self.children.values()
         )
 

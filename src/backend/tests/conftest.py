@@ -90,8 +90,7 @@ def child(client: TestClient, active_parent: dict) -> dict:
 @pytest.fixture(scope="module")
 def child_session(client: TestClient, child: dict) -> dict:
     """CH01 — the child's own device-linking session (not the parent's)."""
-    code = child["linking_code"]
-    r = client.post("/api/children/link", json={"code": code, "pin": code})
+    r = client.post("/api/children/link", json={"login_id": child["login_id"], "pin": child["pin"]})
     assert r.status_code == 200, r.text
     body = r.json()
     return {"token": body["token"], "child": body["child"], "headers": _auth(body["token"])}

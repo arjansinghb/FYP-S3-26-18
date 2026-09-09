@@ -65,8 +65,7 @@ def test_sa08_nlp_latency_reflects_real_chat_traffic(client: TestClient, admin: 
     client.post("/api/auth/verify/confirm", json={"token": signup["verify_token"]})
     client.post("/api/account/consent", headers=headers, json={"password": "Sa08Pass123"})
     child = client.post("/api/children", headers=headers, json={"name": "SA08 Kid", "age_band": "5-8"}).json()
-    code = child["linking_code"]
-    child_headers = {"Authorization": f"Bearer {client.post('/api/children/link', json={'code': code, 'pin': code}).json()['token']}"}
+    child_headers = {"Authorization": f"Bearer {client.post('/api/children/link', json={'login_id': child['login_id'], 'pin': child['pin']}).json()['token']}"}
 
     before = client.get("/api/admin/stats", headers=admin["headers"]).json()["nlp_sample_size"]
     client.post("/api/chat/sessions", headers=child_headers)

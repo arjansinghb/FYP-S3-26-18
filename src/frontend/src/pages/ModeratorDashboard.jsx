@@ -73,11 +73,11 @@ function Tools({ account, onLogout }) {
   const [tab, setTab] = useState('submissions')
   return (
     <div className="parent">
+      <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><GridIcon width={20} height={20} /></div>
           <div>
-            <Link className="home-link" to="/">← Home</Link>
             <h1>Moderator Console</h1>
             <p className="muted">Signed in as {account.name}</p>
           </div>
@@ -226,9 +226,12 @@ function Submissions() {
       {items.map((i) => (
         <div className="card" key={i.id}>
           <div className="child-top">
-            <div>
-              <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
-              <p className="muted">{i.description}</p>
+            <div className="item-with-thumb">
+              {i.thumbnail && <img className={`item-thumb item-thumb--${i.type}`} src={i.thumbnail} alt="" />}
+              <div>
+                <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
+                <p className="muted">{i.description}</p>
+              </div>
             </div>
             <span className="badge badge-pending">pending</span>
           </div>
@@ -325,9 +328,12 @@ function Catalogue() {
         ) : (
           <div className="card" key={i.id}>
             <div className="child-top">
-              <div>
-                <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
-                <p className="muted">{truncate(i.description)}</p>
+              <div className="item-with-thumb">
+                {i.thumbnail && <img className={`item-thumb item-thumb--${i.type}`} src={i.thumbnail} alt="" />}
+                <div>
+                  <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
+                  <p className="muted">{truncate(i.description)}</p>
+                </div>
               </div>
               <span className={`badge badge-${i.status}`}>{i.status}</span>
             </div>

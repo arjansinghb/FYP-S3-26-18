@@ -42,7 +42,7 @@ export default function RecommendationCard({ item, topPick, onDetails, onWatch, 
       {topPick && (
         <p className="rec-top-badge"><StarIcon width={12} height={12} filled /> Pip's top pick</p>
       )}
-      {item.thumbnail && <img className="rec-cover" src={item.thumbnail} alt="" />}
+      {item.thumbnail && <img className={`rec-cover rec-cover--${item.type}`} src={item.thumbnail} alt="" />}
       <h3 className="rec-title"><TypeIcon className="rec-type-icon" /> <span className="rec-title-text">{curateTitle(item.title)}</span></h3>
       {/* Real catalogue tags (CM10), not an invented "98% match" score —
           the data only supports a genre label, not a fabricated number. */}

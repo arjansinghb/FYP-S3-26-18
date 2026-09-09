@@ -16,7 +16,15 @@ def _resolve(creds: HTTPAuthorizationCredentials, expected_kind: str):
 
 def current_account(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
     acc_id = _resolve(creds, "account")
-    acc = db.accounts.get(acc_id)
+    # 2026-09-09 fix — reload from Firestore on every authenticated request,
+    # not just when the token itself is missing (see storage.py's
+    # refresh_account docstring for the real bug this closes: a verified/
+    # consent/tier change made on one warm Vercel instance was invisible to
+    # every OTHER already-warm instance still serving the same cached
+    # token, e.g. PA07's "please verify your email" firing on an account
+    # that genuinely was already verified). No-op, and effectively free, in
+    # local dev / when Firebase isn't configured.
+    acc = db.refresh_account(acc_id)
     if not acc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not found")
     # PA25 — lazily downgrade a scheduled-cancellation account once its date
@@ -37,7 +45,9 @@ def require_role(*roles: str):
 
 def current_child(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
     child_id = _resolve(creds, "child")
-    child = db.children.get(child_id)
+    # Same cross-instance reload as current_account above — see
+    # storage.py's refresh_child docstring.
+    child = db.refresh_child(child_id)
     if not child:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Child session not found")
     return child

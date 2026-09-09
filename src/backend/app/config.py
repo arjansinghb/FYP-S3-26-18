@@ -35,6 +35,17 @@ class Settings:
     OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+    # Real TTS for Pip's voice (chat.py's /api/chat/speech) — replaces the
+    # browser's own Web Speech API, whose voice quality/availability varies
+    # wildly per device/OS and, on some devices, has no decent voice at all.
+    # "nova" is OpenAI's bright/energetic preset voice — Kiefer compared it
+    # against "shimmer" (warmer/calmer) by ear and picked nova as the better
+    # fit for a kids' companion. "tts-1" (not "tts-1-hd") is the cheaper,
+    # lower-latency model — plenty for short chat replies. No new API key
+    # needed, reuses OPENAI_API_KEY above.
+    OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "tts-1")
+    OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "nova")
+
     BRAIN_PROVIDER = os.getenv("BRAIN_PROVIDER") or ("openai" if OPENAI_API_KEY else "placeholder")
 
     # --- URS §2.5 Constraint 3 / Assumption 3: OpenAI's Zero Data Retention

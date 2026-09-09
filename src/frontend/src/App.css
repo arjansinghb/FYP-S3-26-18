@@ -23,7 +23,7 @@
    split the landing page uses, so the page reads as one shell that fills
    the window, not a phone-width card floating in dead space. */
 .chat-shell {
-  max-width: 900px;
+  max-width: 1100px;
   width: 100%;
   margin: 0 auto;
   padding: 0 var(--space-5);
@@ -218,7 +218,16 @@
 .welcome-back-fav-chip svg { flex-shrink: 0; }
 .welcome-back-fav-chip span,
 .welcome-back-fav-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.welcome-back-fav-chip:hover { border-color: var(--primary-500); transform: translateY(-1px); }
+/* Scoped through .welcome-back-fav-row so this reliably beats parent.css's
+   global `button:hover:not(:disabled)` fill (same cross-page CSS-bundling
+   bleed-through as the pills/logo in child.css — see those comments for
+   the full story) with an intentional purple-fill + white-text hover
+   instead of whatever unreadable combination that rule would otherwise
+   win with. */
+.welcome-back-fav-row .welcome-back-fav-chip:hover {
+  background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700);
+  transform: translateY(-1px);
+}
 
 /* ---------- starter prompt chips (shown only before the first message) ---------- */
 .starter-row {
@@ -260,9 +269,12 @@
 @media (prefers-reduced-motion: reduce) {
   .starter-chip { animation: none; }
 }
-.starter-chip:hover {
+/* Scoped through .starter-row for the same reason as .welcome-back-fav-chip
+   above — beats parent.css's global button:hover bleed-through with an
+   intentional purple-fill + white-text hover. */
+.starter-row .starter-chip:hover {
   transform: translateY(-2px);
-  border-color: var(--primary-border);
+  background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 14%, transparent);
 }
 
@@ -275,15 +287,15 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-4) max(var(--space-5), calc((100% - 900px) / 2));
+  padding: var(--space-4) max(var(--space-5), calc((100% - 1100px) / 2));
   background: var(--surface);
   border-top: 1px solid var(--border);
   box-shadow: 0 -6px 20px color-mix(in srgb, var(--primary-700) 5%, transparent);
 }
 .mic-btn {
   flex-shrink: 0;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   border: none;
   background: var(--primary-700);
@@ -332,8 +344,8 @@
 }
 .chat-send-btn {
   flex-shrink: 0;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;

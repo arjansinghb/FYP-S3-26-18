@@ -66,7 +66,7 @@ def test_pa33_second_child_allowed_on_premium(client: TestClient, active_parent:
     r = client.post("/api/children", headers=active_parent["headers"], json={"name": "Second Kid", "age_band": "9-12"})
     assert r.status_code == 201
     second = r.json()
-    assert second["linking_code"] != child["linking_code"]
+    assert second["login_id"] != child["login_id"]
 
 
 def test_pa31_child_trends(client: TestClient, active_parent: dict, child: dict):

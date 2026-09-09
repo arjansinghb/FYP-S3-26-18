@@ -72,11 +72,11 @@ function Tools({ account, onLogout }) {
   const [tab, setTab] = useState('overview')
   return (
     <div className="parent">
+      <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><SettingsIcon width={20} height={20} /></div>
           <div>
-            <Link className="home-link" to="/">← Home</Link>
             <h1>Admin Console</h1>
             <p className="muted">Signed in as {account.name}</p>
           </div>

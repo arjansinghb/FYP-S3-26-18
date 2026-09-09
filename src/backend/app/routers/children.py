@@ -23,7 +23,7 @@ _TIER_CHILD_LIMITS = {"free": FREE_CHILD_LIMIT, "premium": PREMIUM_CHILD_LIMIT, 
 def _child_out(c: dict) -> ChildOut:
     return ChildOut(
         id=c["id"], parent_id=c["parent_id"], name=c["name"], age_band=c["age_band"],
-        reading_level=c.get("reading_level"), linking_code=c["linking_code"], avatar=c["avatar"],
+        reading_level=c.get("reading_level"), login_id=c["login_id"], pin=c["pin"], avatar=c["avatar"],
         settings=ChildSettings(**c.get("settings", {})), locked=c.get("locked", False),
     )
 
@@ -87,11 +87,21 @@ def update_child(child_id: str, body: ChildUpdate, parent: dict = Depends(requir
 
 @router.post("/api/children/{child_id}/regenerate-pin", response_model=ChildOut)
 def regenerate_pin(child_id: str, parent: dict = Depends(require_role("parent"))):
-    """PA10 — resets the code (e.g. the parent lost it, or shared it with
-    the wrong person). System-generated replacement, not a parent-typed
-    one — see storage.regenerate_pin's docstring."""
+    """PA10 — resets the PIN (e.g. the parent thinks it's been seen by the
+    wrong person). System-generated replacement, not a parent-typed one —
+    see storage.regenerate_pin's docstring."""
     child = _owned_child(child_id, parent)
     db.regenerate_pin(child)
+    return _child_out(child)
+
+
+@router.post("/api/children/{child_id}/regenerate-login-id", response_model=ChildOut)
+def regenerate_login_id(child_id: str, parent: dict = Depends(require_role("parent"))):
+    """PA10 — resets the login ID (e.g. it was handed to the wrong device).
+    Separate from regenerate-pin above since login_id/pin are independent
+    values now — see storage.create_child's docstring."""
+    child = _owned_child(child_id, parent)
+    db.regenerate_login_id(child)
     return _child_out(child)
 
 
@@ -149,16 +159,17 @@ def _activate_and_issue(child: dict) -> ChildSessionOut:
 
 @router.post("/api/children/link", response_model=ChildSessionOut)
 def link_child(body: ChildLinkRequest):
-    """CH01 — first-time device activation: enter the linking code + PIN
-    (the same 6-digit value, per PA10 — see ChildLinkRequest's docstring)."""
-    child = db.find_child_by_code(body.code)
+    """CH01 — first-time device activation: enter the login ID + PIN (two
+    genuinely different values as of 2026-09-09 — see ChildLinkRequest's
+    docstring)."""
+    child = db.find_child_by_login_id(body.login_id)
     if not child:
-        raise HTTPException(401, "That code or PIN doesn't match. Ask a grown-up to help!")
+        raise HTTPException(401, "That ID or PIN doesn't match. Ask a grown-up to help!")
     if child.get("locked"):
         raise HTTPException(403, "Too many wrong tries — ask a grown-up to unlock this profile.")
     if not db.check_child_pin(child, body.pin):
         detail = ("Too many wrong tries — ask a grown-up to unlock this profile."
-                   if child.get("locked") else "That code or PIN doesn't match. Ask a grown-up to help!")
+                   if child.get("locked") else "That ID or PIN doesn't match. Ask a grown-up to help!")
         raise HTTPException(401 if not child.get("locked") else 403, detail)
     return _activate_and_issue(child)
 

@@ -82,6 +82,28 @@ export async function getTopics() {
   return request('/api/chat/topics', { auth: 'child' })
 }
 
+// CH11 — real TTS for Pip's voice (OpenAI-backed on the server, see
+// backend/app/routers/chat.py's /speech), which sounds warm/consistent on
+// every device instead of whatever the browser's own Web Speech API voice
+// happens to be. Doesn't go through `request()` above since the response
+// is audio bytes, not JSON. Returns an object URL an <audio> element can
+// play; throws on any failure (no key configured, network hiccup, etc.) so
+// the caller can fall back to the browser's own voice instead of going
+// silent.
+export async function speakPip(text) {
+  const headers = { 'Content-Type': 'application/json' }
+  const t = getChildToken()
+  if (t) headers['Authorization'] = `Bearer ${t}`
+  const res = await fetch(`${API_BASE}/api/chat/speech`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) throw new Error(`Speech request failed (${res.status})`)
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 // ----- child session (CH01/CH02 login, CH03 logout) -----
 // CH01: this device hasn't been activated for a child yet -> full code+PIN.
 // CH02: it has -> the device remembers which child (id only, nothing
@@ -94,8 +116,8 @@ export function forgetDevice() {
   localStorage.removeItem(DEVICE_CHILD_KEY)
 }
 
-export async function linkChild(code, pin) {
-  const data = await request('/api/children/link', { method: 'POST', body: { code, pin } })
+export async function linkChild(loginId, pin) {
+  const data = await request('/api/children/link', { method: 'POST', body: { login_id: loginId, pin } })
   setChildToken(data.token)
   localStorage.setItem(DEVICE_CHILD_KEY, data.child.id)
   return data.child
@@ -259,6 +281,9 @@ export async function unlockChild(id) {
 }
 export async function regenerateChildPin(id) {
   return request(`/api/children/${id}/regenerate-pin`, { method: 'POST', auth: true })
+}
+export async function regenerateChildLoginId(id) {
+  return request(`/api/children/${id}/regenerate-login-id`, { method: 'POST', auth: true })
 }
 
 // ----- PA18 per-child content overrides -----

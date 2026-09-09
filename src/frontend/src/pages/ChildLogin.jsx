@@ -58,9 +58,12 @@ function PinOnlyLogin({ childId, onLoggedIn }) {
   )
 }
 
-// CH01 — first time this device is being linked to a profile.
+// CH01 — first time this device is being linked to a profile. loginId
+// (alphanumeric, from the parent dashboard) and pin (numeric, the secret)
+// are two genuinely different values as of 2026-09-09 — this step is
+// usually parent-assisted, unlike the plain-PIN return login below.
 function FullLogin({ onLoggedIn }) {
-  const [code, setCode] = useState('')
+  const [loginId, setLoginId] = useState('')
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -69,7 +72,7 @@ function FullLogin({ onLoggedIn }) {
     e.preventDefault()
     setError(''); setBusy(true)
     try {
-      const child = await linkChild(code.trim(), pin)
+      const child = await linkChild(loginId.trim(), pin)
       onLoggedIn(child)
     } catch (err) {
       setError(err.message)
@@ -82,15 +85,15 @@ function FullLogin({ onLoggedIn }) {
     <div className="child-login">
       <Avatar speaking={false} mood="happy" />
       <h1>Hi! Let's start 🎉</h1>
-      <p className="muted">Type your 6-digit code from a grown-up — it's your secret PIN too!</p>
+      <p className="muted">Ask a grown-up for your Login ID and PIN from the parent dashboard.</p>
       <form onSubmit={submit}>
         <input
-          value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-          placeholder="CODE"
+          value={loginId}
+          onChange={(e) => setLoginId(e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 6))}
+          placeholder="LOGIN ID"
           maxLength={6}
-          inputMode="numeric"
-          aria-label="Linking code"
+          autoCapitalize="characters"
+          aria-label="Login ID"
           required
         />
         <input

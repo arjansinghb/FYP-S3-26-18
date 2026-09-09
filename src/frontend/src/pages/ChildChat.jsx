@@ -4,7 +4,7 @@ import RecommendationCard from '../components/RecommendationCard'
 import ChildLogin from './ChildLogin'
 import {
   askPip, getChildToken, getChildMe, childLogout, setChildAvatar, getTopics,
-  saveFavourite, removeFavourite, myFavourites, sendFeedback, startChatSession, endChatSession,
+  saveFavourite, removeFavourite, myFavourites, sendFeedback, startChatSession, endChatSession, speakPip,
 } from '../api'
 import { curateTitle } from '../curate'
 import {
@@ -49,6 +49,34 @@ function newId() {
   return Math.random().toString(36).slice(2)
 }
 
+// Real bug found live (2026-09-09): a refresh mid-conversation wiped the
+// whole visible transcript back to the opening greeting, even though the
+// backend's chat session was still open — nothing client-side ever
+// survived a reload. sessionStorage (not localStorage — this is "this
+// browser tab's current visit", not permanent history, and should clear
+// itself once the tab actually closes) caches the active session id +
+// transcript per child, so a refresh (or an accidental tab reload) resumes
+// exactly where the child left off instead of looking like everything got
+// deleted. Cleared explicitly on logout (CH03/CH05 already ends the
+// session server-side; a fresh login should start a fresh conversation).
+function sessionCacheKey(childId) {
+  return `pip_active_session_${childId}`
+}
+function loadCachedSession(childId) {
+  try {
+    const raw = sessionStorage.getItem(sessionCacheKey(childId))
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+function saveCachedSession(childId, data) {
+  try { sessionStorage.setItem(sessionCacheKey(childId), JSON.stringify(data)) } catch { /* ignore */ }
+}
+function clearCachedSession(childId) {
+  try { sessionStorage.removeItem(sessionCacheKey(childId)) } catch { /* ignore */ }
+}
+
 // Session gate: restore a logged-in child, else show the login screen.
 export default function ChildChat() {
   const [child, setChild] = useState(null)
@@ -73,6 +101,12 @@ export default function ChildChat() {
 
 function Experience({ child, setChild, onLogout }) {
   const [status, setStatus] = useState('idle') // idle | listening | thinking | speaking
+  // A page refresh used to always start over at a blank greeting even
+  // mid-conversation (real bug, see loadCachedSession's comment above) —
+  // computed once, before the very first render, so the greeting effect
+  // and the session-start effect below can both check it without a flash
+  // of the wrong content first.
+  const restoredRef = useRef(loadCachedSession(child.id))
   // The visible transcript IS the context window (see storage.session_history
   // on the backend) — every turn shown here is exactly what gets sent back to
   // the brain as conversation memory, nothing hidden or summarised away.
@@ -80,20 +114,29 @@ function Experience({ child, setChild, onLogout }) {
   // Placeholder text until the streak effect below replaces it — the streak
   // itself is known almost instantly (localStorage, not a network call), so
   // this is up on screen for at most a frame or two, not a visible flash of
-  // the wrong greeting.
-  const [turns, setTurns] = useState([
-    { id: 'greeting', role: 'pip', text: `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.` },
-  ])
+  // the wrong greeting. Skipped entirely when resuming a cached session.
+  const [turns, setTurns] = useState(() => (
+    restoredRef.current?.turns?.length
+      ? restoredRef.current.turns
+      : [{ id: 'greeting', role: 'pip', text: `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.` }]
+  ))
   const [view, setView] = useState('chat')       // 'chat' | 'library' — Library is a real screen, not a modal
   const [overlay, setOverlay] = useState(null)   // 'avatar' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
   const [video, setVideo] = useState(null)       // a rec item
   const [typed, setTyped] = useState('')
-  const [sessionId, setSessionId] = useState(null)  // CH04 — ties messages together for real conversation memory (CH07)
+  // CH04 — ties messages together for real conversation memory (CH07).
+  // Restored from cache (see restoredRef above) so a refresh keeps talking
+  // to the SAME backend session instead of silently starting a new one.
+  const [sessionId, setSessionId] = useState(() => restoredRef.current?.sessionId ?? null)
   const recognitionRef = useRef(null)
   const transcriptEndRef = useRef(null)
   const lastBubbleRef = useRef(null)
+  // Real backend TTS (see speak(), below) — the currently-playing <audio>
+  // element, so a new reply can stop whatever Pip was already saying,
+  // same way window.speechSynthesis.cancel() does for the browser fallback.
+  const audioRef = useRef(null)
 
   const hasChatted = turns.some((t) => t.role === 'child')
 
@@ -108,6 +151,10 @@ function Experience({ child, setChild, onLogout }) {
   useEffect(() => {
     const s = recordVisit(child.id)
     setStreak(s)
+    // A restored session already has its own real greeting turn (and
+    // whatever came after it) — recomputing a fresh one here would
+    // silently throw away everything the refresh was supposed to keep.
+    if (restoredRef.current) return
     const greeting = s > 1
       ? `Hi ${child.name}! You're back ${s} days in a row — I love that! What should we find today?`
       : `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.`
@@ -141,7 +188,10 @@ function Experience({ child, setChild, onLogout }) {
     setMuted((m) => {
       const next = !m
       try { localStorage.setItem(`pip_muted_${child.id}`, next ? '1' : '0') } catch { /* ignore */ }
-      if (next) window.speechSynthesis?.cancel()
+      if (next) {
+        window.speechSynthesis?.cancel()
+        audioRef.current?.pause()
+      }
       return next
     })
   }
@@ -149,9 +199,34 @@ function Experience({ child, setChild, onLogout }) {
   // CH04 — a chat session starts once, when the child reaches this screen
   // (already-logged-in trigger, per the URS). Its id rides along on every
   // message so the backend can hand the brain real prior-turn context.
+  //
+  // Real race found live (2026-09-09): the starter chips (below) are
+  // clickable the instant the screen renders, but this session-start call
+  // is async — a fast tap could fire `ask()` before `setSessionId` ever
+  // ran, sending `session_id: null`. The backend still logs it fine, but
+  // every null-session message collapses into one shared "unknown" bucket
+  // on the parent's Activity view (see ParentDashboard.jsx's
+  // groupBySession) instead of each showing up as its own real session —
+  // reads as "it just didn't save" even though it did. A ref (not state)
+  // holds the in-flight promise so `ask()` below can always await the
+  // *real* id regardless of when it's called, closing the race for both
+  // typed messages and chip taps rather than only fixing whichever one
+  // happened to be reported.
+  const sessionReadyRef = useRef(null)
   useEffect(() => {
+    // Resuming a cached session (see restoredRef above) — `sessionId`
+    // state already has the real id from its own lazy initializer, so
+    // there's nothing to start; just satisfy `ask()`'s `await
+    // sessionReadyRef.current` fallback with the same id instead of
+    // opening a second, redundant backend session on every refresh.
+    if (restoredRef.current?.sessionId) {
+      sessionReadyRef.current = Promise.resolve(restoredRef.current.sessionId)
+      return
+    }
     let cancelled = false
-    startChatSession().then((s) => { if (!cancelled) setSessionId(s.id) }).catch(() => {})
+    sessionReadyRef.current = startChatSession()
+      .then((s) => { if (!cancelled) setSessionId(s.id); return s.id })
+      .catch(() => null)
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -180,31 +255,84 @@ function Experience({ child, setChild, onLogout }) {
     }
   }, [turns])
 
+  // Keeps the refresh-survives-a-reload fix (see loadCachedSession's
+  // comment near the top of this file) up to date after every message —
+  // cheap (sessionStorage, small transcript) and just a snapshot, so a
+  // failed write here is never worse than the pre-fix behaviour.
+  useEffect(() => {
+    saveCachedSession(child.id, { sessionId, turns })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns, sessionId])
+
   // CH05 — ends the session on logout ("before handing back a shared
   // device") rather than leaving it open forever.
   function logoutAndEndSession() {
     if (sessionId) endChatSession(sessionId).catch(() => {})
+    clearCachedSession(child.id)
     onLogout()
   }
 
   const supported = Boolean(SpeechRecognition) && 'speechSynthesis' in window
   const color = child.avatar in AVATAR_COLORS ? child.avatar : 'purple'
 
-  function speak(text) {
-    if (!('speechSynthesis' in window) || muted) { setStatus('idle'); return }
+  // Browser fallback (Web Speech API) — only used when real TTS isn't
+  // available (no OpenAI key configured on the backend, or a network
+  // hiccup). Voice quality here is entirely device/OS-dependent; kept as a
+  // safety net so Pip never goes fully silent, not as the primary voice.
+  function speakBrowser(text) {
+    if (!('speechSynthesis' in window)) { setStatus('idle'); return }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
-    u.rate = 0.95
-    u.pitch = 1.25
+    u.rate = 1.02
+    u.pitch = 1.3
     const voices = window.speechSynthesis.getVoices()
+    const english = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith('en'))
     const preferred =
-      voices.find((v) => /^en/i.test(v.lang) && /female|zira|hazel|susan|samantha|aria|jenny/i.test(v.name)) ||
-      voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('en'))
+      english.find((v) => /natural/i.test(v.name) && /\bana\b/i.test(v.name)) ||
+      english.find((v) => /natural/i.test(v.name) && /aria|jenny|emma|libby|female/i.test(v.name)) ||
+      english.find((v) => /samantha|karen|moira|tessa|fiona/i.test(v.name)) ||
+      english.find((v) => /google.*female/i.test(v.name)) ||
+      english.find((v) => /female|zira|hazel|susan|kathy/i.test(v.name)) ||
+      english[0]
     if (preferred) u.voice = preferred
     u.onstart = () => setStatus('speaking')
     u.onend = () => setStatus('idle')
     u.onerror = () => setStatus('idle')
     window.speechSynthesis.speak(u)
+  }
+
+  // CH11 — Pip's real voice: a warm, kid-friendly OpenAI TTS voice
+  // generated server-side (see api.js's speakPip / backend's
+  // /api/chat/speech), consistent across every device instead of whatever
+  // the browser happens to ship. Falls back to speakBrowser() above if the
+  // real voice isn't available for any reason, so a missing/failed key
+  // never leaves Pip silent.
+  //
+  // Async and *awaited by its callers before they reveal Pip's text* (see
+  // ask(), below) — real TTS needs a network round-trip to generate the
+  // audio, unlike the old instant browser speechSynthesis call, so if the
+  // text bubble appeared first the voice would visibly lag behind it by a
+  // second or two. Awaiting this until the audio has actually started (or
+  // we've fallen back) keeps the reply and the voice appearing together.
+  async function speak(text) {
+    if (muted) { setStatus('idle'); return }
+    window.speechSynthesis?.cancel()
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    try {
+      const url = await speakPip(text)
+      if (muted) return // toggled off while the request was in flight
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onplay = () => setStatus('speaking')
+      audio.onended = () => { setStatus('idle'); URL.revokeObjectURL(url) }
+      audio.onerror = () => { setStatus('idle'); URL.revokeObjectURL(url) }
+      await audio.play()
+    } catch {
+      speakBrowser(text)
+    }
   }
 
   // Pip actually reacts to a save instead of it being silent UI-state on a
@@ -234,11 +362,21 @@ function Experience({ child, setChild, onLogout }) {
       { id: pipId, role: 'pip', text: null, pending: true, sourceMessage: message },
     ])
     try {
-      const res = await askPip(message, sessionId)
+      // Prefer the already-resolved state (avoids an unnecessary await on
+      // the common case), but fall back to the in-flight promise so a fast
+      // tap never races ahead of session creation — see the effect above.
+      const activeSessionId = sessionId ?? (await sessionReadyRef.current)
+      const res = await askPip(message, activeSessionId)
+      // Wait for Pip's voice to actually start (or fail over to the
+      // browser fallback) BEFORE revealing the reply text — real TTS needs
+      // a network round-trip, so speaking first and revealing after keeps
+      // the two in sync instead of the text jumping in ahead of the voice.
+      // "Thinking…" stays on screen a little longer to cover this, which
+      // reads fine — Pip is still "getting ready to answer".
+      await speak(res.reply)
       setTurns((t) => t.map((turn) => (
         turn.id === pipId ? { ...turn, text: res.reply, recs: res.recommendations || [], pending: false } : turn
       )))
-      speak(res.reply)
     } catch {
       // Used to fall back to a local keyword-matched "brain" (placeholderBot.js
       // — a leftover from before the real backend existed) that named
@@ -252,10 +390,10 @@ function Experience({ child, setChild, onLogout }) {
       // real error — is the only fallback that keeps that guarantee even
       // when the backend call itself fails.
       const fallback = "Hmm, I'm having a little trouble right now. Can you try asking again in a moment?"
+      await speak(fallback)
       setTurns((t) => t.map((turn) => (
         turn.id === pipId ? { ...turn, text: fallback, recs: [], pending: false } : turn
       )))
-      speak(fallback)
     }
   }
 
@@ -263,6 +401,7 @@ function Experience({ child, setChild, onLogout }) {
     if (!SpeechRecognition || status === 'thinking' || status === 'speaking') return
     if (status === 'listening') { recognitionRef.current?.stop(); return }
     window.speechSynthesis?.cancel()
+    audioRef.current?.pause()
 
     const rec = new SpeechRecognition()
     rec.lang = 'en-US'
@@ -296,7 +435,11 @@ function Experience({ child, setChild, onLogout }) {
       window.speechSynthesis.getVoices()
       window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices()
     }
-    return () => { window.speechSynthesis?.cancel(); recognitionRef.current?.abort?.() }
+    return () => {
+      window.speechSynthesis?.cancel()
+      audioRef.current?.pause()
+      recognitionRef.current?.abort?.()
+    }
   }, [])
 
   const [favsError, setFavsError] = useState(false)
@@ -353,6 +496,19 @@ function Experience({ child, setChild, onLogout }) {
   return (
     <div className="child-screen">
       <div className="child-bar">
+        {/* Same brand mark as the landing page's nav (.landing-brand) —
+            clicking it reloads this screen, the same "tap the logo to get
+            back to a clean state" convention as any other app, not a
+            navigation link (a child mid-chat shouldn't get bounced all the
+            way out to the marketing page from one stray tap). Positioned
+            independently of "Hi, Alex!" below (see .child-brand's own
+            comment) — it sits at the bar's own actual corner; "Hi, Alex!"
+            keeps its separate alignment with the chat bubble underneath,
+            unaffected by whatever the logo does. */}
+        <button type="button" className="child-brand" onClick={() => window.location.reload()} aria-label="Refresh">
+          <Avatar speaking={false} mood="happy" />
+          <span>Pip</span>
+        </button>
         <h1 className="who">
           Hi, {child.name}!
           {streak > 1 && (
@@ -495,7 +651,7 @@ function Experience({ child, setChild, onLogout }) {
             aria-label={listening ? 'Stop listening' : 'Talk to Pip'}
             title={listening ? 'Stop listening' : 'Talk to Pip'}
           >
-            <MicIcon />
+            <MicIcon width={30} height={30} />
           </button>
         )}
         <input
@@ -508,7 +664,7 @@ function Experience({ child, setChild, onLogout }) {
           aria-label="Type a message to Pip"
         />
         <button type="submit" className="chat-send-btn" disabled={!typed.trim() || busy} aria-label="Send">
-          <SendIcon width={18} height={18} />
+          <SendIcon width={30} height={30} />
         </button>
       </form>
       </>

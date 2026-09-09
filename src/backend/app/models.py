@@ -232,24 +232,34 @@ class ChildSettings(BaseModel):
 
 
 class ChildOut(BaseModel):
+    # `login_id` (identifies the child) and `pin` (the actual secret) both
+    # go to the PARENT here, same reasoning for both: the parent is the one
+    # who reads them off this dashboard and hands them to their child at
+    # CH01 setup, or re-reads pin if the child forgets it — this is a
+    # parent-facing read, not exposing a secret to an untrusted caller (a
+    # child's own session token only ever reaches /api/child/me, a
+    # different, narrower response — see routers/child.py).
     id: str
     parent_id: str
     name: str
     age_band: AgeBand
     reading_level: Optional[str]
-    linking_code: str
+    login_id: str
+    pin: str
     avatar: str
     settings: ChildSettings
     locked: bool = False  # CH02 Alt Flow 2a — too many wrong PINs
 
 
 class ChildLinkRequest(BaseModel):
-    """CH01 — first-time device activation. Per the URS, the "linking code"
-    IS the 6-digit PIN (PA10 sets one value that does both jobs) — `code`
-    and `pin` are compared against the same stored value, not two different
-    ones. Kept as two fields on the wire since CH01/CH02 are worded as two
-    separate steps, but they always match."""
-    code: str
+    """CH01 — first-time device activation. `login_id` (alphanumeric,
+    identifies the child, shown on the parent dashboard) and `pin` (numeric,
+    the actual secret) are two genuinely different values as of 2026-09-09 —
+    see storage.create_child's docstring for why this replaced the earlier
+    design where one 6-digit value did both jobs. Both are only ever typed
+    together at this one CH01 step, usually parent-assisted; CH02's return
+    login (ChildPinLogin below) only ever asks for `pin`."""
+    login_id: str
     pin: str
 
 
@@ -301,6 +311,13 @@ class ContentOut(ContentIn):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None  # CH04 — ties this message to a chat session
+
+
+class SpeechRequest(BaseModel):
+    """/api/chat/speech — text Pip just said, to be voiced back as real
+    audio via OpenAI TTS. Length-capped (see the router) since this is
+    always Pip's own reply text, never arbitrary child input."""
+    text: str
 
 
 class Recommendation(BaseModel):
