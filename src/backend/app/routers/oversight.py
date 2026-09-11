@@ -46,7 +46,10 @@ def child_favourites(child_id: str, parent: dict = Depends(require_role("parent"
     out = []
     for f in db.favourites.get(child_id, []):
         item = db.content.get(f["content_id"])
-        if item:
+        # See chat.py's list_favourites for why this checks status, not
+        # just existence — a rejected-after-the-fact item shouldn't stay
+        # visible here either.
+        if item and item["status"] == "approved":
             out.append({
                 "id": item["id"], "title": item["title"], "type": item["type"],
                 "description": item.get("description", ""),

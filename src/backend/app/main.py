@@ -55,7 +55,27 @@ async def persist_state(request: Request, call_next):
     """Snapshot the in-memory store to Firestore after any request that could
     have changed it — no-op when Firebase isn't configured (see
     app/firestore_store.py). Keeps every router exactly as-is; this is the
-    only place that knows persistence exists at all."""
+    only place that knows persistence exists at all.
+
+    2026-09-11 fix: also reloads FIRST, before the handler runs, for every
+    mutating request — not just the read side, which was already covered
+    for authenticated endpoints via deps.py's current_account/current_child
+    (each calls storage.py's refresh_account/refresh_child, itself a
+    _reload_from_firestore()). The gap: signup, login, and child-login
+    can't authenticate an *existing* token (that's the whole point of
+    them), so they never went through that dependency at all — a warm but
+    stale Vercel instance could handle one of these, mutate its own
+    outdated in-memory snapshot, and this middleware's own save() below
+    would write that stale FULL snapshot straight over Firestore,
+    silently undoing whatever a different, more current instance had
+    changed moments earlier. Real, reproduced bug: a parent test account
+    deleted via a fresh instance kept reappearing after later, unrelated
+    signup/login calls landed on a stale one. Reloading first means every
+    instance's mutation is always applied on top of the latest known
+    state before it gets saved back, not whatever this instance happened
+    to have cached."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        db._reload_from_firestore()
     response = await call_next(request)
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and response.status_code < 400:
         db.save()

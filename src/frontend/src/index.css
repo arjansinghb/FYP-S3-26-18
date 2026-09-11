@@ -106,8 +106,24 @@ h1, h2, h3, h4 {
   font-family: var(--font);
   color: var(--ink);
   line-height: var(--leading-snug);
+  /* Balances line lengths across a heading instead of leaving a short
+     orphan word alone on its own last line — a no-op, not a risk, on the
+     handful of older browsers that don't support it yet. */
+  text-wrap: balance;
 }
 
+/* Applies everywhere in one place (index.css loads once, globally) rather
+   than needing every page to opt in — real, reported issue: a short last
+   line (e.g. a single word like "family.") reads as a formatting mistake,
+   not intentional line-breaking.
+   `text-wrap: pretty` (tried first) is the property actually meant for
+   this, but Safari doesn't implement it at all as of this build — on a
+   Mac, that rule was silently a no-op, which is exactly why the orphan
+   word was still there after the first fix. `balance` has real, current
+   support in Safari/Chrome/Firefox alike and, for text this short (most
+   of this app's copy is 1-3 lines), does the same job: it evens out every
+   line instead of leaving one short one at the end. */
 p {
   max-width: var(--measure);
+  text-wrap: balance;
 }

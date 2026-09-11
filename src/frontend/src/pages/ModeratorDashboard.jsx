@@ -6,9 +6,10 @@ import {
   listReports, resolveReport, searchBooks, searchVideos, importContent,
 } from '../api'
 import {
-  BookIcon, CheckIcon, CloseIcon, EditIcon, FlagIcon, GridIcon, InboxIcon,
-  PlusIcon, SearchIcon, TrashIcon, VideoIcon,
+  BookIcon, ChartIcon, CheckIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon, InboxIcon,
+  PlusIcon, SearchIcon, SparkleIcon, TrashIcon, VideoIcon,
 } from '../icons'
+import { useToast, ToastHost } from '../components/Toast'
 import './parent.css'
 
 const AGE_BANDS = ['5-8', '9-12']
@@ -64,13 +65,34 @@ function ModLogin({ onAuthed }) {
 }
 
 const TABS = [
-  { key: 'submissions', label: 'Submissions', icon: InboxIcon },
+  { key: 'overview', label: 'Overview', icon: ChartIcon },
+  { key: 'submissions', label: 'Submissions', icon: InboxIcon, countKey: 'pending' },
   { key: 'catalogue', label: 'Catalogue', icon: GridIcon },
-  { key: 'reports', label: 'Reports', icon: FlagIcon },
+  { key: 'reports', label: 'Reports', icon: FlagIcon, countKey: 'reportsOpen' },
 ]
 
 function Tools({ account, onLogout }) {
-  const [tab, setTab] = useState('submissions')
+  const [tab, setTab] = useState('overview')
+  const [toast, notify] = useToast()
+  // Live counts feed the little badges on the Submissions/Reports tabs —
+  // a moderator lands on Overview and can already see "3 waiting" without
+  // clicking into the tab, and the number stays in sync as items are
+  // actioned (each tab calls onCountsChange after approve/reject/resolve).
+  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0 })
+
+  async function refreshCounts() {
+    try {
+      const [pending, reports] = await Promise.all([
+        listContent({ status: 'pending' }),
+        listReports(),
+      ])
+      setCounts({ pending: pending.length, reportsOpen: reports.filter((r) => r.status === 'open').length })
+    } catch {
+      // Best-effort — badges just stay at their last known value.
+    }
+  }
+  useEffect(() => { refreshCounts() }, [])
+
   return (
     <div className="parent">
       <Link className="home-link" to="/">← Home</Link>
@@ -86,17 +108,91 @@ function Tools({ account, onLogout }) {
       </header>
 
       <div className="tabs">
-        {TABS.map((t) => (
-          <button key={t.key} className={tab === t.key ? 'tab active' : 'tab'} onClick={() => setTab(t.key)}>
-            <t.icon width={16} height={16} /> {t.label}
-          </button>
-        ))}
+        {TABS.map((t) => {
+          const count = t.countKey ? counts[t.countKey] : 0
+          return (
+            <button key={t.key} className={tab === t.key ? 'tab active' : 'tab'} onClick={() => setTab(t.key)}>
+              <t.icon width={16} height={16} /> {t.label}
+              {count > 0 && <span className="tab-count">{count}</span>}
+            </button>
+          )
+        })}
       </div>
 
-      {tab === 'submissions' && <Submissions />}
-      {tab === 'catalogue' && <Catalogue />}
-      {tab === 'reports' && <Reports />}
+      <div className="tab-panel" key={tab}>
+        {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} />}
+        {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
+        {tab === 'catalogue' && <Catalogue notify={notify} />}
+        {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
+      </div>
+
+      <ToastHost toast={toast} />
     </div>
+  )
+}
+
+// A lightweight console home — mirrors AdminDashboard's Overview (same
+// .stat-grid tiles) so the moderator console reads as the same level of
+// tool, not a lesser cousin of it. Computed client-side from the same
+// listContent/listReports calls the other tabs already make (no new
+// backend endpoint needed) since there's no moderator-scoped /stats route.
+function Overview({ counts, onNavigate }) {
+  const [stats, setStats] = useState(null)
+  useEffect(() => {
+    listContent({}).then((items) => {
+      setStats({
+        total: items.length,
+        books: items.filter((i) => i.type === 'book').length,
+        videos: items.filter((i) => i.type === 'video').length,
+        approved: items.filter((i) => i.status === 'approved').length,
+        rejected: items.filter((i) => i.status === 'rejected').length,
+      })
+    })
+  }, [])
+
+  const tiles = stats && [
+    { label: 'Pending review', val: counts.pending, icon: ClockIcon, attention: counts.pending > 0 },
+    { label: 'Open reports', val: counts.reportsOpen, icon: FlagIcon, attention: counts.reportsOpen > 0 },
+    { label: 'Live catalogue', val: stats.approved, icon: CheckIcon },
+    { label: 'Books', val: stats.books, icon: BookIcon },
+    { label: 'Videos', val: stats.videos, icon: VideoIcon },
+    { label: 'Rejected', val: stats.rejected, icon: CloseIcon },
+  ]
+
+  return (
+    <section>
+      <h2><ChartIcon width={20} height={20} /> Moderation overview</h2>
+      {!stats ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <>
+          <div className="stat-grid">
+            {tiles.map(({ label, val, icon: Icon, attention }) => (
+              <div className={`stat ${attention ? 'stat--attention' : ''}`} key={label}>
+                <div className="stat-icon"><Icon width={18} height={18} /></div>
+                <div className="stat-num">{val}</div>
+                <div className="stat-label">{label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="row" style={{ marginTop: 'var(--space-4)' }}>
+            {counts.pending > 0 && (
+              <button onClick={() => onNavigate('submissions')}>
+                <InboxIcon width={16} height={16} /> Review {counts.pending} waiting submission{counts.pending === 1 ? '' : 's'}
+              </button>
+            )}
+            {counts.reportsOpen > 0 && (
+              <button className="danger" onClick={() => onNavigate('reports')}>
+                <FlagIcon width={16} height={16} /> Handle {counts.reportsOpen} open report{counts.reportsOpen === 1 ? '' : 's'}
+              </button>
+            )}
+            {counts.pending === 0 && counts.reportsOpen === 0 && (
+              <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing needs your attention right now.</p>
+            )}
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 
@@ -117,7 +213,7 @@ function TypeIcon({ type }) {
 // hand-type every field into "Add catalogue entry," which is not what
 // CM03's own docstring describes ("search + import... a real editorial
 // judgement call a human makes here").
-function SearchImport({ onImported }) {
+function SearchImport({ onImported, notify }) {
   const [type, setType] = useState('book')
   const [q, setQ] = useState('')
   const [results, setResults] = useState(null)
@@ -158,6 +254,7 @@ function SearchImport({ onImported }) {
         onSave={async (payload) => {
           await importContent(payload)
           setImporting(null); setResults(null); setQ('')
+          notify?.(`“${payload.title}” imported — now waiting for review below.`)
           onImported()
         }}
         onCancel={() => setImporting(null)}
@@ -210,21 +307,45 @@ function SearchImport({ onImported }) {
 }
 
 // CM06/CM07/CM08 — review new submissions, approve or reject
-function Submissions() {
+function Submissions({ notify, onCountsChange }) {
   const [items, setItems] = useState([])
-  async function reload() { setItems(await listContent({ status: 'pending' })) }
+  const [loading, setLoading] = useState(true)
+  // The item mid-transition, so its card can fade/slide out instead of
+  // just vanishing the instant the list refetches — the one place this
+  // console genuinely felt static, since approve/reject had zero motion
+  // and zero confirmation beyond the row disappearing.
+  const [leaving, setLeaving] = useState(null)
+
+  async function reload() {
+    setLoading(true)
+    try { setItems(await listContent({ status: 'pending' })) } finally { setLoading(false) }
+  }
   useEffect(() => { reload() }, [])
-  async function act(id, fn) { await fn(id); reload() }
+
+  async function act(item, fn, message, tone) {
+    setLeaving(item.id)
+    try {
+      await fn(item.id)
+      notify?.(message, tone)
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+      setLeaving(null)
+      return
+    }
+    setTimeout(reload, 220) // let the fade play before the row actually leaves the DOM
+  }
 
   return (
     <section>
-      <SearchImport onImported={reload} />
-      <h2><InboxIcon width={20} height={20} /> New submissions ({items.length})</h2>
-      {items.length === 0 && (
+      <SearchImport onImported={() => { reload(); onCountsChange?.() }} notify={notify} />
+      <h2><InboxIcon width={20} height={20} /> New submissions {!loading && `(${items.length})`}</h2>
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && items.length === 0 && (
         <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing waiting for review — you're all caught up.</p>
       )}
       {items.map((i) => (
-        <div className="card" key={i.id}>
+        <div className={`card ${leaving === i.id ? 'card-leaving' : ''}`} key={i.id}>
           <div className="child-top">
             <div className="item-with-thumb">
               {i.thumbnail && <img className={`item-thumb item-thumb--${i.type}`} src={i.thumbnail} alt="" />}
@@ -235,10 +356,36 @@ function Submissions() {
             </div>
             <span className="badge badge-pending">pending</span>
           </div>
-          <p className="muted">Age: {i.age_bands.join(', ')} · Genres: {i.genres.join(', ') || '—'}</p>
+          <div className="chip-row">
+            {i.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
+            {i.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
+            {i.genres.length === 0 && <span className="chip chip-muted">no genres tagged</span>}
+          </div>
+          {/* CM06 triage aid — a first-pass AI read (app/ai_assist.py),
+              never a decision: the moderator's own Approve/Reject below is
+              what actually decides this item's status. Only rendered when
+              the AI call actually ran (i.tag ai_suggestion is null when the
+              key isn't configured or the call failed) — no "AI unavailable"
+              noise on every card. */}
+          {i.ai_suggestion && (
+            <div className={`ai-note ai-note--${i.ai_suggestion}`}>
+              <SparkleIcon width={15} height={15} />
+              <span>
+                <b>AI suggests: {i.ai_suggestion === 'approve' ? 'Approve' : 'Reject'}</b>
+                {i.ai_reason && <> — {i.ai_reason}</>}
+                {i.ai_confidence && <span className="ai-note-confidence"> ({i.ai_confidence} confidence)</span>}
+              </span>
+            </div>
+          )}
           <div className="row">
-            <button className="success" onClick={() => act(i.id, approveContent)}><CheckIcon width={16} height={16} /> Approve</button>
-            <button className="danger" onClick={() => act(i.id, rejectContent)}><CloseIcon width={16} height={16} /> Reject</button>
+            <button className="success" disabled={leaving === i.id}
+              onClick={() => act(i, approveContent, `“${i.title}” approved — now live in the catalogue.`)}>
+              <CheckIcon width={16} height={16} /> Approve
+            </button>
+            <button className="danger" disabled={leaving === i.id}
+              onClick={() => act(i, rejectContent, `“${i.title}” rejected.`, 'danger')}>
+              <CloseIcon width={16} height={16} /> Reject
+            </button>
           </div>
         </div>
       ))}
@@ -262,22 +409,42 @@ function truncate(text, max = 140) {
   return text.slice(0, max).trimEnd() + '…'
 }
 
-function Catalogue() {
+function Catalogue({ notify }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
+  const [confirmingRemove, setConfirmingRemove] = useState(null)
   const [q, setQ] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [genreFilter, setGenreFilter] = useState('')
+  // The dropdown's own option list — fetched once, unfiltered, so it
+  // always offers every genre in the catalogue regardless of whatever
+  // type/status/genre the list below is currently narrowed to (narrowing
+  // by genre would otherwise shrink the genre picker itself down to one
+  // option the moment it's used).
+  const [allGenres, setAllGenres] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    listContent({}).then((items) => {
+      const genres = new Set()
+      for (const i of items) for (const g of i.genres || []) genres.add(g)
+      setAllGenres([...genres].sort((a, b) => a.localeCompare(b)))
+    })
+  }, [])
 
   async function reload(overrides = {}) {
     const params = {}
     const query = overrides.q ?? q
     const type = overrides.typeFilter ?? typeFilter
     const status = overrides.statusFilter ?? statusFilter
+    const genre = overrides.genreFilter ?? genreFilter
     if (query.trim()) params.q = query.trim()
     if (type) params.type = type
     if (status) params.status = status
-    setItems(await listContent(params))
+    if (genre) params.genre = genre
+    setLoading(true)
+    try { setItems(await listContent(params)) } finally { setLoading(false) }
   }
   useEffect(() => { reload() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -287,11 +454,11 @@ function Catalogue() {
     const id = setTimeout(() => reload(), 300)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, typeFilter, statusFilter])
+  }, [q, typeFilter, statusFilter, genreFilter])
 
   return (
     <section>
-      <AddEntry onAdded={reload} />
+      <AddEntry onAdded={reload} notify={notify} />
       <h2><GridIcon width={20} height={20} /> Catalogue ({items.length})</h2>
 
       <div className="row" style={{ marginBottom: 12 }}>
@@ -313,16 +480,28 @@ function Catalogue() {
           <option value="pending">Pending</option>
           <option value="rejected">Rejected</option>
         </select>
+        {allGenres.length > 0 && (
+          <select value={genreFilter} onChange={(e) => setGenreFilter(e.target.value)}>
+            <option value="">All categories</option>
+            {allGenres.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        )}
       </div>
 
-      {items.length === 0 && <p className="muted">No catalogue items match that search.</p>}
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && items.length === 0 && <p className="muted">No catalogue items match that search.</p>}
 
       {items.map((i) => (
         editing === i.id ? (
           <EntryForm
             key={i.id}
             initial={i}
-            onSave={async (payload) => { await editContent(i.id, payload); setEditing(null); reload() }}
+            onSave={async (payload) => {
+              await editContent(i.id, payload)
+              setEditing(null)
+              notify?.(`“${payload.title}” saved.`)
+              reload()
+            }}
             onCancel={() => setEditing(null)}
           />
         ) : (
@@ -337,13 +516,34 @@ function Catalogue() {
               </div>
               <span className={`badge badge-${i.status}`}>{i.status}</span>
             </div>
-            <p className="muted">Age: {i.age_bands.join(', ')} · Genres: {i.genres.join(', ') || '—'} · Level: {i.reading_level || '—'}</p>
-            <div className="row">
-              <button className="ghost small" onClick={() => setEditing(i.id)}><EditIcon width={15} height={15} /> Edit</button>
-              <button className="danger small" onClick={async () => { if (confirm('Remove this entry?')) { await removeContent(i.id); reload() } }}>
-                <TrashIcon width={15} height={15} /> Remove
-              </button>
+            <div className="chip-row">
+              {i.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
+              {i.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
+              {i.reading_level && <span className="chip chip-muted">{i.reading_level}</span>}
             </div>
+            {/* Inline, two-step confirmation instead of a native confirm()
+                popup — matches the rest of the app's own convention of
+                never dropping into raw browser chrome for anything the
+                child or a staff member sees. */}
+            {confirmingRemove === i.id ? (
+              <div className="row inline-confirm">
+                <span>Remove “{i.title}” from the catalogue?</span>
+                <button className="danger small" onClick={async () => {
+                  await removeContent(i.id)
+                  setConfirmingRemove(null)
+                  notify?.(`“${i.title}” removed.`, 'danger')
+                  reload()
+                }}>Yes, remove</button>
+                <button className="ghost small" onClick={() => setConfirmingRemove(null)}>Cancel</button>
+              </div>
+            ) : (
+              <div className="row">
+                <button className="ghost small" onClick={() => setEditing(i.id)}><EditIcon width={15} height={15} /> Edit</button>
+                <button className="danger small" onClick={() => setConfirmingRemove(i.id)}>
+                  <TrashIcon width={15} height={15} /> Remove
+                </button>
+              </div>
+            )}
           </div>
         )
       ))}
@@ -351,10 +551,21 @@ function Catalogue() {
   )
 }
 
-function AddEntry({ onAdded }) {
+function AddEntry({ onAdded, notify }) {
   const [open, setOpen] = useState(false)
   if (!open) return <button className="add-btn" onClick={() => setOpen(true)}><PlusIcon width={16} height={16} /> Add catalogue entry</button>
-  return <EntryForm isNew onSave={async (payload) => { await addContent(payload); setOpen(false); onAdded() }} onCancel={() => setOpen(false)} />
+  return (
+    <EntryForm
+      isNew
+      onSave={async (payload) => {
+        await addContent(payload)
+        setOpen(false)
+        notify?.(`“${payload.title}” added to the catalogue.`)
+        onAdded()
+      }}
+      onCancel={() => setOpen(false)}
+    />
+  )
 }
 
 function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
@@ -430,28 +641,50 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
 }
 
 // CM11 review reported content + CM12 resolve
-function Reports() {
+function Reports({ notify, onCountsChange }) {
   const [items, setItems] = useState([])
-  async function reload() { setItems(await listReports()) }
+  const [loading, setLoading] = useState(true)
+  const [leaving, setLeaving] = useState(null)
+
+  async function reload() {
+    setLoading(true)
+    try { setItems(await listReports()) } finally { setLoading(false) }
+  }
   useEffect(() => { reload() }, [])
-  async function act(id, action) { await resolveReport(id, action); reload() }
+
+  async function act(r, action, message) {
+    setLeaving(r.id)
+    try {
+      await resolveReport(r.id, action)
+      notify?.(message, action === 'remove' ? 'danger' : 'success')
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+      setLeaving(null)
+      return
+    }
+    setTimeout(reload, 220)
+  }
 
   return (
     <section>
-      <h2><FlagIcon width={20} height={20} /> Reported content ({items.length})</h2>
-      {items.length === 0 && (
+      <h2><FlagIcon width={20} height={20} /> Reported content {!loading && `(${items.length})`}</h2>
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && items.length === 0 && (
         <p className="empty-state"><CheckIcon width={18} height={18} /> No reports right now.</p>
       )}
       {items.map((r) => (
-        <div className="card" key={r.id}>
+        <div className={`card ${leaving === r.id ? 'card-leaving' : ''}`} key={r.id}>
           <div className="child-top">
             <div><h3 className="item-title">{r.content_title}</h3><p className="muted">Reason: {r.reason}</p></div>
             <span className={`badge badge-${r.status === 'open' ? 'pending' : 'approved'}`}>{r.status}</span>
           </div>
           {r.status === 'open' && (
             <div className="row">
-              <button className="ghost small" onClick={() => act(r.id, 'dismiss')}>Dismiss</button>
-              <button className="danger small" onClick={() => act(r.id, 'remove')}><TrashIcon width={15} height={15} /> Remove content</button>
+              <button className="ghost small" disabled={leaving === r.id} onClick={() => act(r, 'dismiss', `Report on “${r.content_title}” dismissed.`)}>Dismiss</button>
+              <button className="danger small" disabled={leaving === r.id} onClick={() => act(r, 'remove', `“${r.content_title}” removed from the catalogue.`)}>
+                <TrashIcon width={15} height={15} /> Remove content
+              </button>
             </div>
           )}
         </div>

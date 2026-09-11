@@ -12,7 +12,7 @@ new submission. Search results are never recommendable on their own — only
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import content_sources, embeddings
+from .. import ai_assist, content_sources, embeddings
 from ..deps import current_account, require_role
 from ..models import ContentIn, ContentOut
 from ..storage import db
@@ -95,8 +95,18 @@ def import_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))
     they assign — that assignment is a real editorial judgement call a human
     makes here, not something inferred from the API response. Lands as
     "pending", same as any other new submission (CM06), until explicitly
-    approved via POST /{id}/approve (CM07/CM08 still applies)."""
-    item = db.add_content(body.model_dump(), status="pending")
+    approved via POST /{id}/approve (CM07/CM08 still applies).
+
+    Also gets a first-pass AI read (app/ai_assist.py's
+    suggest_catalogue_decision) attached at import time — advisory only,
+    shown to the moderator in the Submissions queue, never auto-applied to
+    `status` here."""
+    data = body.model_dump()
+    suggestion = ai_assist.suggest_catalogue_decision(data)
+    data["ai_suggestion"] = suggestion.get("suggestion")
+    data["ai_reason"] = suggestion.get("reason")
+    data["ai_confidence"] = suggestion.get("confidence")
+    item = db.add_content(data, status="pending")
     return _out(item)
 
 
@@ -114,7 +124,7 @@ def edit_entry(content_id: str, body: ContentIn, mod: dict = Depends(require_rol
 def remove_entry(content_id: str, mod: dict = Depends(require_role("moderator"))):
     if content_id not in db.content:
         raise HTTPException(404, "Content not found")
-    db.content.pop(content_id, None)
+    db.remove_content(content_id)
 
 
 @router.post("/{content_id}/approve", response_model=ContentOut)

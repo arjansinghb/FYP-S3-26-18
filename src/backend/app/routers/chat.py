@@ -299,7 +299,13 @@ def list_favourites(creds: HTTPAuthorizationCredentials = Depends(require_bearer
     out = []
     for f in db.favourites[child["id"]]:
         item = db.content.get(f["content_id"])
-        if item:
+        # Status-gated, not just existence-gated — a moderator can reject
+        # (CM08) an item that was already `approved` and already
+        # favourited (reject has no status guard, see content.py), and
+        # without this check it kept showing here even after losing its
+        # approved status: the one place left where a child could still
+        # reach something a moderator had since pulled back.
+        if item and item["status"] == "approved":
             out.append({
                 "id": item["id"], "title": item["title"], "type": item["type"],
                 "description": item.get("description", ""), "thumbnail": item.get("thumbnail"),

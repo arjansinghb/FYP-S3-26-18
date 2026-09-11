@@ -14,10 +14,11 @@ import {
   getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
   childReports, childTrends, compareChildren,
+  getMyReview, submitReview,
 } from '../api'
 import {
   AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
-  PlusIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
+  PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import './parent.css'
 
@@ -263,7 +264,107 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 
       <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
 
+      <ReviewPanel />
+
       <PrivacyPanel account={account} />
+    </div>
+  )
+}
+
+// ---------- UV04: submit a review for the public landing page ----------
+// Real gap, not a restyle: there was no way for a parent to actually leave
+// one — the landing page's "Why families trust Pip" section deliberately
+// used verifiable product claims instead of invented quotes (see Home.jsx's
+// TRUST_POINTS comment), which is honest but isn't the same thing as a real
+// parent's own words. This is that real path: written here, screened for
+// safety, then only public once an admin explicitly approves it.
+function ReviewPanel() {
+  const [review, setReview] = useState(undefined) // undefined = loading, null = none yet
+  const [rating, setRating] = useState(5)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  // Shown briefly right after a successful submit, then the panel reverts
+  // to the (blank) form on its own — a parent can always send another
+  // review later, so this is a passing confirmation, not a dead end.
+  const [justSubmitted, setJustSubmitted] = useState(false)
+
+  useEffect(() => {
+    getMyReview().then(setReview).catch(() => setReview(null))
+  }, [])
+
+  useEffect(() => {
+    if (!justSubmitted) return
+    const timer = setTimeout(() => setJustSubmitted(false), 3000)
+    return () => clearTimeout(timer)
+  }, [justSubmitted])
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!text.trim()) { setError('Write a few words first.'); return }
+    setBusy(true); setError('')
+    try {
+      const saved = await submitReview(rating, text.trim())
+      setReview(saved)
+      setText('')
+      setRating(5)
+      setJustSubmitted(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (review === undefined) return null // avoid a flash of the form before we know
+
+  return (
+    <div className="card">
+      <h3><StarIcon width={18} height={18} filled /> Your review</h3>
+      {justSubmitted ? (
+        <div className="review-submitted review-submitted-thanks">
+          <CheckIcon width={20} height={20} />
+          <p className="review-submitted-text">Thank you for your feedback!</p>
+        </div>
+      ) : (
+        <form className="review-form" onSubmit={submit}>
+          {review?.status === 'rejected' && (
+            <p className="review-rejected-note">Your last submission wasn't published — {review.rejection_reason || 'try rewording it.'} Feel free to try again.</p>
+          )}
+          <p className="muted">Share your experience with Pip — your feedback helps us make it better for every family.</p>
+          <div className="review-field">
+            <span className="review-field-label">Rating</span>
+            <StarPicker value={rating} onChange={setRating} />
+          </div>
+          <div className="review-field">
+            <label htmlFor="review-text" className="review-field-label">Your review</label>
+            <textarea
+              id="review-text"
+              value={text} onChange={(e) => setText(e.target.value)} maxLength={600} rows={3}
+              placeholder="What's it actually like using Pip with your child?"
+            />
+          </div>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={busy} className="review-submit">{busy ? 'Submitting…' : 'Submit review'}</button>
+        </form>
+      )}
+    </div>
+  )
+}
+
+function StarPicker({ value, onChange, readOnly }) {
+  return (
+    <div className="star-picker" role={readOnly ? undefined : 'radiogroup'} aria-label="Rating">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n} type="button" className="star-btn" disabled={readOnly}
+          onClick={() => onChange?.(n)}
+          aria-label={`${n} star${n > 1 ? 's' : ''}`}
+          aria-pressed={n <= value}
+        >
+          <StarIcon width={22} height={22} filled={n <= value} />
+        </button>
+      ))}
     </div>
   )
 }
@@ -958,11 +1059,16 @@ function ChildCard({ child, account, onChanged }) {
   const [loading, setLoading] = useState(false)
   const [overrides, setOverrides] = useState({})
   const [openSessionId, setOpenSessionId] = useState(null)
+  // PA14 — a search box over the session list, so a parent with a long
+  // chat history finds a specific conversation directly instead of
+  // scrolling the whole thing looking for it.
+  const [activitySearch, setActivitySearch] = useState('')
 
   async function toggle(which) {
     if (view === which) { setView(null); return }
     setView(which)
     setOpenSessionId(null)
+    setActivitySearch('')
     setLoading(true)
     try {
       if (which === 'activity') setData(await childActivity(child.id))
@@ -1084,10 +1190,34 @@ function ChildCard({ child, account, onChanged }) {
               a past conversation, see what was actually said in it), not
               one long undifferentiated feed. */}
           {!loading && view === 'activity' && (() => {
-            const sessions = groupBySession(data)
+            const allSessions = groupBySession(data)
+            const query = activitySearch.trim().toLowerCase()
+            const sessions = !query ? allSessions : allSessions.filter((s) =>
+              s.title.toLowerCase().includes(query) ||
+              s.entries.some((e) => e.message?.toLowerCase().includes(query) || e.reply?.toLowerCase().includes(query))
+            )
             const open = sessions.find((s) => s.id === openSessionId) || null
             return (
               <div className="session-browser">
+                {allSessions.length > 3 && (
+                  <div className="session-search">
+                    <SearchIcon width={15} height={15} />
+                    <input
+                      type="search"
+                      value={activitySearch}
+                      onChange={(e) => setActivitySearch(e.target.value)}
+                      placeholder="Search this child's chat history…"
+                    />
+                  </div>
+                )}
+                {query && (
+                  <p className="muted session-search-count">
+                    {sessions.length} of {allSessions.length} conversation{allSessions.length === 1 ? '' : 's'} match{sessions.length === 1 ? 'es' : ''}
+                  </p>
+                )}
+                {query && sessions.length === 0 && (
+                  <p className="muted">No conversations match “{activitySearch}”.</p>
+                )}
                 <div className="session-list">
                   {sessions.map((s) => (
                     <button

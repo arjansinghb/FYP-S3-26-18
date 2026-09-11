@@ -648,6 +648,74 @@
   overflow: hidden;
 }
 
+/* ---------- UV04 review wall — the catalogue shelf's own horizontal
+   auto-scroll mechanism (.catalogue-scroller's mask/overflow reused as-is,
+   .catalogue-track's own animation reused by name below), split into two
+   rows scrolling opposite directions instead of one — a real "wall of
+   reviews" feel instead of a single ticker line, while still reading as
+   the same family of component as the catalogue shelf above it. ---------- */
+.review-wall {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.review-track-h {
+  display: flex;
+  gap: var(--space-4);
+  width: max-content;
+  animation: catalogue-scroll calc(var(--n, 5) * 8s) linear infinite;
+}
+.review-track-h--reverse { animation-direction: reverse; }
+/* Real constraint worth recording, found while chasing this: the seamless
+   loop only works because the track (list+list, duplicated) is exactly
+   periodic every 50% of its own width — translateX(0) and translateX(-50%)
+   render pixel-identical content. That means BOTH directions genuinely
+   start from the same visual frame at t=0 (first card flush at the left)
+   no matter which way they're about to move — right-aligning the top
+   row's resting layout instead (tried first) breaks that periodicity: the
+   loop still travels a full extra copy-width past where the seamless wrap
+   expects, so the row visibly scrolls itself empty once per cycle. A
+   negative `animation-delay` avoids that — it doesn't touch layout at
+   all, just tunes into the same already-safe, already-looping timeline
+   at a different phase, so the top row's first frame shows a genuinely
+   different slice of its own cards (not the boundary-adjacent, still-
+   flush-left frame it'd otherwise share with the bottom row). */
+.review-track-h.review-row-top { animation-delay: calc(var(--n, 5) * 8s * -0.25); }
+/* Deliberately no hover-pause here (unlike .catalogue-track above) —
+   Kiefer's explicit call: the wall keeps moving even with the cursor
+   resting on it, reads as more "alive" than a shelf that freezes the
+   instant someone looks at it. */
+@media (prefers-reduced-motion: reduce) {
+  .review-track-h { animation: none; }
+}
+.review-card {
+  flex: 0 0 300px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: border-color 0.15s;
+}
+.review-card:hover { border-color: var(--primary-500); }
+.review-quote { color: var(--primary-border); }
+.review-stars { display: flex; gap: 2px; color: var(--accent-600); }
+.review-text {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  /* clamp to 4 lines — a real review's length varies, this keeps every
+     card in the wall a predictable height without cutting a short one short */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.review-by { margin: 0; font-size: var(--text-xs); font-weight: 700; color: var(--muted); }
+
 /* ---------- differentiation: an asymmetric "old ways vs. Pip" layout —
    not the generic three-equal-column comparison-card row. ---------- */
 .diff-layout {

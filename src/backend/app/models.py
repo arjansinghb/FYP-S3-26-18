@@ -303,6 +303,14 @@ class ContentIn(BaseModel):
 class ContentOut(ContentIn):
     id: str
     status: Literal["approved", "pending", "rejected"]
+    # CM06 triage aid (app/ai_assist.py's suggest_catalogue_decision) —
+    # server-computed at import time, never client-supplied (not on
+    # ContentIn), and always advisory: the moderator's own approve/reject
+    # is what actually decides an item's status, this just orders/explains
+    # what they see first in a long submissions queue.
+    ai_suggestion: Optional[Literal["approve", "reject"]] = None
+    ai_reason: Optional[str] = None
+    ai_confidence: Optional[Literal["low", "medium", "high"]] = None
 
 
 # ----- chat / recommendations -----
@@ -350,6 +358,45 @@ class FeedbackRequest(BaseModel):
 class ReportRequest(BaseModel):
     content_id: str
     reason: str
+
+
+# ---------- UV04: parent-submitted reviews, shown on the public landing
+# page. Genuinely new — the landing page's earlier "Why families trust
+# Pip" section deliberately used verifiable product claims instead of
+# invented user quotes (see Home.jsx's TRUST_POINTS comment); this is the
+# real version of that idea, sitting alongside it: an actual parent writes
+# an actual review, which only ever becomes public after (1) an automated
+# safety screen and (2) explicit admin approval — same two-layer pattern
+# already used for the child chat's own input safety and the content
+# catalogue's moderation queue, applied here to user-generated text
+# instead of a child's message or a catalogue submission.
+class ReviewCreate(BaseModel):
+    rating: int  # 1-5
+    text: str
+
+
+class ReviewOut(BaseModel):
+    id: str
+    parent_name: str
+    rating: int
+    text: str
+    status: Literal["pending", "rejected", "approved"]
+    created_at: float
+    rejection_reason: Optional[str] = None
+    # UV04/admin triage aid (app/ai_assist.py's suggest_review) — computed
+    # once at submission time, advisory-only: an admin still approves or
+    # rejects every review themselves, this just helps them find the ones
+    # worth reading first once there are far more than fit on one screen.
+    ai_recommend: Optional[bool] = None
+    ai_reason: Optional[str] = None
+
+
+class PublicReviewOut(BaseModel):
+    """What an unregistered visitor actually sees — no parent id, no
+    status/rejection detail, just the finished, approved review."""
+    parent_name: str
+    rating: int
+    text: str
 
 
 class ReportOut(BaseModel):

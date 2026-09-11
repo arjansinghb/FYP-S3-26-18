@@ -196,6 +196,16 @@ export function StarIcon({ filled = true, ...props }) {
   )
 }
 
+// direction: 'left' | 'right' — the review carousel's prev/next controls.
+export function ChevronIcon({ direction = 'right', ...props }) {
+  const d = direction === 'left' ? 'M14.5 5.5 8 12l6.5 6.5' : 'M9.5 5.5 16 12l-6.5 6.5'
+  return (
+    <svg {...base} {...props}>
+      <path d={d} />
+    </svg>
+  )
+}
+
 export function QuoteIcon(props) {
   return (
     <svg {...base} fill="currentColor" stroke="none" {...props}>

@@ -108,10 +108,7 @@ def regenerate_login_id(child_id: str, parent: dict = Depends(require_role("pare
 @router.delete("/api/children/{child_id}", status_code=204)
 def delete_child(child_id: str, parent: dict = Depends(require_role("parent"))):
     child = _owned_child(child_id, parent)
-    db.children.pop(child["id"], None)
-    db.favourites.pop(child["id"], None)
-    db.activity.pop(child["id"], None)
-    db.content_overrides.pop(child["id"], None)
+    db.delete_child(child["id"])
 
 
 @router.put("/api/children/{child_id}/settings", response_model=ChildOut)

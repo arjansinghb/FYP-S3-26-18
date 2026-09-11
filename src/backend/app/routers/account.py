@@ -2,13 +2,17 @@
 PA28 consent, PA29 privacy settings, PA30 data-deletion requests, PA20/22
 notifications, PA23-27 billing (simulated). All require the `parent` role.
 """
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import ai_assist, moderation
 from ..deps import require_role
 from ..models import (
     BillingRecordOut, ConsentOut, ConsentRequest, DataDeletionRequestOut,
     NotificationOut, NotificationPreferences, PaymentMethodIn,
-    PaymentMethodOut, PrivacySettings, SubscribeRequest, SubscriptionStatusOut,
+    PaymentMethodOut, PrivacySettings, ReviewCreate, ReviewOut, SubscribeRequest,
+    SubscriptionStatusOut,
 )
 from ..storage import db
 
@@ -179,3 +183,54 @@ def update_payment_method(body: PaymentMethodIn, account: dict = Depends(require
 @router.get("/billing-history", response_model=list[BillingRecordOut])
 def billing_history(account: dict = Depends(require_role("parent"))):
     return [BillingRecordOut(**b) for b in db.billing_history_for(account["id"])]
+
+
+# ---------- UV04: submit a review ----------
+# See models.ReviewCreate's docstring for the full picture — a real parent
+# writes a real review, which only reaches the public landing page after
+# an AI safety screen here AND an explicit admin approval (routers/admin.py).
+
+def _review_out(r: dict) -> ReviewOut:
+    return ReviewOut(
+        id=r["id"], parent_name=r["parent_name"], rating=r["rating"], text=r["text"],
+        status=r["status"], created_at=r["created_at"], rejection_reason=r.get("rejection_reason"),
+        ai_recommend=r.get("ai_recommend"), ai_reason=r.get("ai_reason"),
+    )
+
+
+@router.get("/reviews/me", response_model=Optional[ReviewOut])
+def my_review(account: dict = Depends(require_role("parent"))):
+    """A parent's own review + its current status (pending/approved/
+    rejected) — null if they've never submitted one."""
+    review = db.review_by_parent(account["id"])
+    return _review_out(review) if review else None
+
+
+@router.post("/reviews", response_model=ReviewOut, status_code=201)
+def submit_review(body: ReviewCreate, account: dict = Depends(require_role("parent"))):
+    rating = max(1, min(5, body.rating))
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "Please write something before submitting.")
+    if len(text) > 600:
+        raise HTTPException(400, "Keep it under 600 characters.")
+    # Same input-safety screen the child chat already uses (see
+    # moderation.py) — a review that fails it never even reaches the
+    # admin queue, same reasoning as redirecting an unsafe chat message
+    # instead of letting a human moderator wade through it first.
+    if moderation.is_unsafe(text):
+        review = db.add_review(
+            account["id"], account["name"], rating, text, "rejected",
+            rejection_reason="This didn't pass our automatic content screen.",
+        )
+        return _review_out(review)
+    # Advisory-only triage aid for the admin queue (app/ai_assist.py) — an
+    # opinion attached at submission time, never a gate: it doesn't affect
+    # whether this review lands in the queue (that's the is_unsafe check
+    # above), only how the admin sees it once it's there.
+    suggestion = ai_assist.suggest_review(rating, text)
+    review = db.add_review(
+        account["id"], account["name"], rating, text, "pending",
+        ai_recommend=suggestion.get("recommend"), ai_reason=suggestion.get("reason"),
+    )
+    return _review_out(review)

@@ -62,6 +62,31 @@ export async function getPublicPlans() {
 export async function getPublicCatalogueSample(limit = 6) {
   return request(`/api/public/catalogue-sample?limit=${limit}`)
 }
+// UV04 — real, admin-approved parent reviews for the landing page. Empty
+// until at least one exists — see public.py's own docstring for why an
+// empty state here is honest, not a bug.
+export async function getPublicReviews(limit = 10) {
+  return request(`/api/public/reviews?limit=${limit}`)
+}
+
+// ----- UV04: a parent's own review (submit / check status) -----
+export async function getMyReview() {
+  return request('/api/account/reviews/me', { auth: true })
+}
+export async function submitReview(rating, text) {
+  return request('/api/account/reviews', { method: 'POST', body: { rating, text }, auth: true })
+}
+
+// ----- system admin: review moderation queue -----
+export async function adminListReviews(status) {
+  return request(`/api/admin/reviews${status ? `?status=${status}` : ''}`, { auth: true })
+}
+export async function adminApproveReview(id) {
+  return request(`/api/admin/reviews/${id}/approve`, { method: 'POST', auth: true })
+}
+export async function adminRejectReview(id) {
+  return request(`/api/admin/reviews/${id}/reject`, { method: 'POST', auth: true })
+}
 
 // ----- child chat -----
 // Returns the full result { reply, recommendations }. If a child is logged in,

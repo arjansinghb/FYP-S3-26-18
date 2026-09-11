@@ -4,6 +4,7 @@ Billing (SA13) config, so admin edits show up on the public site.
 """
 from fastapi import APIRouter
 
+from ..models import PublicReviewOut
 from ..storage import db
 
 router = APIRouter(prefix="/api/public", tags=["public"])
@@ -11,12 +12,14 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 
 @router.get("/site")
 def site():
+    db.refresh_public()
     w = db.system["website"]
     return {"site_title": w["site_title"], "tagline": w["tagline"], "announcement": w["announcement"]}
 
 
 @router.get("/plans")
 def plans():
+    db.refresh_public()
     b = db.system["billing"]
     return {
         "currency": b["currency"], "billing_enabled": b["billing_enabled"],
@@ -46,6 +49,7 @@ def catalogue_sample(limit: int = 6):
     Every OTHER surface (moderator catalogue, parent favourites, child chat
     recs) still shows these fixtures honestly, icon and all — only the
     sampling ORDER changes here, no data is hidden or faked."""
+    db.refresh_public()
     # No created-at timestamp exists on content items to sort by (see
     # storage.add_content) — natural dict insertion order is the tiebreak
     # within each group, not a fabricated "recency" claim.
@@ -58,4 +62,20 @@ def catalogue_sample(limit: int = 6):
             "age_bands": c.get("age_bands", []), "genres": c.get("genres", []),
         }
         for c in ordered[:max(1, min(limit, 12))]
+    ]
+
+
+@router.get("/reviews", response_model=list[PublicReviewOut])
+def reviews(limit: int = 10):
+    """UV04 — real parent reviews, never invented ones (see models.py's
+    ReviewCreate docstring): only ever the ones an admin has explicitly
+    approved, on top of an automatic safety screen at submission time.
+    Empty until a real parent submits one and an admin approves it — the
+    frontend shows an honest "not enough yet" state rather than a filler
+    review, same discipline as this file's own catalogue-sample docstring
+    right above."""
+    db.refresh_public()
+    return [
+        {"parent_name": r["parent_name"], "rating": r["rating"], "text": r["text"]}
+        for r in db.public_reviews(limit)
     ]

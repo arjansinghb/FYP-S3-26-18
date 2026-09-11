@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from .. import metrics
 from ..config import settings
 from ..deps import require_role
+from ..models import ReviewOut
 from ..storage import db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -146,3 +147,45 @@ def resolve_ticket(ticket_id: str, admin: dict = Depends(require_role("admin")))
         raise HTTPException(404, "Ticket not found")
     ticket["status"] = "resolved"
     return ticket
+
+
+# ---------- UV04: review moderation queue ----------
+# The second, human layer behind account.py's AI screen — a review only
+# ever reaches the public landing page (public.py's /reviews) once an
+# admin has explicitly approved it here, same "human still decides" shape
+# as CM06-08's catalogue moderation, applied to user-generated review text.
+
+def _review_out(r: dict) -> ReviewOut:
+    return ReviewOut(
+        id=r["id"], parent_name=r["parent_name"], rating=r["rating"], text=r["text"],
+        status=r["status"], created_at=r["created_at"], rejection_reason=r.get("rejection_reason"),
+        ai_recommend=r.get("ai_recommend"), ai_reason=r.get("ai_reason"),
+    )
+
+
+@router.get("/reviews", response_model=list[ReviewOut])
+def list_reviews(status: str | None = None, admin: dict = Depends(require_role("admin"))):
+    items = db.reviews.values()
+    if status:
+        items = [r for r in items if r["status"] == status]
+    return [_review_out(r) for r in sorted(items, key=lambda r: r["created_at"], reverse=True)]
+
+
+@router.post("/reviews/{review_id}/approve", response_model=ReviewOut)
+def approve_review(review_id: str, admin: dict = Depends(require_role("admin"))):
+    review = db.reviews.get(review_id)
+    if not review:
+        raise HTTPException(404, "Review not found")
+    review["status"] = "approved"
+    review["rejection_reason"] = None
+    return _review_out(review)
+
+
+@router.post("/reviews/{review_id}/reject", response_model=ReviewOut)
+def reject_review(review_id: str, admin: dict = Depends(require_role("admin"))):
+    review = db.reviews.get(review_id)
+    if not review:
+        raise HTTPException(404, "Review not found")
+    review["status"] = "rejected"
+    review["rejection_reason"] = "Not a fit for the public page."
+    return _review_out(review)

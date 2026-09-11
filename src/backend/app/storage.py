@@ -53,6 +53,11 @@ class Database:
         self.chat_sessions: dict[str, dict] = {}
         # PA30 — data-deletion requests (logged, not just silently executed).
         self.deletion_requests: list[dict] = []
+        # UV04 — parent-submitted reviews for the public landing page.
+        # {id, parent_id, parent_name, rating, text, status, created_at,
+        # rejection_reason}. See models.ReviewCreate's docstring for the
+        # two-layer moderation this goes through before ever going public.
+        self.reviews: dict[str, dict] = {}
         # UV06/PA03 — same cross-instance reasoning as `tokens` above, and
         # persisted for the same reason (a reset/verify link can just as
         # easily be requested and confirmed against two different instances).
@@ -123,6 +128,7 @@ class Database:
         self.billing_records = state.get("billing_records", [])
         self.chat_sessions = state.get("chat_sessions", {})
         self.deletion_requests = state.get("deletion_requests", [])
+        self.reviews = state.get("reviews", {})
         self.tokens = state.get("tokens", {})
         self.verify_tokens = state.get("verify_tokens", {})
         self.reset_tokens = state.get("reset_tokens", {})
@@ -191,6 +197,7 @@ class Database:
             "billing_records": self.billing_records,
             "chat_sessions": self.chat_sessions,
             "deletion_requests": self.deletion_requests,
+            "reviews": self.reviews,
             "system": self.system,
             "tokens": self.tokens,
             "verify_tokens": self.verify_tokens,
@@ -246,18 +253,61 @@ class Database:
             account["password_hash"] = _hash_password(password, account["salt"])
         return account
 
+    def _clear_child_data(self, child_id: str, *, full: bool) -> None:
+        """Wipes every collection keyed/filtered by this child_id. Shared by
+        delete_child (PA09, full=True — the profile is gone right after
+        this call, so dict entries are popped outright) and
+        apply_due_deletions below (PA30, full=False — the profile stays
+        usable afterward, so favourites/activity/feedback must stay
+        present as *empty* containers instead of missing keys: several
+        call sites index them directly — e.g. chat.py's `save_favourite`
+        does `db.favourites[child["id"]]`, not `.get(...)` — and would
+        KeyError on a still-living child whose entry had been popped)."""
+        if full:
+            self.favourites.pop(child_id, None)
+            self.activity.pop(child_id, None)
+            self.feedback.pop(child_id, None)
+        else:
+            self.favourites[child_id] = []
+            self.activity[child_id] = []
+            self.feedback[child_id] = []
+        self.content_overrides.pop(child_id, None)
+        for sid in [s for s, sess in self.chat_sessions.items() if sess["child_id"] == child_id]:
+            self.chat_sessions.pop(sid, None)
+        self.reports[:] = [r for r in self.reports if r["child_id"] != child_id]
+
+    def delete_child(self, child_id: str) -> None:
+        """PA09 — full profile removal, distinct from PA30's "erase this
+        child's data but keep the profile" flow (apply_due_deletions
+        below). Found missing chat_sessions/feedback/reports cleanup here
+        2026-09-11 (same pass that found delete_account's own review gap,
+        prompted by a parent noticing a leftover test review in the admin
+        queue) — none of these crash anything downstream (every read path
+        already goes through `.get()` or `_owned_child`), but they're
+        genuinely orphaned rows with no way to reach or clean up
+        afterward, same shape as the review bug."""
+        self.children.pop(child_id, None)
+        self._clear_child_data(child_id, full=True)
+        for tok, entry in list(self.tokens.items()):
+            if entry["kind"] == "child" and entry["id"] == child_id:
+                self.tokens.pop(tok, None)
+
     def delete_account(self, account_id: str):
         """Remove the account and everything belonging to it (PA06)."""
         for child in [c for c in self.children.values() if c["parent_id"] == account_id]:
-            self.children.pop(child["id"], None)
-            self.favourites.pop(child["id"], None)
-            self.activity.pop(child["id"], None)
-            self.content_overrides.pop(child["id"], None)
-            for sid in [s for s, sess in self.chat_sessions.items() if sess["child_id"] == child["id"]]:
-                self.chat_sessions.pop(sid, None)
+            self.delete_child(child["id"])
         self.reports[:] = [r for r in self.reports if r["parent_id"] != account_id]
         self.notifications[:] = [n for n in self.notifications if n["parent_id"] != account_id]
         self.billing_records[:] = [b for b in self.billing_records if b["parent_id"] != account_id]
+        # UV04 reviews — real gap found 2026-09-11 (during cleanup of
+        # throwaway test accounts, not by a code audit): this method's own
+        # docstring says "everything belonging to it," but a submitted
+        # review kept `parent_id`/`parent_name` pointing at an account that
+        # no longer existed once deleted here, leaving an orphaned review
+        # (still shown in the admin queue, attributed to a deleted account)
+        # behind with no way to clean it up except by hand.
+        for rid in [r for r, rev in self.reviews.items() if rev["parent_id"] == account_id]:
+            self.reviews.pop(rid, None)
         for tok, entry in list(self.tokens.items()):
             if entry["kind"] == "account" and entry["id"] == account_id:
                 self.tokens.pop(tok, None)
@@ -328,6 +378,17 @@ class Database:
         the very next chat request even if it lands on a different one."""
         self._reload_from_firestore()
         return self.children.get(child_id)
+
+    def refresh_public(self) -> None:
+        """2026-09-10 — the same cross-instance staleness class as
+        refresh_account/refresh_child above, but for routers/public.py's
+        no-login endpoints, which never went through either of those (no
+        token to resolve at all). Real symptom: an admin approves a new
+        review, but the live landing page — served by a different, already-
+        warm instance that has no reason to ever reload on its own — keeps
+        showing the old, review-less state indefinitely. Same fix, applied
+        here explicitly since there's no auth flow to piggyback on."""
+        self._reload_from_firestore()
 
     # ---------- UV06 email verification ----------
 
@@ -402,10 +463,46 @@ class Database:
             if record["status"] == "pending" and record["scheduled_for"] <= now:
                 child_id = record["child_id"]
                 if child_id in self.children:  # child may have been deleted separately (PA09) already
-                    self.activity[child_id] = []
-                    self.favourites[child_id] = []
-                    self.feedback[child_id] = []
+                    # Used to only reset activity/favourites/feedback —
+                    # chat_sessions and content_overrides survived a PA30
+                    # "erase my child's data" request untouched, which
+                    # undersells what this compliance-facing action
+                    # actually claims to do. Same _clear_child_data helper
+                    # delete_child (PA09) uses, full=False since this
+                    # request explicitly keeps the profile itself alive.
+                    self._clear_child_data(child_id, full=False)
                 record["status"] = "completed"
+
+    # ---------- UV04 reviews ----------
+
+    def add_review(self, parent_id: str, parent_name: str, rating: int, text: str,
+                    status: str, rejection_reason: str | None = None,
+                    ai_recommend: bool | None = None, ai_reason: str | None = None) -> dict:
+        review = {
+            "id": _new_id(), "parent_id": parent_id, "parent_name": parent_name,
+            "rating": rating, "text": text, "status": status,
+            "created_at": time.time(), "rejection_reason": rejection_reason,
+            "ai_recommend": ai_recommend, "ai_reason": ai_reason,
+        }
+        self.reviews[review["id"]] = review
+        return review
+
+    def review_by_parent(self, parent_id: str) -> dict | None:
+        """A parent's own latest review (any status) — their own status
+        view, not the public listing. A rejected review doesn't block a
+        fresh submission; this just always reports the most recent one."""
+        mine = [r for r in self.reviews.values() if r["parent_id"] == parent_id]
+        return max(mine, key=lambda r: r["created_at"]) if mine else None
+
+    def public_reviews(self, limit: int = 10) -> list[dict]:
+        """UV04 — only ever reviews an admin has explicitly approved (see
+        ReviewCreate's docstring for the AI-screen-then-admin-approve gate
+        this already went through before landing here). "Best" first:
+        highest star rating, most recent as the tiebreak — capped at 10,
+        same ceiling the landing page's own request asked for."""
+        approved = [r for r in self.reviews.values() if r["status"] == "approved"]
+        ordered = sorted(approved, key=lambda r: (-r["rating"], -r["created_at"]))
+        return ordered[:max(1, min(limit, 10))]
 
     # ---------- PA20/22 notifications ----------
 
@@ -665,6 +762,27 @@ class Database:
     def set_embedding(self, content_id: str, embedding: list[float] | None) -> None:
         if content_id in self.content:
             self.content[content_id]["embedding"] = embedding
+
+    def remove_content(self, content_id: str) -> None:
+        """CM05 — real gap found 2026-09-11 (same pass as delete_child/
+        delete_account's review gap): removing a catalogue item used to
+        just `db.content.pop(content_id, None)` and stop there, leaving
+        every child's `favourites` entry for it behind. Both
+        chat.py's/oversight.py's favourites-listing endpoints already
+        guard with `if item:` so a removed item's favourite just silently
+        stops rendering — no crash — but `save_favourite`'s free-tier cap
+        (`len(favs) >= FREE_FAVOURITES_LIMIT`) counts the *raw* list
+        length, phantom entries included. A free-tier child who favourited
+        5 items, one of which later got removed from the catalogue, was
+        permanently stuck reporting "5 favourites used" while only 4 ever
+        showed — with no favourite visibly there to unsave and free the
+        slot back up. Also clears any PA18 content_overrides pointing at
+        this item, which are otherwise just inert clutter, not a bug."""
+        self.content.pop(content_id, None)
+        for child_id, favs in self.favourites.items():
+            self.favourites[child_id] = [f for f in favs if f["content_id"] != content_id]
+        for overrides in self.content_overrides.values():
+            overrides.pop(content_id, None)
 
     def _seed(self):
         """First-run bootstrap only — runs once, when there's no saved
