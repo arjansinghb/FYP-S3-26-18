@@ -3,6 +3,8 @@
 Reports are created by parents (PA16). A moderator can dismiss a report, or
 resolve it by removing the content from the catalogue (sets it to 'rejected').
 """
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..deps import require_role
@@ -18,9 +20,11 @@ def _report_out(r: dict) -> ReportOut:
         id=r["id"],
         content_id=r["content_id"],
         content_title=content["title"] if content else "(removed content)",
+        content_type=content["type"] if content else None,
         reason=r["reason"],
         status=r["status"],
         ts=r["ts"],
+        resolved_at=r.get("resolved_at"),
     )
 
 
@@ -35,6 +39,7 @@ def resolve_report(report_id: str, body: ResolveReport, mod: dict = Depends(requ
     if not report:
         raise HTTPException(404, "Report not found")
     report["status"] = "resolved"
+    report["resolved_at"] = time.time()
     if body.action == "remove":
         content = db.content.get(report["content_id"])
         if content:

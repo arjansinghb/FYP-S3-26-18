@@ -87,6 +87,9 @@ export async function adminApproveReview(id) {
 export async function adminRejectReview(id) {
   return request(`/api/admin/reviews/${id}/reject`, { method: 'POST', auth: true })
 }
+export async function adminDeleteReview(id) {
+  return request(`/api/admin/reviews/${id}`, { method: 'DELETE', auth: true })
+}
 
 // ----- child chat -----
 // Returns the full result { reply, recommendations }. If a child is logged in,

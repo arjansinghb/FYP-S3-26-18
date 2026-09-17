@@ -20,6 +20,9 @@ import {
   AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
   PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
+import { useToast, ToastHost } from '../components/Toast'
+import Select from '../components/Select'
+import { firstMissingField } from '../formValidation'
 import './parent.css'
 
 // A book/video type icon in a tinted chip — same "icon-led title" pattern
@@ -76,6 +79,10 @@ function AuthPanel({ onAuthed }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField(mode === 'signup'
+      ? [[name, 'Your name'], [email, 'Email'], [password, 'Password']]
+      : [[email, 'Email'], [password, 'Password']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       const acc = mode === 'login'
@@ -95,17 +102,17 @@ function AuthPanel({ onAuthed }) {
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
       <h1>Parent {mode === 'login' ? 'Sign In' : 'Sign Up'}</h1>
-      <form onSubmit={submit} className="card">
+      <form onSubmit={submit} className="card" noValidate>
         {mode === 'signup' && (
           <label>Your name
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
+            <input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
         )}
         <label>Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label>Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} />
         </label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
@@ -137,6 +144,8 @@ function ForgotPassword({ onBack }) {
 
   async function request(e) {
     e.preventDefault()
+    const missing = firstMissingField([[email, 'Email']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       const res = await requestPasswordReset(email)
@@ -151,6 +160,8 @@ function ForgotPassword({ onBack }) {
 
   async function confirm(e) {
     e.preventDefault()
+    const missing = firstMissingField([[token, 'Reset token'], [newPassword, 'New password']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       await confirmPasswordReset(token, newPassword)
@@ -167,22 +178,22 @@ function ForgotPassword({ onBack }) {
       <button className="linkbtn" onClick={onBack}>← Back to sign in</button>
       <h1>Reset Password</h1>
       {step === 'request' && (
-        <form onSubmit={request} className="card">
+        <form onSubmit={request} className="card" noValidate>
           <label>Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Send reset link'}</button>
         </form>
       )}
       {step === 'confirm' && (
-        <form onSubmit={confirm} className="card">
+        <form onSubmit={confirm} className="card" noValidate>
           {note && <p className="muted"><AlertIcon width={14} height={14} /> {note}</p>}
           <label>Reset token
-            <input value={token} onChange={(e) => setToken(e.target.value)} required />
+            <input value={token} onChange={(e) => setToken(e.target.value)} />
           </label>
           <label>New password
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={6} />
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} minLength={6} />
           </label>
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Set new password'}</button>
@@ -209,6 +220,28 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
     try { setChildren(await listChildren()) } catch (err) { setError(err.message) }
   }
   useEffect(() => { reload() }, [])
+
+  // Landing page's pricing buttons send an already-logged-in parent to
+  // "/parent#subscription" instead of the plain dashboard root. The
+  // Subscription card loads its own data async (see SubscriptionPanel)
+  // and only renders once that's back, so the target element doesn't
+  // necessarily exist yet on the first paint — poll briefly rather than
+  // scrolling too early and missing it entirely.
+  useEffect(() => {
+    if (window.location.hash !== '#subscription') return
+    let attempts = 0
+    const id = setInterval(() => {
+      const el = document.getElementById('subscription')
+      attempts += 1
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        clearInterval(id)
+      } else if (attempts > 20) {
+        clearInterval(id) // gave up after ~2s — never loaded, nothing to scroll to
+      }
+    }, 100)
+    return () => clearInterval(id)
+  }, [])
 
   const visibleChildren = activeChildId === 'all' ? children : children.filter((c) => c.id === activeChildId)
 
@@ -280,7 +313,7 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 // safety, then only public once an admin explicitly approves it.
 function ReviewPanel() {
   const [review, setReview] = useState(undefined) // undefined = loading, null = none yet
-  const [rating, setRating] = useState(5)
+  const [rating, setRating] = useState(0) // 0 = nothing picked yet — a parent should choose, not inherit a default
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -301,13 +334,14 @@ function ReviewPanel() {
 
   async function submit(e) {
     e.preventDefault()
+    if (!rating) { setError('Pick a star rating first.'); return }
     if (!text.trim()) { setError('Write a few words first.'); return }
     setBusy(true); setError('')
     try {
       const saved = await submitReview(rating, text.trim())
       setReview(saved)
       setText('')
-      setRating(5)
+      setRating(0)
       setJustSubmitted(true)
     } catch (err) {
       setError(err.message)
@@ -397,6 +431,8 @@ function VerifyBanner({ account, onAccountUpdated }) {
 
   async function verifyNow(e) {
     e.preventDefault()
+    const missing = firstMissingField([[code, 'Code from email']])
+    if (missing) { setError(missing); return }
     setBusy(true); setError('')
     try {
       const updated = await confirmVerification(code)
@@ -419,11 +455,11 @@ function VerifyBanner({ account, onAccountUpdated }) {
           : `We'll send a verification code to ${account.email}.`}
       </p>
       {error && <p className="error">{error}</p>}
-      <form onSubmit={verifyNow} className="row">
+      <form onSubmit={verifyNow} className="row" noValidate>
         {!haveCode && <button type="button" onClick={sendCode} disabled={busy}>{busy ? 'Sending…' : 'Send verification code'}</button>}
         {haveCode && (
           <>
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code from email" required style={{ maxWidth: 160 }} />
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code from email" style={{ maxWidth: 160 }} />
             <button type="submit" disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
             <button type="button" className="linkbtn" onClick={sendCode} disabled={busy}>Resend code</button>
           </>
@@ -535,17 +571,22 @@ function NotificationSettings() {
       <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
       <label className="toggle">
         <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
-        In-app — shows in the bell icon above
+        <span>In-app <span className="muted">— shows in the bell icon above</span></span>
       </label>
       <label className="toggle">
         <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
-        Email
+        <span>Email <span className="muted">— sent to your account email</span></span>
       </label>
       <label className="toggle">
         <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
-        Push
+        <span>Push <span className="muted">— a notification on this device, even with the tab closed</span></span>
       </label>
-      <p className="muted">Email and push are saved as a preference but aren't wired to a real delivery service in this prototype yet — only in-app notifications actually appear right now.</p>
+      {/* Was framed as a "prototype" caveat ("aren't wired to a real
+          delivery service yet") — honest to the code, but reads oddly to
+          a parent, who isn't the audience for implementation status.
+          Same underlying honesty (nothing here is silently overpromised),
+          phrased as a normal product roadmap note instead. */}
+      <p className="muted">Email and push are coming soon — everything shows up in-app for now.</p>
       {error && <p className="error">{error}</p>}
     </section>
   )
@@ -560,9 +601,12 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   async function save(e) {
     e.preventDefault()
+    const missing = firstMissingField([[name, 'Name'], [email, 'Email']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     const payload = { name, email }
     if (password) payload.password = password
@@ -579,7 +623,6 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
   }
 
   async function remove() {
-    if (!confirm('Delete your account? This permanently removes your profile and ALL your child profiles and their data. This cannot be undone.')) return
     await deleteAccount()
     onDeleted()
   }
@@ -601,19 +644,32 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
             </span>
           </p>
           <p className="muted">Plan: <b>{account.tier === 'premium' ? 'Premium' : 'Free'}</b></p>
-          <div className="row">
-            <button className="danger small" onClick={remove}><TrashIcon width={15} height={15} /> Delete account</button>
-          </div>
+          {confirmingDelete ? (
+            <div className="row inline-confirm">
+              <span>Delete your account? This removes your profile and ALL child profiles and their data — permanently.</span>
+              <button className="danger small" onClick={remove}>Yes, delete everything</button>
+              <button className="ghost small" onClick={() => setConfirmingDelete(false)}>Cancel</button>
+            </div>
+          ) : (
+            <div className="row">
+              <button className="danger small" onClick={() => setConfirmingDelete(true)}><TrashIcon width={15} height={15} /> Delete account</button>
+            </div>
+          )}
         </>
       ) : (
-        <form onSubmit={save}>
+        // Was a bare <form>, no className at all — the one edit form in this
+        // whole dashboard with no explicit layout of its own, so its fields
+        // just fell back to plain unstyled block stacking instead of the
+        // tidy flex-column-with-a-real-gap every other form here already
+        // gets (see .review-form). Same treatment applied here now.
+        <form className="account-edit-form" onSubmit={save} noValidate>
           <label>Name
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
+            <input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label>Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
-          <label>New password (leave blank to keep current)
+          <label>New password<span className="muted"> (leave blank to keep current)</span>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} />
           </label>
           {error && <p className="error">{error}</p>}
@@ -658,6 +714,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   const [newCardLast4, setNewCardLast4] = useState('')
   const [cardBusy, setCardBusy] = useState(false)
   const [cardError, setCardError] = useState('')
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
 
   async function reload() {
     try { setStatus(await getSubscriptionStatus()) } catch { /* ignore */ }
@@ -672,6 +729,10 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
 
   async function subscribe(e, tier) {
     e.preventDefault()
+    if (!status?.payment_method) {
+      const missing = firstMissingField([[cardBrand, 'Card brand'], [cardLast4, 'Card last 4 digits']])
+      if (missing) { setError(missing); return }
+    }
     setError(''); setBusy(true)
     try {
       const payment_method = status?.payment_method || (cardLast4 ? { brand: cardBrand, last4: cardLast4 } : undefined)
@@ -687,9 +748,9 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   }
 
   async function cancel() {
-    if (!confirm(`Cancel your ${TIER_INFO[status.tier]?.label} subscription? It stays active until the end of the current billing period.`)) return
     const s = await cancelPremium()
     setStatus(s)
+    setConfirmingCancel(false)
   }
 
   async function resume() {
@@ -704,6 +765,8 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
 
   async function updateCard(e) {
     e.preventDefault()
+    const missing = firstMissingField([[newCardBrand, 'Card brand'], [newCardLast4, 'Card last 4 digits']])
+    if (missing) { setCardError(missing); return }
     setCardError(''); setCardBusy(true)
     try {
       const s = await updatePaymentMethod(newCardBrand, newCardLast4)
@@ -737,13 +800,16 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
           </p>
         )}
         {editingCard && (
-          <form onSubmit={updateCard}>
-            <label>Card brand
-              <input value={newCardBrand} onChange={(e) => setNewCardBrand(e.target.value)} required />
-            </label>
-            <label>Card last 4 digits (simulated — no real charge)
-              <input value={newCardLast4} onChange={(e) => setNewCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} required />
-            </label>
+          <form onSubmit={updateCard} noValidate>
+            <div className="field-row">
+              <label>Card brand
+                <input value={newCardBrand} onChange={(e) => setNewCardBrand(e.target.value)} />
+              </label>
+              <label>Card last 4 digits
+                <input value={newCardLast4} onChange={(e) => setNewCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} />
+              </label>
+            </div>
+            <p className="muted">Simulated billing — no real charge.</p>
             {cardError && <p className="error">{cardError}</p>}
             <div className="row">
               <button type="submit" disabled={cardBusy}>{cardBusy ? 'Saving…' : 'Save card'}</button>
@@ -761,10 +827,10 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
         {showUpgrade && upgradeTier === 'ultra' && tier === 'premium' && (
           <form onSubmit={(e) => subscribe(e, 'ultra')}>
             <label>Billing cycle
-              <select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
+              <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
                 <option value="monthly">Monthly — ${priceFor('ultra', 'monthly')?.toFixed(2)}</option>
                 <option value="annual">Annual — ${priceFor('ultra', 'annual')?.toFixed(2)}</option>
-              </select>
+              </Select>
             </label>
             {error && <p className="error">{error}</p>}
             <div className="row">
@@ -780,13 +846,25 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
               <div className="row"><button className="ghost" onClick={resume}>Resume subscription</button></div>
             </>
           )
-          : <div className="row"><button className="danger" onClick={cancel}>Cancel subscription</button></div>}
+          : confirmingCancel ? (
+            <div className="row inline-confirm">
+              <span>Cancel your {TIER_INFO[status.tier]?.label} subscription? Stays active until the end of the current billing period.</span>
+              <button className="danger small" onClick={cancel}>Yes, cancel</button>
+              <button className="ghost small" onClick={() => setConfirmingCancel(false)}>Never mind</button>
+            </div>
+          ) : (
+            <div className="row"><button className="danger" onClick={() => setConfirmingCancel(true)}>Cancel subscription</button></div>
+          )}
       </>
     )
   }
 
   return (
-    <section className="card">
+    // id lets the landing page's pricing buttons ("Get Premium plan" etc.)
+    // jump an already-logged-in parent straight here instead of dropping
+    // them at the top of the dashboard — see Dashboard's own scroll-to-
+    // hash effect and Home.jsx's plan-grid Links.
+    <section className="card" id="subscription">
       <div className="child-top">
         <h3>Subscription</h3>
         <span className={`badge ${status.tier === 'free' ? 'badge-pending' : 'badge-approved'}`}>{status.tier}</span>
@@ -803,25 +881,28 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
               </div>
             )
             : (
-              <form onSubmit={(e) => subscribe(e, upgradeTier)}>
+              <form onSubmit={(e) => subscribe(e, upgradeTier)} noValidate>
                 <label>Plan
-                  <select value={upgradeTier} onChange={(e) => setUpgradeTier(e.target.value)}>
+                  <Select value={upgradeTier} onChange={(e) => setUpgradeTier(e.target.value)}>
                     <option value="premium">Premium — {TIER_INFO.premium.desc}</option>
                     <option value="ultra">Ultra — {TIER_INFO.ultra.desc}</option>
-                  </select>
+                  </Select>
                 </label>
                 <label>Billing cycle
-                  <select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
+                  <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
                     <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
                     <option value="annual">Annual — ${priceFor(upgradeTier, 'annual')?.toFixed(2)}</option>
-                  </select>
+                  </Select>
                 </label>
-                <label>Card brand
-                  <input value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} />
-                </label>
-                <label>Card last 4 digits (simulated — no real charge)
-                  <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} required />
-                </label>
+                <div className="field-row">
+                  <label>Card brand
+                    <input value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} />
+                  </label>
+                  <label>Card last 4 digits
+                    <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} />
+                  </label>
+                </div>
+                <p className="muted">Simulated billing — no real charge.</p>
                 {error && <p className="error">{error}</p>}
                 <div className="row">
                   <button type="submit" disabled={busy}>{busy ? 'Processing…' : `Confirm ${TIER_INFO[upgradeTier].label} subscription`}</button>
@@ -884,10 +965,10 @@ function PrivacyPanel({ account }) {
       <h3>Data &amp; Privacy</h3>
       <p className="muted">Controls how long your child's activity data is kept, per PDPA.</p>
       <label>Retention preference
-        <select value={settings.retention_preference} disabled={busy} onChange={(e) => change(e.target.value)}>
+        <Select value={settings.retention_preference} disabled={busy} onChange={(e) => change(e.target.value)}>
           <option value="standard">Standard (default retention period)</option>
           <option value="minimal">Minimal (keep only what's needed right now)</option>
-        </select>
+        </Select>
       </label>
     </section>
   )
@@ -902,6 +983,8 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[password, 'Password']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       await giveConsent(password)
@@ -915,7 +998,7 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
   }
 
   return (
-    <form onSubmit={submit} className="card" style={{ background: 'var(--primary-100)' }}>
+    <form onSubmit={submit} className="card" style={{ background: 'var(--primary-100)' }} noValidate>
       <h3>Before you add a child…</h3>
       <p className="muted">
         Under PDPA, we need your verifiable consent before collecting any data about your child —
@@ -923,7 +1006,7 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
         the account holder and agree to this.
       </p>
       <label>Password
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </label>
       {error && <p className="error">{error}</p>}
       <button type="submit" disabled={busy}>{busy ? 'Confirming…' : 'I agree — continue'}</button>
@@ -941,6 +1024,8 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[name, "Child's name"]])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       // No pin field — the server generates a unique 6-digit linking
@@ -972,16 +1057,16 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   }
 
   return (
-    <form onSubmit={submit} className="card">
+    <form onSubmit={submit} className="card" noValidate>
       <h3>New child profile</h3>
       <label>Child's name
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <label>Age band
-        <select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
+        <Select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
           <option value="5-8">5–8</option>
           <option value="9-12">9–12</option>
-        </select>
+        </Select>
       </label>
       <label>Reading level (optional)
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
@@ -1063,6 +1148,16 @@ function ChildCard({ child, account, onChanged }) {
   // chat history finds a specific conversation directly instead of
   // scrolling the whole thing looking for it.
   const [activitySearch, setActivitySearch] = useState('')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingLoginId, setConfirmingLoginId] = useState(false)
+  const [confirmingPin, setConfirmingPin] = useState(false)
+  // PA16 report-content — was a native prompt() for the reason plus a
+  // native alert() on success; per-item id (not a bare boolean) since this
+  // card can list several favourites, each with its own Report button.
+  const [reportingId, setReportingId] = useState(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportBusy, setReportBusy] = useState(false)
+  const [toast, notify] = useToast()
 
   async function toggle(which) {
     if (view === which) { setView(null); return }
@@ -1087,17 +1182,24 @@ function ChildCard({ child, account, onChanged }) {
   }
 
   async function remove() {
-    if (!confirm(`Delete ${child.name}'s profile? This cannot be undone.`)) return
     await deleteChild(child.id)
     onChanged()
   }
 
-  async function report(item) {
-    const reason = prompt(`Why are you reporting "${item.title}"?`)
-    if (!reason) return
-    await reportContent(child.id, item.id, reason)
-    alert('Thanks — this has been reported to the moderators.')
-    if (view === 'favourites') toggle('favourites')
+  async function submitReport(item) {
+    if (!reportReason.trim()) return
+    setReportBusy(true)
+    try {
+      await reportContent(child.id, item.id, reportReason.trim())
+      notify?.(`“${item.title}” reported — a member of our team will take a look.`)
+      setReportingId(null)
+      setReportReason('')
+      if (view === 'favourites') toggle('favourites')
+    } catch (err) {
+      notify?.(err.message, 'danger')
+    } finally {
+      setReportBusy(false)
+    }
   }
 
   async function override(item, action) {
@@ -1123,14 +1225,14 @@ function ChildCard({ child, account, onChanged }) {
   }
 
   async function regeneratePin() {
-    if (!confirm(`Generate a new PIN for ${child.name}? The old one (${child.pin}) will stop working immediately.`)) return
     await regenerateChildPin(child.id)
+    setConfirmingPin(false)
     onChanged()
   }
 
   async function regenerateLoginId() {
-    if (!confirm(`Generate a new Login ID for ${child.name}? The old one (${child.login_id}) will stop working immediately.`)) return
     await regenerateChildLoginId(child.id)
+    setConfirmingLoginId(false)
     onChanged()
   }
 
@@ -1143,8 +1245,16 @@ function ChildCard({ child, account, onChanged }) {
           </h3>
           <p className="muted">Age {child.age_band}{child.reading_level ? ` · ${child.reading_level}` : ''}</p>
         </div>
-        <button className="ghost small" onClick={remove}>Delete</button>
+        {!confirmingDelete && <button className="ghost small" onClick={() => setConfirmingDelete(true)}>Delete</button>}
       </div>
+
+      {confirmingDelete && (
+        <div className="row inline-confirm">
+          <span>Delete {child.name}'s profile? This cannot be undone.</span>
+          <button className="danger small" onClick={remove}>Yes, delete</button>
+          <button className="ghost small" onClick={() => setConfirmingDelete(false)}>Cancel</button>
+        </div>
+      )}
 
       {child.locked && (
         <div className="card" style={{ background: 'var(--danger-100)', margin: '10px 0' }}>
@@ -1158,23 +1268,46 @@ function ChildCard({ child, account, onChanged }) {
         <div className="linking-row">
           <span className="linking-label">Login ID</span>
           <code className="code">{child.login_id}</code>
-          <button className="ghost small" onClick={regenerateLoginId}>Generate new</button>
+          {!confirmingLoginId && <button className="ghost small" onClick={() => setConfirmingLoginId(true)}>Generate new</button>}
         </div>
+        {confirmingLoginId && (
+          <div className="row inline-confirm">
+            <span>New Login ID? The old one ({child.login_id}) stops working immediately.</span>
+            <button className="danger small" onClick={regenerateLoginId}>Yes, generate new</button>
+            <button className="ghost small" onClick={() => setConfirmingLoginId(false)}>Cancel</button>
+          </div>
+        )}
         <div className="linking-row">
           <span className="linking-label">PIN</span>
           <code className="code">{child.pin}</code>
-          <button className="ghost small" onClick={regeneratePin}>Generate new</button>
+          {!confirmingPin && <button className="ghost small" onClick={() => setConfirmingPin(true)}>Generate new</button>}
         </div>
+        {confirmingPin && (
+          <div className="row inline-confirm">
+            <span>New PIN? The old one ({child.pin}) stops working immediately.</span>
+            <button className="danger small" onClick={regeneratePin}>Yes, generate new</button>
+            <button className="ghost small" onClick={() => setConfirmingPin(false)}>Cancel</button>
+          </div>
+        )}
       </div>
 
-      <div className="row">
-        <button className="small" onClick={() => toggle('activity')}>Activity</button>
-        <button className="small" onClick={() => toggle('favourites')}>Favourites</button>
-        <button className="small" onClick={() => toggle('reports')}>Reports</button>
-        {account.tier === 'premium' && <button className="small" onClick={() => toggle('insights')}>Insights</button>}
-        <button className="small ghost" onClick={() => toggle('edit')}>Edit</button>
-        <button className="small ghost" onClick={() => toggle('safety')}>Safety</button>
-        <button className="small ghost" onClick={() => toggle('privacy')}>Data</button>
+      {/* Was a plain .row of buttons split arbitrarily into "solid" (small)
+          and "outlined" (small ghost) — a styling accident, not a real
+          selection state: Activity/Favourites/Reports/Insights always
+          looked "on" and Edit/Safety/Data always looked "off" regardless
+          of which one `view` actually pointed at, so opening Edit showed
+          three unrelated buttons still lit up solid purple. Same .tabs/
+          .tab/.tab.active pattern already used everywhere else in this app
+          (Moderator/Admin/Reviews) — now the highlighted one is always
+          whichever panel is actually open below, nothing else. */}
+      <div className="tabs">
+        <button className={view === 'activity' ? 'tab active' : 'tab'} onClick={() => toggle('activity')}>Activity</button>
+        <button className={view === 'favourites' ? 'tab active' : 'tab'} onClick={() => toggle('favourites')}>Favourites</button>
+        <button className={view === 'reports' ? 'tab active' : 'tab'} onClick={() => toggle('reports')}>Reports</button>
+        {account.tier === 'premium' && <button className={view === 'insights' ? 'tab active' : 'tab'} onClick={() => toggle('insights')}>Insights</button>}
+        <button className={view === 'edit' ? 'tab active' : 'tab'} onClick={() => toggle('edit')}>Edit</button>
+        <button className={view === 'safety' ? 'tab active' : 'tab'} onClick={() => toggle('safety')}>Safety</button>
+        <button className={view === 'privacy' ? 'tab active' : 'tab'} onClick={() => toggle('privacy')}>Data</button>
       </div>
 
       {view === 'edit' && <EditChild child={child} onDone={() => { setView(null); onChanged() }} />}
@@ -1257,7 +1390,7 @@ function ChildCard({ child, account, onChanged }) {
           })()}
 
           {!loading && view === 'favourites' && data.map((f) => (
-            <div key={f.id} className="fav-item">
+            <div key={f.id} className={`fav-item ${reportingId === f.id ? 'fav-item--reporting' : ''}`}>
               <span className="fav-info">
                 <TypeIcon type={f.type} />
                 <span className="fav-text">
@@ -1265,27 +1398,66 @@ function ChildCard({ child, account, onChanged }) {
                   <span className="fav-type">{f.type === 'book' ? 'Book' : 'Video'}</span>
                 </span>
               </span>
-              <div className="row">
-                {f.type === 'book' && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
-                <button
-                  className={`ghost small ${overrides[f.id] === 'approve' ? 'on' : ''}`}
-                  onClick={() => override(f, overrides[f.id] === 'approve' ? undefined : 'approve')}
-                  title="Always allow this item for this child, even outside their age band"
-                ><CheckIcon width={14} height={14} /> Approve</button>
-                <button
-                  className={`ghost small ${overrides[f.id] === 'hide' ? 'on' : ''}`}
-                  onClick={() => override(f, overrides[f.id] === 'hide' ? undefined : 'hide')}
-                  title="Never recommend this item to this child"
-                ><LockIcon width={14} height={14} /> Block</button>
-                <button className="ghost small" onClick={() => report(f)}><FlagIcon width={14} height={14} /> Report</button>
-              </div>
+              {reportingId === f.id ? (
+                // .fav-item is a single flex ROW (title | buttons) — the
+                // report form used to sit in that same cramped slot next
+                // to the title, squeezing its input down to almost nothing.
+                // .fav-item--reporting drops the whole row to a column so
+                // this gets its own full-width line underneath instead.
+                <form
+                  className="row inline-confirm report-inline-form"
+                  onSubmit={(e) => { e.preventDefault(); submitReport(f) }}
+                >
+                  <input
+                    autoFocus
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    placeholder={`Why are you reporting "${f.title}"?`}
+                    aria-label={`Reason for reporting ${f.title}`}
+                  />
+                  <button type="submit" className="danger small" disabled={reportBusy || !reportReason.trim()}>
+                    {reportBusy ? 'Reporting…' : 'Submit report'}
+                  </button>
+                  <button type="button" className="ghost small" onClick={() => { setReportingId(null); setReportReason('') }}>Cancel</button>
+                </form>
+              ) : (
+                <div className="row">
+                  {f.type === 'book' && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
+                  <button
+                    className={`ghost small ${overrides[f.id] === 'approve' ? 'on' : ''}`}
+                    onClick={() => override(f, overrides[f.id] === 'approve' ? undefined : 'approve')}
+                    title="Always allow this item for this child, even outside their age band"
+                  ><CheckIcon width={14} height={14} /> Approve</button>
+                  <button
+                    className={`ghost small ${overrides[f.id] === 'hide' ? 'on' : ''}`}
+                    onClick={() => override(f, overrides[f.id] === 'hide' ? undefined : 'hide')}
+                    title="Never recommend this item to this child"
+                  ><LockIcon width={14} height={14} /> Block</button>
+                  <button className="ghost small" onClick={() => { setReportingId(f.id); setReportReason('') }}><FlagIcon width={14} height={14} /> Report</button>
+                </div>
+              )}
             </div>
           ))}
 
+          {/* PA17 — was a single bare line of "title — reason" plus a
+              status badge, no icon, no date. Same fav-item/fav-info/
+              fav-text shell the Favourites list already uses (icon chip +
+              title + subtitle), so a report reads as a real record —
+              what was flagged, why, when, and its current status — instead
+              of one plain sentence. */}
           {!loading && view === 'reports' && data.map((r) => (
             <div key={r.id} className="fav-item">
-              <span>{r.content_title} — {r.reason}</span>
-              <span className={`badge ${r.status === 'open' ? 'badge-pending' : 'badge-approved'}`}>{r.status}</span>
+              <span className="fav-info">
+                <span className="fav-icon fav-icon--flag"><FlagIcon width={16} height={16} /></span>
+                <span className="fav-text">
+                  <span className="fav-title">{r.content_title}</span>
+                  <span className="report-reason">{r.reason}</span>
+                </span>
+              </span>
+              <span className="report-meta">
+                <span className={`badge ${r.status === 'open' ? 'badge-pending' : 'badge-approved'}`}>{r.status}</span>
+                <span className="report-date">{new Date(r.ts * 1000).toLocaleDateString()}</span>
+              </span>
             </div>
           ))}
 
@@ -1311,6 +1483,7 @@ function ChildCard({ child, account, onChanged }) {
           ))}
         </div>
       )}
+      <ToastHost toast={toast} />
     </div>
   )
 }
@@ -1325,6 +1498,8 @@ function EditChild({ child, onDone }) {
 
   async function save(e) {
     e.preventDefault()
+    const missing = firstMissingField([[name, "Child's name"]])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     const payload = { name, age_band: ageBand, reading_level: readingLevel || null }
     try {
@@ -1338,15 +1513,20 @@ function EditChild({ child, onDone }) {
   }
 
   return (
-    <form className="panel" onSubmit={save}>
+    // .panel alone is a scroll-container class (max-height/overflow, built
+    // for the session-browser/favourites lists) — no flex or gap of its
+    // own, so this form's fields fell back to bare block stacking, same
+    // gap-less look the "My account" edit form had before. Reusing that
+    // same fix's class here instead of inventing a near-duplicate one.
+    <form className="panel account-edit-form" onSubmit={save} noValidate>
       <label>Name
-        <input value={name} onChange={(e) => setName(e.target.value)} required />
+        <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <label>Age band
-        <select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
+        <Select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
           <option value="5-8">5–8</option>
           <option value="9-12">9–12</option>
-        </select>
+        </Select>
       </label>
       <label>Reading level
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
@@ -1411,6 +1591,7 @@ function SafetySettings({ child, onDone }) {
 function ChildDataPrivacy({ child }) {
   const [requests, setRequests] = useState([])
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
 
   async function load() {
     try { setRequests(await listChildDataDeletions(child.id)) } catch { /* ignore */ }
@@ -1418,9 +1599,8 @@ function ChildDataPrivacy({ child }) {
   useEffect(() => { load() }, [])
 
   async function request() {
-    if (!confirm(`Request deletion of ${child.name}'s chat history and favourites? This is scheduled to take effect in 7 days — you can cancel any time before then.`)) return
     setBusy(true)
-    try { await requestChildDataDeletion(child.id); await load() } finally { setBusy(false) }
+    try { await requestChildDataDeletion(child.id); await load(); setConfirming(false) } finally { setBusy(false) }
   }
 
   async function cancelRequest(id) {
@@ -1438,8 +1618,14 @@ function ChildDataPrivacy({ child }) {
           <p className="muted"><ClockIcon width={14} height={14} /> Deletion scheduled for {new Date(pending.scheduled_for * 1000).toLocaleDateString()}.</p>
           <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
         </>
+      ) : confirming ? (
+        <div className="row inline-confirm">
+          <span>Delete {child.name}'s chat history and favourites? Scheduled for 7 days out — cancellable any time before then.</span>
+          <button className="danger small" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Yes, request deletion'}</button>
+          <button className="ghost small" onClick={() => setConfirming(false)}>Cancel</button>
+        </div>
       ) : (
-        <div className="row"><button className="danger" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Delete child data'}</button></div>
+        <div className="row"><button className="danger" onClick={() => setConfirming(true)}>Delete child data</button></div>
       )}
       {requests.filter((r) => r.status !== 'pending').length > 0 && (
         <>

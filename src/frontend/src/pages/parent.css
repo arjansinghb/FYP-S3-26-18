@@ -155,6 +155,74 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-100); }
 textarea { resize: vertical; min-height: 80px; line-height: var(--leading-body); }
 
+/* ---------- components/Select.jsx — every dropdown in the app used a
+   plain native <select>: a fine-looking closed pill, but its OPEN option
+   list is native OS/browser chrome CSS can't touch at all ("kalo kek gini
+   tu terasa biasa aja" — flagged directly against that exact screenshot).
+   This is the component's own styling, applied everywhere a <select> used
+   to be, not just one dropdown. ---------- */
+.select { position: relative; display: inline-block; }
+.select-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  width: 100%; min-width: 140px;
+  font: inherit; font-size: var(--text-base); font-weight: 400; text-align: left;
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+/* Same specificity bug as .tabs .tab:hover and .linkbtn:hover before it —
+   .select-trigger IS a <button>, and the generic button:hover:not(:disabled)
+   rule's `background: color-mix(...primary-700...)` beats a hover rule
+   here that only redeclared border-color: (0,2,1) still wins over (0,1,0)
+   on the background property specifically, since nothing here was
+   overriding it. Dark purple fill + this trigger's own dark --ink text =
+   exactly the "pas di-hover teksnya ga keliatan" bug, reported directly
+   against this dropdown. background/color now explicit in every state
+   rule below so nothing has a property left for the global rule to win. */
+.select-trigger:hover:not(:disabled) { border-color: var(--primary-border); background: var(--surface); color: var(--ink); }
+.select-trigger:focus-visible { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-100); outline: none; background: var(--surface); color: var(--ink); }
+.select--open .select-trigger { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-100); background: var(--surface); color: var(--ink); }
+.select--disabled .select-trigger { opacity: 0.55; cursor: default; }
+.select-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ChevronIcon only draws 'left'/'right' — rotated 90deg to point down at
+   rest, -90deg (pointing up) once open, rather than a second icon variant. */
+.select-chevron { flex-shrink: 0; color: var(--muted); transform: rotate(90deg); transition: transform 0.15s ease; }
+.select--open .select-chevron { transform: rotate(-90deg); }
+
+.select-list {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 40;
+  margin: 0; padding: var(--space-1);
+  list-style: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 16%, transparent);
+  max-height: 260px; overflow-y: auto;
+  animation: select-pop 0.12s ease-out;
+}
+@keyframes select-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.select-option {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  color: var(--text); font-size: var(--text-base); cursor: pointer;
+}
+.select-option svg { color: var(--primary-700); flex-shrink: 0; }
+.select-option--active { background: var(--primary-100); color: var(--ink); }
+.select-option--selected { font-weight: 700; color: var(--ink); }
+.select-option--disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .select-list { animation: none; }
+  .select-chevron { transition: none; }
+}
+
+/* Two form fields side by side (Card brand / Card last 4 digits) instead
+   of stacked full-width — those two only make sense read together. */
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+@media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
+
 button {
   font: inherit;
   font-size: var(--text-base);
@@ -166,6 +234,22 @@ button {
   color: var(--on-primary);
   cursor: pointer;
   transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+  /* Every icon+text button (<Icon/> Label) relied on default inline
+     baseline alignment — an SVG's bottom edge sits ON the text baseline,
+     which reads as "icon floating a bit above the text" rather than
+     vertically centred against it, most visible on a tall glyph like the
+     trash can. Flex + center fixes every such button at once instead of
+     patching this one case. */
+  display: inline-flex;
+  align-items: center;
+  /* Missing justify-content left every button that stretches wider than
+     its own content (any full-width submit button, and child.css's
+     .big-btn most visibly — flagged directly: "Let's go!" sitting pinned
+     to the left edge of a near-screen-width pill) with its label/icon
+     pinned to flex-start instead of centred, the free space silently
+     landing on the right. Buttons that shrink-wrap to their content
+     (most icon+label buttons elsewhere) are unaffected either way. */
+  justify-content: center;
 }
 button:hover:not(:disabled) { background: color-mix(in srgb, var(--primary-700) 88%, black); }
 button:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
@@ -235,29 +319,102 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
 }
 @media (prefers-reduced-motion: reduce) { .tab-panel { animation: none; } }
 
-/* stat tiles (admin overview) */
+/* stat tiles (admin + moderator overview) */
 .stat-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-3); margin: var(--space-3) 0;
 }
 .stat {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); text-align: center;
   transition: border-color 0.15s, transform 0.12s;
+  /* Some tiles (Moderator Overview) are real <button>s so they're
+     keyboard-operable jump links, not just numbers — explicit
+     flex-column here overrides the global `button { display: inline-flex }`
+     rule's row direction/default font, so a clickable tile stacks its
+     icon/number/label exactly like the plain (non-button) admin tiles
+     always have, position:relative anchors .stat-goto below. */
+  display: flex; flex-direction: column; align-items: center; position: relative;
+  font: inherit; width: 100%;
 }
 .stat:hover { border-color: var(--primary-border); transform: translateY(-2px); }
+.stat--clickable { cursor: pointer; }
+/* Same cascade fight as .select-trigger/.plan-card before it — a <button>
+   picks up the global button:hover fill unless this beats its specificity
+   on every property that matters. */
+.stat--clickable:hover:not(:disabled) { background: var(--surface); border-color: var(--primary-border); }
+.stat-goto {
+  position: absolute; top: var(--space-2); right: var(--space-2); color: var(--muted);
+  opacity: 0; transform: translateX(-3px); transition: opacity 0.15s, transform 0.15s;
+}
+.stat--clickable:hover .stat-goto, .stat--clickable:focus-visible .stat-goto { opacity: 1; transform: translateX(0); }
 .stat-icon {
   width: 32px; height: 32px; margin: 0 auto var(--space-2);
   border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
   background: var(--primary-100); color: var(--primary-700);
 }
 .stat-num { font-size: var(--text-2xl); font-weight: 800; color: var(--primary-700); }
-.stat-label { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-1); }
+.stat-label { font-size: var(--text-xs); font-weight: 400; color: var(--muted); margin-top: var(--space-1); }
 /* Only lights up once the number is actually non-zero (see AdminDashboard's
    `attention` flag) — a tile that's always tinted regardless of value
    would just be decoration, not a signal. */
 .stat--attention { border-color: var(--danger-100); }
 .stat--attention .stat-icon { background: var(--danger-100); color: var(--danger-700); }
 .stat--attention .stat-num { color: var(--danger-700); }
-.stat--attention:hover { border-color: var(--danger-700); }
+.stat--attention:hover, .stat--attention.stat--clickable:hover:not(:disabled) { border-color: var(--danger-700); }
+
+/* Per-tile identity colour (System health / Moderator Overview) — one
+   generic rule driven by a `--tone-700`/`--tone-100` pair set inline per
+   tile (see the TILE_TONES map in AdminDashboard.jsx/ModeratorDashboard.jsx)
+   instead of one CSS class per colour. Unlike .stat--attention above, this
+   is always on — it's an identity marker, not a "something's wrong" flag. */
+.stat--tone { border-color: color-mix(in srgb, var(--tone-700) 22%, var(--border)); }
+.stat--tone .stat-icon { background: var(--tone-100); color: var(--tone-700); }
+.stat--tone .stat-num { color: var(--tone-700); }
+.stat--tone:hover, .stat--tone.stat--clickable:hover:not(:disabled) { border-color: var(--tone-700); }
+
+/* Moderator Overview's books/videos composition bar — turns two separate
+   tile numbers into one glanceable ratio instead of two more isolated
+   digits (flagged directly: the overview "keliatan simple bgt" as bare
+   stat tiles alone). */
+.stat-split { margin: var(--space-4) 0; }
+.stat-split-label {
+  display: flex; justify-content: space-between; font-size: var(--text-sm); font-weight: 600;
+  color: var(--text); margin-bottom: var(--space-2);
+}
+.stat-split-label span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.stat-split-bar {
+  height: 10px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--primary-700) 16%, var(--bg));
+  overflow: hidden;
+}
+.stat-split-fill {
+  height: 100%; background: var(--primary-700); border-radius: var(--radius-pill);
+  transition: width 0.4s ease;
+}
+@media (prefers-reduced-motion: reduce) { .stat-split-fill { transition: none; } }
+/* Age-band bar sits right under the books/videos one in the same card —
+   a lighter shade keeps the two readable as separate bars at a glance
+   instead of looking like one repeated element. */
+.stat-split-bar--alt { background: color-mix(in srgb, var(--primary-500) 16%, var(--bg)); }
+.stat-split-fill--alt { background: var(--primary-500); }
+
+/* Moderator Overview's approval-rate ring — the one non-bar, non-tile
+   shape on the page (flagged directly: too much of it read as "just
+   numbers in boxes"). Plain stroke-dasharray circle, text centred over it
+   with absolute positioning since SVG has no native centred-label text
+   wrap for a ring like this. */
+.approval-row { display: flex; align-items: center; gap: var(--space-4); margin: var(--space-2) 0 var(--space-4); }
+.approval-ring { position: relative; flex-shrink: 0; width: 64px; height: 64px; }
+.approval-ring svg circle { transition: stroke-dashoffset 0.5s ease; }
+@media (prefers-reduced-motion: reduce) { .approval-ring svg circle { transition: none; } }
+.approval-ring-pct {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-sm); font-weight: 800; color: var(--primary-700);
+}
+.approval-row-headline { font-size: var(--text-lg); font-weight: 800; color: var(--ink); }
+
+/* Moderator Overview's top-genres chip cloud — reuses .chip/.chip-row
+   (already the catalogue's own genre-tag styling) so this reads as more
+   of that same tagged metadata, not a new, unrelated decoration. */
+.genre-cloud { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-2); }
 
 /* status badges — pending stays neutral (no verdict yet); approved/rejected
    get the two new semantic tokens, each with exactly one job. */
@@ -300,6 +457,45 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
 }
 .ai-note-confidence { opacity: 0.75; font-weight: 600; }
 
+/* ---------- ConfirmDialog.jsx — a themed stand-in for window.confirm(),
+   used anywhere an admin/moderator action is destructive or hard to
+   reverse (delete a review, unpublish one, etc.). Reuses .card's own
+   surface/radius/shadow language rather than inventing a second visual
+   system for "this is a dialog now". ---------- */
+.confirm-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: color-mix(in srgb, var(--ink) 50%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-5);
+  animation: confirm-fade 0.15s ease-out;
+}
+.confirm-dialog {
+  width: 100%; max-width: 420px;
+  background: var(--surface); border-radius: var(--radius-lg);
+  box-shadow: 0 24px 56px color-mix(in srgb, var(--ink) 28%, transparent);
+  padding: var(--space-6);
+  display: flex; flex-direction: column; gap: var(--space-4);
+  animation: confirm-pop 0.16s ease-out;
+}
+.confirm-dialog h3 { margin: 0 0 var(--space-1); }
+.confirm-dialog p { margin: 0; color: var(--text); }
+.confirm-icon {
+  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.confirm-icon--danger { background: var(--danger-100); color: var(--danger-700); }
+.confirm-icon--primary { background: var(--primary-100); color: var(--primary-700); }
+/* PromptDialog's <input> — the base `input` rule has no width of its own
+   (fine inside a form's natural block width), but .confirm-dialog is a
+   flex column, where a child's width defaults to its content instead. */
+.confirm-dialog input { width: 100%; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
+@keyframes confirm-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes confirm-pop { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .confirm-overlay, .confirm-dialog { animation: none; }
+}
+
 /* A card mid-approve/reject/remove fades and slides out rather than just
    vanishing the instant the list refetches — see .card-leaving usage in
    ModeratorDashboard's Submissions/Reports. Reuses .card's own transition
@@ -315,7 +511,24 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
   background: var(--danger-100); border-radius: var(--radius-sm);
   padding: var(--space-3); align-items: center;
 }
-.inline-confirm span { color: var(--danger-700); font-weight: 600; flex: 1 1 auto; }
+/* flex-basis 100% forces the message onto its own line inside the wrapping
+   .row — without it, a long message only grows to fill leftover space on
+   line 1 (flex: 1 1 auto), so the two buttons split unevenly across lines
+   depending on how much room happens to be left over (e.g. "Yes, cancel"
+   landing beside the text while "Never mind" alone wraps down) instead of
+   staying together as a pair below the message, flagged directly against
+   the subscription-cancel confirm. */
+.inline-confirm span { color: var(--danger-700); font-weight: 600; flex: 1 1 100%; }
+/* PA16 report — the one inline-confirm variant that needs an actual text
+   input (the report reason) instead of just a yes/no message, so the
+   input takes the same stretch role .inline-confirm span normally does. */
+.report-inline-form input { flex: 1 1 220px; }
+/* .fav-item is normally one flex row (title | action buttons); while
+   reporting, it drops to a column so the report form gets its own
+   full-width line below the title instead of squeezing into whatever
+   horizontal space the button row used to occupy. */
+.fav-item--reporting { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+.fav-item--reporting .report-inline-form { width: 100%; }
 
 /* ---------- toast — the one shared action-feedback surface for the
    moderator console (approve/reject/import/save/remove/resolve). Fixed,
@@ -535,6 +748,34 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
   font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
 }
 
+/* ---------- PA17 report-status list — reuses .fav-info/.fav-text/
+   .fav-title above, adds its own reason/date treatment (a report's reason
+   is free text, not a short type label, so it stays normal-case rather
+   than .fav-type's uppercase). ---------- */
+.fav-icon--flag { background: var(--danger-100); color: var(--danger-700); }
+/* Moderator Overview's "Recent activity" feed (approved events) — reuses
+   this same icon-chip language, just with the success tint the rest of
+   the app already uses for an "approved" verdict (see .badge-approved). */
+.fav-icon--success { background: var(--success-100); color: var(--success-700); }
+.report-reason {
+  font-size: var(--text-xs); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 32ch;
+}
+.report-meta { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); flex-shrink: 0; }
+.report-date { font-size: var(--text-xs); color: var(--muted); }
+
+/* Moderator Overview's "Recent activity" feed — flagged directly: the
+   shared .fav-title truncation (max-width: 32ch + ellipsis, built for a
+   short favourite/report title) was cutting a full activity sentence
+   ("Resolved report on \"Sample: Ocean Ex…") off mid-word with no way to
+   read the rest. A log line reads in full or it isn't a log — wraps onto
+   a second line instead of hiding text, and .activity-time gets its own
+   exact date/time (see logTime() in ModeratorDashboard.jsx) rather than
+   inheriting .report-date's usual relative-time role. */
+.activity-item { align-items: flex-start; }
+.activity-title { white-space: normal; overflow: visible; text-overflow: clip; max-width: none; }
+.activity-time { white-space: nowrap; flex-shrink: 0; margin-left: var(--space-3); padding-top: 2px; }
+
 /* ---------- PA20 notification bell — was a plain "🔔 (1)" ghost button
    with an inline-styled dropdown (every rule below used to be a `style={}`
    prop, borrowed .activity-item/.said-child from the transcript view) —
@@ -655,6 +896,14 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
    star row whose spacing fought its own .ghost.small button class. Real
    classes, consistent with the rest of the form language on this page. */
 .review-form { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* "My account" edit mode — was a bare <form> with no layout class at all,
+   the one edit form in the dashboard that never got this treatment (every
+   other one sits inside a .card or has its own flex-column rule already).
+   Same gap scale as .review-form for a consistent vertical rhythm across
+   every form in this app, instead of relying on whatever the browser's
+   own default block spacing happens to produce. */
+.account-edit-form { display: flex; flex-direction: column; gap: var(--space-4); }
 .review-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .review-field-label { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
 .review-rejected-note {

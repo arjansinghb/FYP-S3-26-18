@@ -25,6 +25,13 @@ def _user_out(a: dict) -> dict:
     return {
         "id": a["id"], "email": a["email"], "name": a["name"], "role": a["role"],
         "verified": a["verified"], "suspended": a.get("suspended", False),
+        # Admin Overview's "Recent activity" feed — see suspend_user/
+        # unsuspend_user below, same "wasn't tracked at all before" gap
+        # this session already closed for the Moderator console. Both
+        # timestamps are kept (never cleared) so a later unsuspend doesn't
+        # erase the earlier suspend's own place in the log.
+        "suspended_at": a.get("suspended_at"), "suspended_by": a.get("suspended_by"),
+        "unsuspended_at": a.get("unsuspended_at"), "unsuspended_by": a.get("unsuspended_by"),
     }
 
 
@@ -39,6 +46,11 @@ def stats(admin: dict = Depends(require_role("admin"))):
         "moderators": sum(1 for a in db.accounts.values() if a["role"] == "moderator"),
         "admins": sum(1 for a in db.accounts.values() if a["role"] == "admin"),
         "suspended": sum(1 for a in db.accounts.values() if a.get("suspended")),
+        # Admin Overview's "Account composition" card — subscription tier
+        # only ever applies to parent accounts (staff don't have a tier).
+        "tier_free": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier", "free") == "free"),
+        "tier_premium": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier") == "premium"),
+        "tier_ultra": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier") == "ultra"),
         "children": len(db.children),
         "content_total": len(content),
         "content_approved": sum(1 for c in content if c["status"] == "approved"),
@@ -97,6 +109,8 @@ def suspend_user(user_id: str, admin: dict = Depends(require_role("admin"))):
     if u["role"] == "admin":
         raise HTTPException(400, "Cannot suspend an admin account")
     u["suspended"] = True
+    u["suspended_at"] = time.time()
+    u["suspended_by"] = admin["name"]
     # revoke their active sessions
     for tok, entry in list(db.tokens.items()):
         if entry["kind"] == "account" and entry["id"] == user_id:
@@ -110,6 +124,8 @@ def unsuspend_user(user_id: str, admin: dict = Depends(require_role("admin"))):
     if not u:
         raise HTTPException(404, "User not found")
     u["suspended"] = False
+    u["unsuspended_at"] = time.time()
+    u["unsuspended_by"] = admin["name"]
     return _user_out(u)
 
 
@@ -146,6 +162,8 @@ def resolve_ticket(ticket_id: str, admin: dict = Depends(require_role("admin")))
     if not ticket:
         raise HTTPException(404, "Ticket not found")
     ticket["status"] = "resolved"
+    ticket["resolved_at"] = time.time()
+    ticket["resolved_by"] = admin["name"]
     return ticket
 
 
@@ -155,11 +173,13 @@ def resolve_ticket(ticket_id: str, admin: dict = Depends(require_role("admin")))
 # admin has explicitly approved it here, same "human still decides" shape
 # as CM06-08's catalogue moderation, applied to user-generated review text.
 
-def _review_out(r: dict) -> ReviewOut:
+def _review_out(r: dict, published_ids: set[str] | None = None) -> ReviewOut:
     return ReviewOut(
         id=r["id"], parent_name=r["parent_name"], rating=r["rating"], text=r["text"],
         status=r["status"], created_at=r["created_at"], rejection_reason=r.get("rejection_reason"),
+        reviewed_at=r.get("reviewed_at"), reviewed_by=r.get("reviewed_by"),
         ai_recommend=r.get("ai_recommend"), ai_reason=r.get("ai_reason"),
+        published=(r["id"] in published_ids) if published_ids is not None and r["status"] == "approved" else None,
     )
 
 
@@ -168,7 +188,23 @@ def list_reviews(status: str | None = None, admin: dict = Depends(require_role("
     items = db.reviews.values()
     if status:
         items = [r for r in items if r["status"] == status]
-    return [_review_out(r) for r in sorted(items, key=lambda r: r["created_at"], reverse=True)]
+    # Real gap this closes: "approved" only means it passed the human gate —
+    # public_reviews() then caps the landing page at the best 10, so an
+    # admin approving review #11 gets no signal it isn't actually live.
+    published_ids = {r["id"] for r in db.public_reviews(10)}
+    return [_review_out(r, published_ids) for r in sorted(items, key=lambda r: r["created_at"], reverse=True)]
+
+
+@router.delete("/reviews/{review_id}")
+def delete_review(review_id: str, admin: dict = Depends(require_role("admin"))):
+    """Permanent removal — distinct from reject (which keeps the review
+    visible in the Rejected tab with a reason). For junk/test content that
+    shouldn't be kept around at all, e.g. placeholder submissions or
+    QA fixtures left over from testing the sort/ranking logic."""
+    if review_id not in db.reviews:
+        raise HTTPException(404, "Review not found")
+    db.reviews.pop(review_id)
+    return {"ok": True}
 
 
 @router.post("/reviews/{review_id}/approve", response_model=ReviewOut)
@@ -178,6 +214,8 @@ def approve_review(review_id: str, admin: dict = Depends(require_role("admin")))
         raise HTTPException(404, "Review not found")
     review["status"] = "approved"
     review["rejection_reason"] = None
+    review["reviewed_at"] = time.time()
+    review["reviewed_by"] = admin["name"]
     return _review_out(review)
 
 
@@ -188,4 +226,6 @@ def reject_review(review_id: str, admin: dict = Depends(require_role("admin"))):
         raise HTTPException(404, "Review not found")
     review["status"] = "rejected"
     review["rejection_reason"] = "Not a fit for the public page."
+    review["reviewed_at"] = time.time()
+    review["reviewed_by"] = admin["name"]
     return _review_out(review)

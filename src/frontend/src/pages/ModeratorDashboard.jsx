@@ -6,13 +6,52 @@ import {
   listReports, resolveReport, searchBooks, searchVideos, importContent,
 } from '../api'
 import {
-  BookIcon, ChartIcon, CheckIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon, InboxIcon,
-  PlusIcon, SearchIcon, SparkleIcon, TrashIcon, VideoIcon,
+  BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
+  InboxIcon, PlusIcon, RefreshIcon, SearchIcon, SparkleIcon, TrashIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
+import Select from '../components/Select'
+import ApprovalRing from '../components/ApprovalRing'
+import { firstMissingField } from '../formValidation'
+import { timeAgo, logTime } from '../timeFormat'
+import { toneStyle } from '../statTones'
 import './parent.css'
 
 const AGE_BANDS = ['5-8', '9-12']
+
+// Turns raw catalogue/report records into a flat, time-sorted event list.
+// A manually-added entry is auto-approved in the same action (see
+// routers/content.py's add_entry) — created_at and reviewed_at land at
+// the same instant, so it gets ONE "Added" event, not "Imported" +
+// "Approved" back to back for a single click. An imported entry is a real
+// two-step workflow (search/import now, approve/reject later, often by a
+// different moderator) so it keeps both events, separately timestamped.
+// Items from before this feature shipped have no created_at at all —
+// left out entirely rather than shown with a fabricated "just now".
+function buildActivity(items, reports) {
+  const events = []
+  for (const item of items) {
+    const isManual = item.source === 'manual'
+    if (isManual && item.reviewed_at) {
+      events.push({ ts: item.reviewed_at, kind: 'added', item })
+    } else {
+      if (item.created_at) events.push({ ts: item.created_at, kind: 'imported', item })
+      if (item.reviewed_at) events.push({ ts: item.reviewed_at, kind: item.status, item })
+    }
+  }
+  for (const report of reports) {
+    if (report.resolved_at) events.push({ ts: report.resolved_at, kind: 'report_resolved', report })
+  }
+  return events.sort((a, b) => b.ts - a.ts).slice(0, 8)
+}
+
+const ACTIVITY_META = {
+  added: { icon: PlusIcon, tint: null, text: (e) => `Added "${e.item.title}" to the catalogue` },
+  imported: { icon: SearchIcon, tint: null, text: (e) => `Imported "${e.item.title}" for review` },
+  approved: { icon: CheckIcon, tint: 'success', text: (e) => `Approved "${e.item.title}"${e.item.reviewed_by ? ` — ${e.item.reviewed_by}` : ''}` },
+  rejected: { icon: CloseIcon, tint: 'flag', text: (e) => `Rejected "${e.item.title}"${e.item.reviewed_by ? ` — ${e.item.reviewed_by}` : ''}` },
+  report_resolved: { icon: FlagIcon, tint: 'flag', text: (e) => `Resolved report on "${e.report.content_title}"` },
+}
 
 export default function ModeratorDashboard() {
   const [account, setAccount] = useState(null)
@@ -37,6 +76,8 @@ function ModLogin({ onAuthed }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[email, 'Email'], [password, 'Password']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       const acc = await login(email, password)
@@ -53,9 +94,9 @@ function ModLogin({ onAuthed }) {
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
       <h1>Moderator Sign In</h1>
-      <form onSubmit={submit} className="card">
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+      <form onSubmit={submit} className="card" noValidate>
+        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
       </form>
@@ -120,7 +161,7 @@ function Tools({ account, onLogout }) {
       </div>
 
       <div className="tab-panel" key={tab}>
-        {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} />}
+        {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} onRefreshCounts={refreshCounts} />}
         {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'catalogue' && <Catalogue notify={notify} />}
         {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
@@ -131,68 +172,223 @@ function Tools({ account, onLogout }) {
   )
 }
 
+// A small circular progress ring — the one place on Overview that isn't a
+// bar or a number-in-a-box, flagged directly (the page read as "sepi" /
+// "kurang menarik" next to the other consoles) as needing more visual
+// variety, not just more content. Plain SVG stroke-dasharray trick, no
+// charting library for one ring.
 // A lightweight console home — mirrors AdminDashboard's Overview (same
-// .stat-grid tiles) so the moderator console reads as the same level of
-// tool, not a lesser cousin of it. Computed client-side from the same
-// listContent/listReports calls the other tabs already make (no new
-// backend endpoint needed) since there's no moderator-scoped /stats route.
-function Overview({ counts, onNavigate }) {
+// .stat-grid tiles + Refresh/updated-at pattern) so the moderator console
+// reads as the same level of tool, not a lesser cousin of it. Computed
+// client-side from the same listContent/listReports calls the other tabs
+// already make (no new backend endpoint needed) since there's no
+// moderator-scoped /stats route.
+//
+// Made more interactive (flagged directly: "keliatan simple bgt") beyond
+// that shared pattern in four ways: every tile that maps to an actual tab
+// is now a real button (keyboard-operable, not just decoration) that jumps
+// straight there; a manual Refresh re-runs the same counts/stats calls
+// on demand instead of only ever loading once on mount; a books/videos
+// composition bar turns two of the tiles' numbers into an actual
+// at-a-glance ratio instead of two more isolated digits; and a "Recent
+// activity" feed (below) turns the numbers into an actual timeline —
+// also directly closes the "no time log for imports" gap flagged
+// alongside the "too simple" request: content/report timestamps
+// (created_at/reviewed_at/resolved_at) weren't tracked by the backend at
+// all before this pass, so there was never any "when" to show.
+function Overview({ counts, onNavigate, onRefreshCounts }) {
   const [stats, setStats] = useState(null)
-  useEffect(() => {
-    listContent({}).then((items) => {
+  const [activity, setActivity] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [updatedAt, setUpdatedAt] = useState(null)
+
+  async function load() {
+    setRefreshing(true)
+    try {
+      const [items, reports] = await Promise.all([listContent({}), listReports(), onRefreshCounts()])
+      const approved = items.filter((i) => i.status === 'approved').length
+      const rejected = items.filter((i) => i.status === 'rejected').length
+      // Age-band + genre breakdowns — same "what does the live catalogue
+      // actually look like" question the books/videos bar already answers,
+      // just two more angles on it. Only counts approved (live) items —
+      // a pending/rejected item isn't part of the catalogue a child can
+      // actually be recommended yet, so it shouldn't skew what's meant to
+      // describe what's live right now.
+      const live = items.filter((i) => i.status === 'approved')
+      const ageBandCounts = { '5-8': 0, '9-12': 0 }
+      const genreCounts = {}
+      for (const item of live) {
+        for (const band of item.age_bands || []) {
+          if (band in ageBandCounts) ageBandCounts[band] += 1
+        }
+        for (const g of item.genres || []) {
+          genreCounts[g] = (genreCounts[g] || 0) + 1
+        }
+      }
+      const topGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
       setStats({
         total: items.length,
         books: items.filter((i) => i.type === 'book').length,
         videos: items.filter((i) => i.type === 'video').length,
-        approved: items.filter((i) => i.status === 'approved').length,
-        rejected: items.filter((i) => i.status === 'rejected').length,
+        approved,
+        rejected,
+        approvalRate: approved + rejected > 0 ? Math.round((approved / (approved + rejected)) * 100) : null,
+        ageBandCounts,
+        topGenres,
       })
-    })
-  }, [])
+      setActivity(buildActivity(items, reports))
+      setUpdatedAt(new Date())
+    } finally {
+      setRefreshing(false)
+    }
+  }
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const tiles = stats && [
-    { label: 'Pending review', val: counts.pending, icon: ClockIcon, attention: counts.pending > 0 },
-    { label: 'Open reports', val: counts.reportsOpen, icon: FlagIcon, attention: counts.reportsOpen > 0 },
-    { label: 'Live catalogue', val: stats.approved, icon: CheckIcon },
-    { label: 'Books', val: stats.books, icon: BookIcon },
-    { label: 'Videos', val: stats.videos, icon: VideoIcon },
-    { label: 'Rejected', val: stats.rejected, icon: CloseIcon },
+    { label: 'Pending review', val: counts.pending, icon: ClockIcon, nav: 'submissions', tone: 'cyan' },
+    { label: 'Open reports', val: counts.reportsOpen, icon: FlagIcon, nav: 'reports', tone: 'orange' },
+    { label: 'Live catalogue', val: stats.approved, icon: CheckIcon, nav: 'catalogue', tone: 'success' },
+    { label: 'Books', val: stats.books, icon: BookIcon, nav: 'catalogue', tone: 'brown' },
+    { label: 'Videos', val: stats.videos, icon: VideoIcon, nav: 'catalogue', tone: 'magenta' },
+    { label: 'Rejected', val: stats.rejected, icon: CloseIcon, nav: 'catalogue', tone: 'danger' },
   ]
+  const booksPct = stats && stats.books + stats.videos > 0
+    ? Math.round((stats.books / (stats.books + stats.videos)) * 100)
+    : null
+  const ageBandTotal = stats && stats.ageBandCounts['5-8'] + stats.ageBandCounts['9-12']
+  const ageBandPct = ageBandTotal > 0
+    ? Math.round((stats.ageBandCounts['5-8'] / ageBandTotal) * 100)
+    : null
 
+  // Three visually distinct cards (flagged directly: everything read as
+  // one big "Moderation overview" block) instead of one continuous
+  // section — stats, catalogue composition, and recent activity are three
+  // different questions ("what needs me now", "what does the catalogue
+  // look like", "what just happened"), so each gets its own bordered card
+  // + icon + heading, same as every other multi-panel screen in this app
+  // (e.g. ParentDashboard's Account/Children/Notifications cards).
   return (
-    <section>
-      <h2><ChartIcon width={20} height={20} /> Moderation overview</h2>
-      {!stats ? (
-        <p className="muted">Loading…</p>
-      ) : (
-        <>
-          <div className="stat-grid">
-            {tiles.map(({ label, val, icon: Icon, attention }) => (
-              <div className={`stat ${attention ? 'stat--attention' : ''}`} key={label}>
-                <div className="stat-icon"><Icon width={18} height={18} /></div>
-                <div className="stat-num">{val}</div>
-                <div className="stat-label">{label}</div>
+    <>
+      <section className="card">
+        <div className="child-top">
+          <h2><ChartIcon width={20} height={20} /> Moderation overview</h2>
+          <button className="ghost small" onClick={load} disabled={refreshing}>
+            <RefreshIcon width={14} height={14} className={refreshing ? 'spin' : ''} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+        {updatedAt && <p className="muted" style={{ marginTop: '-8px' }}>Updated {updatedAt.toLocaleTimeString()}</p>}
+        {!stats ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <>
+            {stats.approvalRate !== null && (
+              <div className="approval-row">
+                <ApprovalRing pct={stats.approvalRate} />
+                <div>
+                  <div className="approval-row-headline">{stats.approvalRate}% approval rate</div>
+                  <p className="muted">{stats.approved} approved · {stats.rejected} rejected, out of every submission reviewed so far.</p>
+                </div>
               </div>
-            ))}
+            )}
+            <div className="stat-grid">
+              {tiles.map(({ label, val, icon: Icon, tone, nav }) => (
+                <button
+                  type="button"
+                  className="stat stat--clickable stat--tone"
+                  style={toneStyle(tone)}
+                  key={label}
+                  onClick={() => onNavigate(nav)}
+                >
+                  <ChevronIcon width={14} height={14} className="stat-goto" />
+                  <div className="stat-icon"><Icon width={18} height={18} /></div>
+                  <div className="stat-num">{val}</div>
+                  <div className="stat-label">{label}</div>
+                </button>
+              ))}
+            </div>
+            <div className="row" style={{ marginTop: 'var(--space-2)' }}>
+              {counts.pending > 0 && (
+                <button onClick={() => onNavigate('submissions')}>
+                  <InboxIcon width={16} height={16} /> Review {counts.pending} waiting submission{counts.pending === 1 ? '' : 's'}
+                </button>
+              )}
+              {counts.reportsOpen > 0 && (
+                <button className="danger" onClick={() => onNavigate('reports')}>
+                  <FlagIcon width={16} height={16} /> Handle {counts.reportsOpen} open report{counts.reportsOpen === 1 ? '' : 's'}
+                </button>
+              )}
+              {counts.pending === 0 && counts.reportsOpen === 0 && (
+                <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing needs your attention right now.</p>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      {stats && booksPct !== null && (
+        <section className="card">
+          <h2><GridIcon width={20} height={20} /> Catalogue composition</h2>
+          <div className="stat-split">
+            <div className="stat-split-label">
+              <span><BookIcon width={14} height={14} /> Books {stats.books}</span>
+              <span>Videos {stats.videos} <VideoIcon width={14} height={14} /></span>
+            </div>
+            <div className="stat-split-bar">
+              <div className="stat-split-fill" style={{ width: `${booksPct}%` }} />
+            </div>
           </div>
-          <div className="row" style={{ marginTop: 'var(--space-4)' }}>
-            {counts.pending > 0 && (
-              <button onClick={() => onNavigate('submissions')}>
-                <InboxIcon width={16} height={16} /> Review {counts.pending} waiting submission{counts.pending === 1 ? '' : 's'}
-              </button>
-            )}
-            {counts.reportsOpen > 0 && (
-              <button className="danger" onClick={() => onNavigate('reports')}>
-                <FlagIcon width={16} height={16} /> Handle {counts.reportsOpen} open report{counts.reportsOpen === 1 ? '' : 's'}
-              </button>
-            )}
-            {counts.pending === 0 && counts.reportsOpen === 0 && (
-              <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing needs your attention right now.</p>
-            )}
-          </div>
-        </>
+          {ageBandPct !== null && (
+            <div className="stat-split">
+              <div className="stat-split-label">
+                <span>Age 5–8 · {stats.ageBandCounts['5-8']}</span>
+                <span>Age 9–12 · {stats.ageBandCounts['9-12']}</span>
+              </div>
+              <div className="stat-split-bar stat-split-bar--alt">
+                <div className="stat-split-fill stat-split-fill--alt" style={{ width: `${ageBandPct}%` }} />
+              </div>
+            </div>
+          )}
+          {stats.topGenres.length > 0 && (
+            <div className="genre-cloud">
+              <span className="review-field-label">Top genres in the live catalogue</span>
+              <div className="chip-row">
+                {stats.topGenres.map(([genre, count]) => (
+                  <span className="chip" key={genre}>{genre} · {count}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
       )}
-    </section>
+
+      {stats && (
+        <section className="card">
+          <h2><ClockIcon width={20} height={20} /> Recent activity</h2>
+          {!activity || activity.length === 0 ? (
+            <p className="muted">Nothing logged yet — approvals, imports and resolved reports will show up here as they happen.</p>
+          ) : (
+            <div className="panel">
+              {activity.map((e, i) => {
+                const meta = ACTIVITY_META[e.kind]
+                const Icon = meta.icon
+                return (
+                  <div className="fav-item activity-item" key={i}>
+                    <span className="fav-info">
+                      <span className={`fav-icon ${meta.tint ? `fav-icon--${meta.tint}` : ''}`}><Icon width={16} height={16} /></span>
+                      <span className="fav-text">
+                        <span className="fav-title activity-title">{meta.text(e)}</span>
+                      </span>
+                    </span>
+                    <span className="report-date activity-time">{logTime(e.ts)}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      )}
+    </>
   )
 }
 
@@ -264,12 +460,12 @@ function SearchImport({ onImported, notify }) {
 
   return (
     <section>
-      <h2><SearchIcon width={20} height={20} /> Search &amp; import (CM03)</h2>
+      <h2><SearchIcon width={20} height={20} /> Search &amp; import</h2>
       <form className="row" onSubmit={search}>
-        <select value={type} onChange={(e) => { setType(e.target.value); setResults(null) }}>
+        <Select value={type} onChange={(e) => { setType(e.target.value); setResults(null) }}>
           <option value="book">Books</option>
           <option value="video">Videos</option>
-        </select>
+        </Select>
         <input
           type="search"
           placeholder={`Search Google Books/YouTube for ${type}s…`}
@@ -333,7 +529,17 @@ function Submissions({ notify, onCountsChange }) {
       setLeaving(null)
       return
     }
-    setTimeout(reload, 220) // let the fade play before the row actually leaves the DOM
+    // Real bug, reported directly: `leaving` never got cleared on the
+    // success path, so a resolved/approved item whose card is still in
+    // view after reload (Reports keeps both open AND resolved rows, unlike
+    // this pending-only queue) kept rendering with .card-leaving's
+    // opacity:0 forever — looked like it vanished, only fixed itself on a
+    // full page refresh (a fresh mount resets `leaving` back to null).
+    // Clearing it once the post-fade reload actually lands fixes that.
+    setTimeout(async () => {
+      await reload() // let the fade play before the fresh data replaces the row
+      setLeaving(null)
+    }, 220)
   }
 
   return (
@@ -352,6 +558,7 @@ function Submissions({ notify, onCountsChange }) {
               <div>
                 <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
                 <p className="muted">{i.description}</p>
+                {i.created_at && <p className="muted">Submitted {timeAgo(i.created_at)}</p>}
               </div>
             </div>
             <span className="badge badge-pending">pending</span>
@@ -469,22 +676,22 @@ function Catalogue({ notify }) {
           onChange={(e) => setQ(e.target.value)}
           style={{ flex: '1 1 220px' }}
         />
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+        <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
           <option value="">All types</option>
           <option value="book">Books</option>
           <option value="video">Videos</option>
-        </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        </Select>
+        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
           <option value="approved">Approved</option>
           <option value="pending">Pending</option>
           <option value="rejected">Rejected</option>
-        </select>
+        </Select>
         {allGenres.length > 0 && (
-          <select value={genreFilter} onChange={(e) => setGenreFilter(e.target.value)}>
+          <Select value={genreFilter} onChange={(e) => setGenreFilter(e.target.value)}>
             <option value="">All categories</option>
             {allGenres.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
+          </Select>
         )}
       </div>
 
@@ -512,6 +719,11 @@ function Catalogue({ notify }) {
                 <div>
                   <h3 className="item-title"><TypeIcon type={i.type} /> {i.title}</h3>
                   <p className="muted">{truncate(i.description)}</p>
+                  {i.reviewed_at ? (
+                    <p className="muted">{i.status === 'approved' ? 'Approved' : 'Rejected'} {timeAgo(i.reviewed_at)}{i.reviewed_by && ` — ${i.reviewed_by}`}</p>
+                  ) : i.created_at ? (
+                    <p className="muted">Added {timeAgo(i.created_at)}</p>
+                  ) : null}
                 </div>
               </div>
               <span className={`badge badge-${i.status}`}>{i.status}</span>
@@ -590,6 +802,8 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[title, 'Title'], [description, 'Description']])
+    if (missing) { setError(missing); return }
     if (bands.length === 0) { setError('Pick at least one age band'); return }
     setError(''); setBusy(true)
     const payload = {
@@ -605,22 +819,22 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
   }
 
   return (
-    <form className="card" onSubmit={submit}>
+    <form className="card" onSubmit={submit} noValidate>
       <h3>{isNew ? 'New entry' : 'Edit entry'}</h3>
       <label>Type
-        <select value={type} onChange={(e) => setType(e.target.value)}>
+        <Select value={type} onChange={(e) => setType(e.target.value)}>
           <option value="book">Book</option>
           <option value="video">Video</option>
-        </select>
+        </Select>
       </label>
-      <label>Title<input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
-      <label>Description<input value={description} onChange={(e) => setDescription(e.target.value)} required /></label>
+      <label>Title<input value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+      <label>Description<input value={description} onChange={(e) => setDescription(e.target.value)} /></label>
       <label>Cover image URL<input value={thumbnail} onChange={(e) => setThumbnail(e.target.value)} placeholder="https://…" /></label>
-      <label>{type === 'video' ? 'YouTube video ID (CH12 — what actually plays)' : 'External link (e.g. a library/store page, PA19)'}
+      <label>{type === 'video' ? 'YouTube video ID (what actually plays)' : 'External link (e.g. a library/store page)'}
         <input value={externalRef} onChange={(e) => setExternalRef(e.target.value)} placeholder={type === 'video' ? 'dQw4w9WgXcQ' : 'https://…'} />
       </label>
       <div>
-        <span className="muted">Age bands (CM09)</span>
+        <span className="muted">Age bands</span>
         <div className="row">
           {AGE_BANDS.map((b) => (
             <label key={b} className="toggle">
@@ -629,7 +843,7 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
           ))}
         </div>
       </div>
-      <label>Genres, comma-separated (CM10)<input value={genres} onChange={(e) => setGenres(e.target.value)} placeholder="funny, space" /></label>
+      <label>Genres, comma-separated<input value={genres} onChange={(e) => setGenres(e.target.value)} placeholder="funny, space" /></label>
       <label>Reading level<input value={level} onChange={(e) => setLevel(e.target.value)} placeholder="early, middle" /></label>
       {error && <p className="error">{error}</p>}
       <div className="row">
@@ -663,7 +877,17 @@ function Reports({ notify, onCountsChange }) {
       setLeaving(null)
       return
     }
-    setTimeout(reload, 220)
+    // Real bug, reported directly: "gw pencet dismiss... malah ilang...
+    // refresh baru statusnya resolved". `leaving` was never cleared on the
+    // success path — a resolved report stays in this list (unlike
+    // Submissions' pending-only queue, a resolved report doesn't drop out
+    // of listReports()), so its card kept matching `leaving === r.id`
+    // forever and rendering at .card-leaving's opacity:0. Only a full page
+    // reload (fresh mount, `leaving` back to null) ever revealed it again.
+    setTimeout(async () => {
+      await reload() // let the fade play before the fresh data replaces the row
+      setLeaving(null)
+    }, 220)
   }
 
   return (
@@ -676,7 +900,14 @@ function Reports({ notify, onCountsChange }) {
       {items.map((r) => (
         <div className={`card ${leaving === r.id ? 'card-leaving' : ''}`} key={r.id}>
           <div className="child-top">
-            <div><h3 className="item-title">{r.content_title}</h3><p className="muted">Reason: {r.reason}</p></div>
+            <div>
+              <h3 className="item-title">{r.content_type ? <TypeIcon type={r.content_type} /> : null} {r.content_title}</h3>
+              <p className="muted">Reason: {r.reason}</p>
+              <p className="muted">
+                Reported {timeAgo(r.ts)}
+                {r.resolved_at && <> · Resolved {timeAgo(r.resolved_at)}</>}
+              </p>
+            </div>
             <span className={`badge badge-${r.status === 'open' ? 'pending' : 'approved'}`}>{r.status}</span>
           </div>
           {r.status === 'open' && (

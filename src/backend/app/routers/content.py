@@ -10,6 +10,8 @@ still goes through an explicit approve/reject (CM07/CM08), same as any other
 new submission. Search results are never recommendable on their own — only
 `/approve`'d content ever reaches app/brain.py.
 """
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import ai_assist, content_sources, embeddings
@@ -62,6 +64,12 @@ def browse(
 @router.post("", response_model=ContentOut, status_code=201)
 def add_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))):
     item = db.add_content(body.model_dump(), status="approved")
+    # Manually-added entries are auto-approved by their own creator (see
+    # this router's module docstring) — both timestamps land at once,
+    # same moment, rather than reviewed_at sitting empty for something
+    # that's already live.
+    item["reviewed_at"] = time.time()
+    item["reviewed_by"] = mod["name"]
     _refresh_embedding(item)
     return _out(item)
 
@@ -133,6 +141,8 @@ def approve(content_id: str, mod: dict = Depends(require_role("moderator"))):
     if not item:
         raise HTTPException(404, "Content not found")
     item["status"] = "approved"
+    item["reviewed_at"] = time.time()
+    item["reviewed_by"] = mod["name"]
     _refresh_embedding(item)
     return _out(item)
 
@@ -143,4 +153,6 @@ def reject(content_id: str, mod: dict = Depends(require_role("moderator"))):
     if not item:
         raise HTTPException(404, "Content not found")
     item["status"] = "rejected"
+    item["reviewed_at"] = time.time()
+    item["reviewed_by"] = mod["name"]
     return _out(item)

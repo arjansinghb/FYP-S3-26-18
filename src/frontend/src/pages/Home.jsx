@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
-import { getPublicSite, getPublicPlans, getPublicCatalogueSample, getPublicReviews } from '../api'
+import { getPublicSite, getPublicPlans, getPublicCatalogueSample, getPublicReviews, getToken, getMe } from '../api'
 import { curateTitle } from '../curate'
 import {
-  BookIcon, ChatIcon, CheckIcon, CompassIcon, LockIcon, MicIcon, QuoteIcon, ShieldIcon,
-  SparkleIcon, StarIcon, UsersIcon, VideoIcon,
+  BookIcon, ChartIcon, ChatIcon, CheckIcon, CompassIcon, HeartIcon, LockIcon, MicIcon, QuoteIcon,
+  ShieldIcon, SparkleIcon, StarIcon, UsersIcon, VideoIcon,
 } from '../icons'
 import { ClusterBookGlyph, ClusterPlayGlyph, ClusterSparkleGlyph } from '../illustrations'
 import './landing.css'
@@ -86,6 +86,19 @@ export default function Home() {
   })
   const [catalogue, setCatalogue] = useState([])
   const [reviews, setReviews] = useState([])
+
+  // The 3 pricing-card buttons used to always say "sign up" and send
+  // everyone to the same plain login/signup screen — including a parent
+  // who's already logged in on this device, who'd just land back on their
+  // dashboard's top instead of anywhere related to what they clicked. Only
+  // used to pick each button's actual target below (see PLAN_TARGET) —
+  // never gates rendering, so a stale/expired token just silently falls
+  // back to the normal signup link.
+  const [loggedInParent, setLoggedInParent] = useState(false)
+  useEffect(() => {
+    if (!getToken()) return
+    getMe().then((acc) => { if (acc.role === 'parent') setLoggedInParent(true) }).catch(() => {})
+  }, [])
 
   // A brief, one-time "Pip talks" moment on load — this is a voice-chat
   // product, and the hero is the one place that should actually demonstrate
@@ -218,10 +231,20 @@ export default function Home() {
       {site.announcement && <div className="announce">{site.announcement}</div>}
 
       <nav className={`landing-nav ${navScrolled ? 'landing-nav--scrolled' : ''}`}>
-        <div className="landing-brand">
+        {/* A plain <div> before this — the logo did nothing when clicked,
+            unlike every other site's own brand mark (which always acts as
+            a home link). Link to="/" so it also works if this component
+            ever renders somewhere other than "/"; the scroll-to-top covers
+            the common case of already being on the landing page, where a
+            same-route Link alone wouldn't visibly do anything. */}
+        <Link
+          className="landing-brand"
+          to="/"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+        >
           <Avatar speaking={false} mood="happy" />
           <span>{site.site_title.split('—')[0].trim() || 'Pip'}</span>
-        </div>
+        </Link>
         <Link className="landing-nav-cta" to="/parent">Parent sign up</Link>
       </nav>
 
@@ -287,7 +310,7 @@ export default function Home() {
             waiting on one) just to show what a reply looks like. */}
         <section className="section section--tint" ref={demoSectionRef}>
           <h2>See Pip in action</h2>
-          <p className="section-lead">A real exchange with Pip — a real question, matched to a real, moderator-approved catalogue item.</p>
+          <p className="section-lead">A real exchange with Pip — a real question, matched to a real title straight from Pip's own library.</p>
           <div className="demo-chat">
             {demoStage >= 1 && (
               <div className="demo-bubble demo-bubble-child demo-beat-in">"{DEMO_EXCHANGE.prompt}"</div>
@@ -340,7 +363,7 @@ export default function Home() {
         {catalogue.length > 0 && (
           <section className="section reveal" ref={reveal}>
             <h2>A peek at the catalogue</h2>
-            <p className="section-lead">Every title here has already been reviewed and approved by a moderator. This is a live sample, not a mock-up.</p>
+            <p className="section-lead">No stock photos, no filler — this is exactly what's waiting for your child on Pip's shelf.</p>
             <div className="catalogue-scroller">
               <div className="catalogue-track" style={{ '--n': catalogue.length }}>
                 {catalogue.map((c) => <CatalogueCard item={c} key={c.id} />)}
@@ -383,7 +406,10 @@ export default function Home() {
           <p className="section-lead">Every child picks their own Pip on first login — five real characters, not just five paint colours.</p>
           <div className="buddy-grid">
             {Object.keys(AVATAR_COLORS).map((key) => (
-              <div className="buddy-item" key={key}>
+              // The colour-specific class is what lets each character react
+              // differently on hover (see landing.css) — a bare "buddy-item"
+              // class alone can't tell blue's glasses from green's sprout.
+              <div className={`buddy-item buddy-item--${key}`} key={key}>
                 <Avatar speaking={false} mood="happy" color={key} />
                 <span>{key[0].toUpperCase() + key.slice(1)}</span>
               </div>
@@ -396,30 +422,45 @@ export default function Home() {
             device was retired in favour of outline/tint, so it keeps a
             single, unambiguous meaning: the plan that costs money. */}
         <section className="section section--tint reveal" ref={reveal}>
-          <h2>Simple plans</h2>
+          <h2>Plans for every family</h2>
           <div className="plan-grid">
+            {/* An already-logged-in parent clicking any of these three goes
+                straight to the dashboard's Subscription card (where they'd
+                actually act on a plan) instead of the plain signup/login
+                screen — see the loggedInParent check above and
+                ParentDashboard's matching scroll-to-hash effect. Anyone not
+                logged in keeps the original behaviour untouched. */}
             <div className="plan">
               <h3>Free</h3>
               <p className="plan-price">{plans.currency} 0<span>/month</span></p>
               <ul>
-                <li><CheckIcon width={16} height={16} /> Talk to Pip</li>
-                <li><CheckIcon width={16} height={16} /> Age-appropriate recommendations</li>
-                <li><CheckIcon width={16} height={16} /> 1 child profile</li>
-                <li><CheckIcon width={16} height={16} /> Basic parent dashboard</li>
+                {/* Was a uniform checkmark on every line — a plain checklist
+                    reads as "here's what's included," not "here's what this
+                    actually gives you." One icon per feature, each matched
+                    to what that line's actually about (same idea as the
+                    reference pricing page Kiefer pointed at), makes each
+                    line legible at a glance instead of one undifferentiated
+                    block of ticks. Colour stays the single existing
+                    var(--primary-500) from .plan li svg — only the glyph
+                    varies, not a rainbow per icon. */}
+                <li><MicIcon width={16} height={16} /> Talk to Pip</li>
+                <li><ShieldIcon width={16} height={16} /> Age-appropriate recommendations</li>
+                <li><UsersIcon width={16} height={16} /> 1 child profile</li>
+                <li><ChartIcon width={16} height={16} /> Basic parent dashboard</li>
               </ul>
-              <Link className="cta cta-parent" to="/parent">Get Pip for free</Link>
+              <Link className="cta cta-parent" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Pip for free</Link>
             </div>
             <div className="plan plan-featured">
               <div className="plan-badge">Most popular</div>
               <h3>Premium</h3>
               <p className="plan-price">{money(plans.premium_monthly_price)}<span>/month</span></p>
               <ul>
-                <li><CheckIcon width={16} height={16} /> Everything in Free</li>
-                <li><CheckIcon width={16} height={16} /> Up to 4 child profiles</li>
-                <li><CheckIcon width={16} height={16} /> Unlimited saved favourites</li>
-                <li><CheckIcon width={16} height={16} /> Full activity history &amp; insights</li>
+                <li><StarIcon width={16} height={16} /> Everything in Free</li>
+                <li><UsersIcon width={16} height={16} /> Up to 4 child profiles</li>
+                <li><HeartIcon width={16} height={16} /> Unlimited saved favourites</li>
+                <li><ChartIcon width={16} height={16} /> Full activity history &amp; insights</li>
               </ul>
-              <Link className="cta cta-child" to="/parent">Get Premium plan</Link>
+              <Link className="cta cta-child" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Premium plan</Link>
             </div>
             {/* Ultra — the one plan with no "Most popular" badge, per
                 Kiefer's explicit call: that stays a single, unambiguous
@@ -428,10 +469,10 @@ export default function Home() {
               <h3>Ultra</h3>
               <p className="plan-price">{money(plans.ultra_monthly_price)}<span>/month</span></p>
               <ul>
-                <li><CheckIcon width={16} height={16} /> Everything in Premium</li>
-                <li><CheckIcon width={16} height={16} /> Unlimited child profiles</li>
+                <li><StarIcon width={16} height={16} /> Everything in Premium</li>
+                <li><UsersIcon width={16} height={16} /> Unlimited child profiles</li>
               </ul>
-              <Link className="cta cta-parent" to="/parent">Get Ultra plan</Link>
+              <Link className="cta cta-parent" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Ultra plan</Link>
             </div>
           </div>
           <p className="plan-note">Free to start, for one child profile, for as long as you like.</p>

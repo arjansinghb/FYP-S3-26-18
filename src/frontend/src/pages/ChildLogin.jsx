@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import Avatar from '../components/Avatar'
 import { linkChild, pinLogin, getActivatedChildId, forgetDevice } from '../api'
+import { firstMissingField } from '../formValidation'
 import './child.css'
 
 // CH01 (enter linking code, first time on this device) + CH02 (simplified
@@ -21,6 +22,8 @@ function PinOnlyLogin({ childId, onLoggedIn }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[pin, 'PIN']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       const child = await pinLogin(childId, pin)
@@ -37,7 +40,7 @@ function PinOnlyLogin({ childId, onLoggedIn }) {
       <Avatar speaking={false} mood="happy" />
       <h1>Welcome back! 👋</h1>
       <p className="muted">Type your secret PIN (a grown-up can help!)</p>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <input
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
@@ -45,7 +48,6 @@ function PinOnlyLogin({ childId, onLoggedIn }) {
           maxLength={6}
           inputMode="numeric"
           aria-label="PIN"
-          required
         />
         {error && <p className="error">{error}</p>}
         <button className="big-btn" type="submit" disabled={busy}>
@@ -70,6 +72,8 @@ function FullLogin({ onLoggedIn }) {
 
   async function submit(e) {
     e.preventDefault()
+    const missing = firstMissingField([[loginId, 'Login ID'], [pin, 'PIN']])
+    if (missing) { setError(missing); return }
     setError(''); setBusy(true)
     try {
       const child = await linkChild(loginId.trim(), pin)
@@ -86,7 +90,7 @@ function FullLogin({ onLoggedIn }) {
       <Avatar speaking={false} mood="happy" />
       <h1>Hi! Let's start 🎉</h1>
       <p className="muted">Ask a grown-up for your Login ID and PIN from the parent dashboard.</p>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <input
           value={loginId}
           onChange={(e) => setLoginId(e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 6))}
@@ -94,7 +98,6 @@ function FullLogin({ onLoggedIn }) {
           maxLength={6}
           autoCapitalize="characters"
           aria-label="Login ID"
-          required
         />
         <input
           value={pin}
@@ -103,7 +106,6 @@ function FullLogin({ onLoggedIn }) {
           maxLength={6}
           inputMode="numeric"
           aria-label="PIN"
-          required
         />
         {error && <p className="error">{error}</p>}
         <button className="big-btn" type="submit" disabled={busy}>

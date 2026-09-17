@@ -752,7 +752,7 @@ class Database:
     # ---------- content ----------
 
     def add_content(self, data: dict, status: str = "pending") -> dict:
-        item = {"id": _new_id(), "status": status, "embedding": None, **data}
+        item = {"id": _new_id(), "status": status, "embedding": None, "created_at": time.time(), **data}
         self.content[item["id"]] = item
         return item
 

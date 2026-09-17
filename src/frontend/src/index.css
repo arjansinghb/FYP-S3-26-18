@@ -76,6 +76,26 @@
   --success-700: #1c7a4a; /* approved / success status only */
   --success-100: #dcf6e8; /* tinted background: success badges */
 
+  /* STAT-TILE PALETTE — Admin/Moderator Overview stat tiles only (see
+     .stat--tone-* in parent.css). Explicitly requested by Kiefer to give
+     each tile its own fixed identity colour instead of everything reading
+     as the same neutral purple — a deliberate widening of the "1 primary +
+     1 accent" rule above, not an accident. Each tile's colour is now just
+     an identity marker (which count is which at a glance), not a signal —
+     the Performance tiles (Error rate/latency) deliberately stay OUT of
+     this palette and keep their old red-only-when-actually-slow behaviour,
+     since permanently colouring "Error rate: 0.0%" red would misrepresent
+     a healthy system. */
+  --blue-700: #1d5fae;   --blue-100: #e3edfb;
+  --pink-700: #b0246f;   --pink-100: #fbe3f0;
+  --amber-700: #a5670c;  --amber-100: #fbedd6;
+  --teal-700: #157a6e;   --teal-100: #dff5f2;
+  --indigo-700: #4338a8; --indigo-100: #eae8fb;
+  --orange-700: #c2540c; --orange-100: #fde8d6;
+  --cyan-700: #0e7c86;   --cyan-100: #dcf3f4;
+  --brown-700: #8a5a2e;  --brown-100: #f2e6d8;
+  --magenta-700: #a3218e; --magenta-100: #f7e2f4;
+
   /* NEUTRALS — ink for headings, text for body, muted for the least
      important label on the page, never for a paragraph a user is
      meant to actually read. */

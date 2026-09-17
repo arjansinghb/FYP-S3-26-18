@@ -311,6 +311,17 @@ class ContentOut(ContentIn):
     ai_suggestion: Optional[Literal["approve", "reject"]] = None
     ai_reason: Optional[str] = None
     ai_confidence: Optional[Literal["low", "medium", "high"]] = None
+    # Never tracked at all until now (real gap, flagged directly: no way
+    # to tell a moderator WHEN something was submitted/imported or
+    # approved/rejected, let alone by whom) — feeds Moderator Overview's
+    # "Recent activity" feed. `created_at` is set once, at add/import time
+    # (see storage.add_content); `reviewed_at`/`reviewed_by` are set once,
+    # the first time the item is approved or rejected (see routers/
+    # content.py's approve()/reject()/add_entry()) — a manually-added entry
+    # is auto-approved by its own creator, so it gets both stamps at once.
+    created_at: Optional[float] = None
+    reviewed_at: Optional[float] = None
+    reviewed_by: Optional[str] = None
 
 
 # ----- chat / recommendations -----
@@ -382,6 +393,8 @@ class ReviewOut(BaseModel):
     text: str
     status: Literal["pending", "rejected", "approved"]
     created_at: float
+    reviewed_at: Optional[float] = None  # set once, on approve/reject — Admin Overview's "Recent activity"
+    reviewed_by: Optional[str] = None
     rejection_reason: Optional[str] = None
     # UV04/admin triage aid (app/ai_assist.py's suggest_review) — computed
     # once at submission time, advisory-only: an admin still approves or
@@ -389,6 +402,12 @@ class ReviewOut(BaseModel):
     # worth reading first once there are far more than fit on one screen.
     ai_recommend: Optional[bool] = None
     ai_reason: Optional[str] = None
+    # Admin Reviews tab — an "approved" review isn't automatically visible:
+    # public.py's /reviews caps at the best 10 (storage.public_reviews).
+    # True/False only for approved reviews (computed against that same
+    # top-10 cut in admin.py's list_reviews); null for pending/rejected,
+    # where "published" doesn't apply yet.
+    published: Optional[bool] = None
 
 
 class PublicReviewOut(BaseModel):
@@ -403,9 +422,11 @@ class ReportOut(BaseModel):
     id: str
     content_id: str
     content_title: str
+    content_type: Optional[Literal["book", "video"]] = None  # None if the content was since removed
     reason: str
     status: str
     ts: float
+    resolved_at: Optional[float] = None  # set once, in resolve_report() — same "Recent activity" feed as ContentOut
 
 
 class ResolveReport(BaseModel):

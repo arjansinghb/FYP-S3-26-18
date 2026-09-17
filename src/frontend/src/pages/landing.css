@@ -70,6 +70,12 @@
   font-weight: 800;
   font-size: var(--text-lg);
   color: var(--ink);
+  /* Now a real <a> (via react-router's Link) instead of a plain <div> —
+     these two undo the browser's own default link styling so it still
+     reads as the brand mark it always was, not a suddenly-blue,
+     underlined "link". */
+  text-decoration: none;
+  cursor: pointer;
 }
 .landing-brand .avatar { width: 34px; height: 34px; }
 .landing-nav-cta {
@@ -84,7 +90,16 @@
   background: var(--surface);
   transition: border-color 0.12s;
 }
-.landing-nav-cta:hover { border-color: var(--primary-500); }
+/* Fills solid on hover — background AND text colour set together in the
+   same rule (not just border-color like before) so there's no chance of
+   the purple-text-on-purple-background readability bug this session kept
+   finding elsewhere (.tab, .linkbtn): text explicitly flips to
+   --on-primary here, it never just inherits its resting colour. */
+.landing-nav-cta:hover {
+  background: var(--primary-700);
+  color: var(--on-primary);
+  border-color: var(--primary-700);
+}
 .landing-nav-cta:focus-visible,
 .cta:focus-visible {
   outline: 2px solid var(--primary-500);
@@ -125,9 +140,24 @@
   font-size: var(--text-base); font-weight: 800; text-decoration: none;
   padding: var(--space-4) var(--space-6); border-radius: var(--radius-pill);
   border-bottom-width: 4px; border-bottom-style: solid;
+  /* Base (fast) speed — governs leaving :hover and the :active press
+     itself; :hover below redeclares its own slower, springier transition
+     just for growing INTO that state, so the grow feels bouncy but the
+     press and the return-to-rest both stay snappy/tactile. */
   transition: transform 0.08s, border-bottom-width 0.08s;
 }
-.cta:active { transform: translateY(2px); border-bottom-width: 2px; }
+/* "More engaging" hover — grows with a small overshoot instead of a flat
+   scale, same spring feel as the buddy-grid avatars' own hover further
+   down this page. */
+.cta:hover {
+  transform: scale(1.06);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.cta:active {
+  transform: translateY(2px) scale(0.98);
+  border-bottom-width: 2px;
+  transition: transform 0.08s, border-bottom-width 0.08s;
+}
 /* The one primary action on the page: solid fill, boldest edge. */
 .cta-child {
   background: var(--primary-700); color: var(--on-primary);
@@ -139,7 +169,9 @@
   background: var(--surface); color: var(--primary-700);
   border: 2px solid var(--border); border-bottom-width: 4px;
 }
-.cta-parent:active { border-bottom-width: 2px; }
+/* Was the only place border-bottom-width dropped to 2px on :active — now
+   redundant, the shared .cta:active above already wins here on
+   specificity (one class + :active beats .cta-parent's bare one class). */
 
 /* ---------- hero illustration: a loose, hand-placed cluster of small
    illustration pieces (illustrations.jsx) — not the app's own UI icon set,
@@ -536,6 +568,65 @@
 .buddy-item .avatar { width: 92px; height: 92px; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
 .buddy-item:hover .avatar { transform: scale(1.08) rotate(-3deg); }
 .buddy-item span { font-size: var(--text-sm); font-weight: 700; color: var(--muted); }
+
+/* Every character shared one identical hover wiggle above — the copy right
+   next to this grid says "five real characters, not just five paint
+   colours," so the hover reaction should back that up instead of
+   contradicting it. Each colour's own accessory (Avatar.jsx's
+   ACCESSORIES map) now animates on hover in a way that fits it, plus a
+   bigger smile shared by all five as the common "happy to see you" base.
+   Purple has no accessory — it's the bare "just Pip" default — so its
+   own signature is simply the widest smile of the five. */
+.buddy-item .avatar-mouth-smile { transition: transform 0.25s ease; transform-origin: 100px 122px; }
+.buddy-item .avatar-accessory { transition: transform 0.25s ease; }
+.buddy-item:hover .avatar-mouth-smile { transform: scaleY(1.3); }
+
+.buddy-item--purple:hover .avatar-mouth-smile { transform: scaleY(1.6) translateY(-1px); }
+
+/* Blue — the glasses nudge up, like peering closer at something curious. */
+.buddy-item--blue:hover .avatar-accessory { transform: translateY(-5px); }
+
+/* Green — the sprout sways side to side like it's caught a breeze. */
+.buddy-item--green:hover .avatar-accessory {
+  animation: buddy-sprout-sway 0.6s ease-in-out infinite;
+  transform-origin: 100px 30px;
+}
+@keyframes buddy-sprout-sway {
+  0%, 100% { transform: rotate(-12deg); }
+  50%      { transform: rotate(12deg); }
+}
+
+/* Pink — the bow flutters, a little bigger and tilted each beat. */
+.buddy-item--pink:hover .avatar-accessory {
+  animation: buddy-bow-flutter 0.5s ease-in-out infinite;
+  transform-origin: 100px 30px;
+}
+@keyframes buddy-bow-flutter {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  50%      { transform: scale(1.25) rotate(10deg); }
+}
+
+/* Orange — the sparkle spins in place. Its own SVG has a translate(138,18)
+   positioning attribute already on this group; a CSS `transform` on the
+   same element replaces that rather than adding to it, so the translate
+   is re-stated in both keyframe steps to keep the sparkle from jumping
+   back to (0,0) the moment the animation starts. */
+.buddy-item--orange:hover .avatar-accessory {
+  animation: buddy-sparkle-spin 0.7s linear infinite;
+  transform-origin: 12px 12px;
+}
+@keyframes buddy-sparkle-spin {
+  from { transform: translate(138px, 18px) rotate(0deg); }
+  to   { transform: translate(138px, 18px) rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .buddy-item--green:hover .avatar-accessory,
+  .buddy-item--pink:hover .avatar-accessory,
+  .buddy-item--orange:hover .avatar-accessory {
+    animation: none;
+  }
+}
 
 .landing-footer { text-align: center; color: var(--muted); font-size: var(--text-xs); padding: var(--space-8) var(--space-6) var(--space-11); }
 .landing-footer p { margin: 0 0 var(--space-2); max-width: none; }
