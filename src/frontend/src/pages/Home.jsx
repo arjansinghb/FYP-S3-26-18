@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
+import SideNav from '../components/SideNav'
 import { getPublicSite, getPublicPlans, getPublicCatalogueSample, getPublicReviews, getToken, getMe } from '../api'
 import { curateTitle } from '../curate'
 import {
@@ -226,9 +227,24 @@ export default function Home() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Left-edge section rail — only lists sections that actually render.
+  const sideNavItems = [
+    { id: 'home', label: 'Home' },
+    { id: 'how', label: 'How it works' },
+    { id: 'demo', label: 'See it in action' },
+    ...(catalogue.length > 0 ? [{ id: 'catalogue', label: 'Catalogue' }] : []),
+    { id: 'why', label: 'Why Pip' },
+    { id: 'buddy', label: 'Meet Pip' },
+    { id: 'plans', label: 'Plans' },
+    { id: 'trust', label: 'Trust' },
+    ...(reviews.length > 0 ? [{ id: 'reviews', label: 'Reviews' }] : []),
+    { id: 'faq', label: 'FAQ' },
+  ]
+
   return (
     <div className="landing">
       {site.announcement && <div className="announce">{site.announcement}</div>}
+      <SideNav items={sideNavItems} />
 
       <nav className={`landing-nav ${navScrolled ? 'landing-nav--scrolled' : ''}`}>
         {/* A plain <div> before this — the logo did nothing when clicked,
@@ -250,7 +266,7 @@ export default function Home() {
 
       <main>
         {/* UV01 — hero / landing */}
-        <header className="hero">
+        <header className="hero" id="home">
           <div className="hero-copy">
             <h1>Stories your<br />kid actually<br /><span className="hero-accent">asks for.</span></h1>
             <p className="hero-tag">{site.tagline}</p>
@@ -279,7 +295,7 @@ export default function Home() {
 
         {/* UV02 — app information: one spotlighted idea + a plain supporting
             list, not four identical bordered cards. */}
-        <section className="section reveal" ref={reveal}>
+        <section className="section reveal" id="how" ref={reveal}>
           <h2>How it works</h2>
           <div className="how-grid">
             <div className="how-spotlight">
@@ -308,7 +324,7 @@ export default function Home() {
             copy, not a product screen, so it doesn't need a live backend
             round-trip (or the earlier loading skeleton that came with
             waiting on one) just to show what a reply looks like. */}
-        <section className="section section--tint" ref={demoSectionRef}>
+        <section className="section section--tint" id="demo" ref={demoSectionRef}>
           <h2>See Pip in action</h2>
           <p className="section-lead">A real exchange with Pip — a real question, matched to a real title straight from Pip's own library.</p>
           <div className="demo-chat">
@@ -361,7 +377,7 @@ export default function Home() {
             CatalogueCard below; the duplicate copy is aria-hidden so a
             screen reader doesn't hear every title twice). */}
         {catalogue.length > 0 && (
-          <section className="section reveal" ref={reveal}>
+          <section className="section reveal" id="catalogue" ref={reveal}>
             <h2>A peek at the catalogue</h2>
             <p className="section-lead">No stock photos, no filler — this is exactly what's waiting for your child on Pip's shelf.</p>
             <div className="catalogue-scroller">
@@ -376,7 +392,7 @@ export default function Home() {
         {/* The actual gap this product fills, per the team's own research —
             an asymmetric "old ways vs. Pip" layout, not three equal cards
             in a row. */}
-        <section className="section reveal" ref={reveal}>
+        <section className="section reveal" id="why" ref={reveal}>
           <h2>Why not just search?</h2>
           <div className="diff-layout">
             <div className="diff-old">
@@ -401,7 +417,7 @@ export default function Home() {
         {/* CH19/CH20 — the real avatar picker, shown here as a preview
             (not interactive on this page — picking happens at first login).
             Same five characters/colours the child screen actually offers. */}
-        <section className="section reveal" ref={reveal}>
+        <section className="section reveal" id="buddy" ref={reveal}>
           <h2>Meet your reading buddy</h2>
           <p className="section-lead">Every child picks their own Pip on first login — five real characters, not just five paint colours.</p>
           <div className="buddy-grid">
@@ -421,7 +437,7 @@ export default function Home() {
             "featured" treatment is used on this page — everywhere else that
             device was retired in favour of outline/tint, so it keeps a
             single, unambiguous meaning: the plan that costs money. */}
-        <section className="section section--tint reveal" ref={reveal}>
+        <section className="section section--tint reveal" id="plans" ref={reveal}>
           <h2>Plans for every family</h2>
           <div className="plan-grid">
             {/* An already-logged-in parent clicking any of these three goes
@@ -480,7 +496,7 @@ export default function Home() {
 
         {/* UV04 — see TRUST_POINTS above for why this is a trust-badge grid
             of real product claims, not invented user quotes. */}
-        <section className="section reveal" ref={reveal}>
+        <section className="section reveal" id="trust" ref={reveal}>
           <h2>Why families trust Pip</h2>
           <div className="trust-grid">
             {TRUST_POINTS.map((t) => (
@@ -507,7 +523,7 @@ export default function Home() {
             each half the reviews, scrolling opposite directions. Reuses
             .catalogue-scroller's mask/overflow as-is. */}
         {reviews.length > 0 && (
-          <section className="section section--tint reveal" ref={reveal}>
+          <section className="section section--tint reveal" id="reviews" ref={reveal}>
             <h2>What parents are saying</h2>
             <p className="section-lead">Real reviews from parents using Pip, approved by our team before they're shown here.</p>
             <div className="review-wall">
@@ -531,7 +547,7 @@ export default function Home() {
 
         {/* Answers the objections a parent would actually have before
             signing up — real feature claims, not filler copy. */}
-        <section className="section reveal" ref={reveal}>
+        <section className="section reveal" id="faq" ref={reveal}>
           <h2>Questions parents ask</h2>
           <div className="faq-list">
             {FAQS.map((f) => <FaqItem key={f.q} icon={f.icon} q={f.q} a={f.a} />)}

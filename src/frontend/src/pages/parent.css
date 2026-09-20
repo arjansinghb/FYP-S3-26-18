@@ -220,6 +220,20 @@ textarea { resize: vertical; min-height: 80px; line-height: var(--leading-body);
 
 /* Two form fields side by side (Card brand / Card last 4 digits) instead
    of stacked full-width — those two only make sense read together. */
+/* components/PasswordInput.jsx — eye toggle sits inside the input's right
+   edge. The toggle is a <button>, so it explicitly restates background/color
+   in its hover state (same global button:hover fill fight as .tab and
+   .select-trigger) instead of trusting the base rule. */
+.password-field { position: relative; display: block; }
+.password-field input { width: 100%; padding-right: 46px; }
+.password-field .password-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; padding: 0; justify-content: center;
+  border-radius: 50%; background: none; color: var(--muted);
+}
+.password-field .password-toggle:hover:not(:disabled) { background: var(--primary-100); color: var(--primary-700); }
+.password-field .password-toggle:active:not(:disabled) { transform: translateY(-50%) scale(0.94); }
+
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 @media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
 
@@ -457,6 +471,17 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
 }
 .ai-note-confidence { opacity: 0.75; font-weight: 600; }
 
+/* Moderator search & import — the "AI filtered out N results" summary bar
+   above the list, and the dimmed look of a filtered result once revealed. */
+.ai-filter-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+  background: var(--primary-100); color: var(--primary-700);
+  border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm); margin: var(--space-3) 0;
+}
+.ai-filter-bar-text { display: inline-flex; align-items: center; gap: var(--space-2); }
+.search-result--filtered { opacity: 0.8; }
+
 /* ---------- ConfirmDialog.jsx — a themed stand-in for window.confirm(),
    used anywhere an admin/moderator action is destructive or hard to
    reverse (delete a review, unpublish one, etc.). Reuses .card's own
@@ -590,6 +615,13 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 .linkbtn:hover:not(:disabled) { background: none; color: color-mix(in srgb, var(--primary-700) 80%, black); }
 .row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
 
+/* PA28 consent card — the default heading/paragraph margins stacked on top of
+   the card's own gap made it look loosely spaced; tightened, and its Back
+   link is a plain arrow + word with no underline. */
+.consent-card { gap: var(--space-2); }
+.consent-card h3, .consent-card p { margin: 0; }
+.consent-card .linkbtn, .consent-card .linkbtn:hover:not(:disabled) { text-decoration: none; }
+
 /* child cards */
 .child-grid {
   display: grid;
@@ -639,6 +671,10 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
    stacked scroll regions (session list, then the opened transcript), not
    one. */
 .panel:has(.session-browser) { max-height: 480px; }
+/* Forms and settings (Edit / Safety / Data on a child card) aren't long lists
+   — capping them at .panel's 320px hid their own Save button behind a tiny
+   inner scrollbar. Only the list panels keep the cap. */
+.panel--flat { max-height: none; overflow: visible; }
 
 /* ---------- PA14 activity, as a real session list — pick a past
    conversation (like a chat-history sidebar), see what was actually said
@@ -664,7 +700,7 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
   max-height: 220px; overflow-y: auto;
 }
 .session-row {
-  display: flex; align-items: flex-start; gap: var(--space-2);
+  display: flex; align-items: flex-start; justify-content: flex-start; gap: var(--space-2);
   width: 100%; text-align: left; font: inherit; cursor: pointer;
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
   border: 1px solid transparent; background: none; color: var(--text);
@@ -906,10 +942,6 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 .account-edit-form { display: flex; flex-direction: column; gap: var(--space-4); }
 .review-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .review-field-label { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
-.review-rejected-note {
-  margin: 0; font-size: var(--text-sm); color: var(--danger-700);
-  background: var(--danger-100); border-radius: var(--radius-sm); padding: var(--space-3);
-}
 .star-picker { display: flex; gap: var(--space-1); }
 .star-btn {
   width: 38px; height: 38px; padding: 0; border: none; border-radius: var(--radius-sm);
@@ -933,3 +965,90 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 }
 .review-submitted-thanks svg { flex-shrink: 0; }
 .review-submitted-thanks .review-submitted-text { color: var(--ink); font-weight: 600; }
+
+
+/* ---------- Dashboard density (Parent, Moderator, Admin) ----------
+   Everything on this page read as oversized: card headings carried the
+   browser's default ~19px top AND bottom margin, paragraphs stacked their own
+   margins on top of the card's flex gap, and cards, section headings and
+   tab rows all had generous outer spacing. Tightened here, scoped to the
+   three dashboards only (.dash-tight is set on each one's root), not the
+   landing/child/login screens that share the same base classes. */
+.dash-tight { padding-top: var(--space-6); padding-bottom: var(--space-8); }
+.dash-tight .parent-header { padding-bottom: var(--space-3); margin-bottom: var(--space-2); }
+.dash-tight h2 { margin: var(--space-5) 0 var(--space-2); }
+.dash-tight .card { padding: var(--space-4) var(--space-5); margin: var(--space-3) 0; gap: var(--space-2); }
+.dash-tight .card h3 { margin: 0; }
+.dash-tight .card .muted, .dash-tight .child-card .muted { margin: 0; }
+.dash-tight .child-card { padding: var(--space-4) var(--space-5); }
+.dash-tight .tabs { margin: var(--space-2) 0; }
+.dash-tight .toggle { padding: var(--space-1) 0; }
+.dash-tight .review-form, .dash-tight .account-edit-form { gap: var(--space-3); }
+
+/* One even 20px gap between every top-level block, header through Data &
+   Privacy. Before, the gaps were a mix of 12 (between cards), 20 (above the
+   "Your children" heading) and 12 again around the Add-child button, so the
+   sections looked unevenly spaced. The heading keeps a tighter 8px to the
+   child cards it labels. Written as a sibling rule (any block after another)
+   so a new section added later inherits the same gap. */
+.dash-tight.parent > * + * { margin-top: var(--space-5); }
+.dash-tight.parent > h2 + .child-grid { margin-top: var(--space-2); }
+/* Two spots where margins don't collapse and would double up: the inline
+   "← Home" link above the header, and the inline-level Add-child button
+   right after a card (the card's own bottom margin stacked on top of the
+   20px). */
+.dash-tight.parent > .card { margin-bottom: 0; }
+
+/* Moderator / Admin: what sits INSIDE a tab. Separate blocks on a tab (the
+   three Overview cards, the Admin Settings cards — each a distinct settings
+   group) get the same even 20px as the Parent dashboard's sections; a list
+   of items (users, tickets, catalogue entries) keeps its tighter 12px
+   card-to-card rhythm. A tab's opening heading no longer adds its own 20px
+   on top of the gap the tab bar already leaves, and the one-line intro under
+   a heading sits snug against it. */
+.dash-tight .tab-panel > * + * { margin-top: var(--space-5); }
+.dash-tight .settings-stack > * + * { margin-top: var(--space-5); }
+.dash-tight .tab-panel > section > h2:first-child { margin-top: 0; }
+.dash-tight .tab-panel section > h2 + p.muted { margin: 0 0 var(--space-3); }
+
+/* Moderator / Admin: the whole top block (Home link, title + Log out, tab
+   bar) stays pinned to the top of the window while the page scrolls, so
+   switching sections never means scrolling back up first. Opaque background
+   so content passing underneath doesn't show through; sits under
+   dialogs/toasts (z-index 100+). On a phone the tab row stays a single
+   sideways-scrolling line instead of wrapping into a tall pinned block. */
+.dash-top { position: sticky; top: 0; z-index: 20; isolation: isolate; }
+/* The pinned block's background runs edge to edge of the window, not just the
+   1000px column — otherwise cards scrolling underneath still showed at the
+   left/right of the column (their shadows/borders), leaving visible seams on
+   wide screens. Same full-bleed trick the landing nav uses. */
+.dash-top::before {
+  content: ''; position: absolute; z-index: -1; top: 0; bottom: 0; left: 50%; width: 100vw;
+  transform: translateX(-50%);
+  opacity: 0; transition: opacity 0.25s ease;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 0 var(--border);
+}
+/* Transparent at the very top of the page; once scrolled it fades in as
+   frosted glass — the same smooth treatment as the landing page's nav,
+   instead of a solid block that's always there. */
+.dash-top--scrolled::before { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .dash-top::before { transition: none; } }
+/* 100vw counts the scrollbar, so the full-bleed background can poke a few px
+   past the window; clip (unlike hidden, doesn't break position: sticky). */
+body:has(.dash-tight) { overflow-x: clip; }
+.dash-top .tabs { margin-bottom: var(--space-2); }
+@media (max-width: 640px) {
+  .dash-top .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .dash-top .tabs::-webkit-scrollbar { display: none; }
+  .dash-top .tab { flex-shrink: 0; white-space: nowrap; }
+}
+
+/* Phone width: the title and "Log out" competed for one row, so the title
+   wrapped to two lines and "Log out" became a big two-line circle. */
+@media (max-width: 640px) {
+  .dash-tight h1 { font-size: var(--text-lg); }
+  .dash-tight .parent-header .row { flex-wrap: nowrap; gap: var(--space-2); }
+  .dash-tight .parent-header .row > button { white-space: nowrap; padding: var(--space-2) var(--space-4); }
+}

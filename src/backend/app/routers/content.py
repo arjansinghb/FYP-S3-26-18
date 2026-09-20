@@ -85,15 +85,18 @@ def search_books(
     """Live Google Books search — import candidates only, nothing here is
     recommendable until a moderator explicitly imports (-> pending) and
     approves (CM07) it. Empty list (not an error) if no API key is configured.
-    `start_index` pages through results (see content_sources.search_books)."""
-    return content_sources.search_books(q, start_index=start_index)
+    `start_index` pages through results (see content_sources.search_books).
+    Every result carries `ai_filtered`/`ai_filter_reason` (ai_assist.
+    screen_import_candidates) — the ones the AI expects the moderator to
+    reject anyway, flagged (not removed) so the UI can hide them by default."""
+    return ai_assist.screen_import_candidates(content_sources.search_books(q, start_index=start_index), "book")
 
 
 @router.get("/search/videos")
 def search_videos(q: str = Query(..., min_length=1), mod: dict = Depends(require_role("moderator"))):
     """Live YouTube Data API search — same import-candidate-only rule as
-    search/books above."""
-    return content_sources.search_videos(q)
+    search/books above, including the AI pre-screen flags."""
+    return ai_assist.screen_import_candidates(content_sources.search_videos(q), "video")
 
 
 @router.post("/import", response_model=ContentOut, status_code=201)

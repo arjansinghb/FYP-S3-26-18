@@ -12,6 +12,8 @@ import {
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
+import PasswordInput from '../components/PasswordInput'
+import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PromptDialog from '../components/PromptDialog'
@@ -94,7 +96,7 @@ function AdminLogin({ onAuthed }) {
       <h1>Admin Sign In</h1>
       <form onSubmit={submit} className="card" noValidate>
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label>Password<PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
       </form>
@@ -112,6 +114,7 @@ const ADMIN_TABS = [
 ]
 
 function Tools({ account, onLogout }) {
+  const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
   const [toast, notify] = useToast()
   // Same idea as the moderator console's tab badges — a pending-review
@@ -130,14 +133,14 @@ function Tools({ account, onLogout }) {
   useEffect(() => { refreshCounts() }, [])
 
   return (
-    <div className="parent">
+    <div className="parent dash-tight">
+      <div className={`dash-top ${scrolled ? 'dash-top--scrolled' : ''}`}>
       <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><SettingsIcon width={20} height={20} /></div>
           <div>
             <h1>Admin Console</h1>
-            <p className="muted">Signed in as {account.name}</p>
           </div>
         </div>
         <button className="ghost" onClick={onLogout}>Log out</button>
@@ -153,6 +156,8 @@ function Tools({ account, onLogout }) {
             </button>
           )
         })}
+      </div>
+
       </div>
 
       <div className="tab-panel" key={tab}>
@@ -514,7 +519,7 @@ const CONFIG_SECTIONS = [
 
 function Settings({ notify }) {
   return (
-    <section>
+    <section className="settings-stack">
       {CONFIG_SECTIONS.map((s) => <ConfigCard key={s.key} section={s} notify={notify} />)}
     </section>
   )
@@ -684,7 +689,7 @@ function Reviews({ notify, onCountsChange }) {
     <section>
       <h2><StarIcon width={20} height={20} /> Parent reviews</h2>
       <p className="muted">Approved reviews show on the public landing page, best-rated first — up to 10 at a time.</p>
-      <div className="row" style={{ marginBottom: 16, justifyContent: 'space-between' }}>
+      <div className="row" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
         <div className="tabs" style={{ margin: 0 }}>
           {['pending', 'approved', 'rejected'].map((s) => (
             <button key={s} className={status === s ? 'tab active' : 'tab'} onClick={() => setStatus(s)}>

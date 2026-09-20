@@ -8,6 +8,7 @@ call `get_brain().respond(...)`.
 """
 import json
 import random
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -29,6 +30,78 @@ GENRE_KEYWORDS = {
 }
 BOOK_WORDS = ["book", "read", "story", "stories"]
 VIDEO_WORDS = ["video", "watch", "movie", "show", "clip"]
+GREETING_WORDS = {"hi", "hello", "hey", "hiya", "yo", "howdy"}
+THANKS_WORDS = {"thanks", "thank", "thx", "ty"}
+
+
+def _available_topics(pool: list[dict], limit: int = 12) -> list[str]:
+    """Every genre tag actually present in the pool a child can be shown
+    from, most common first. This is the ONLY source Pip may draw a "how
+    about ... instead?" suggestion from when what the child asked for has no
+    match — a suggested topic that isn't really in the catalogue would just
+    send them into a second dead end."""
+    counts: dict[str, int] = {}
+    for item in pool:
+        for genre in item.get("genres", []):
+            counts[genre] = counts.get(genre, 0) + 1
+    return [g for g, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+
+
+def _topics_in(text: str, topics: list[str]) -> list[str]:
+    """Which of `topics` are mentioned in `text` (whole word, plural-tolerant:
+    "pirate" matches the tag "pirates")."""
+    lowered = text.lower()
+    found = []
+    for topic in topics:
+        base = topic.lower().rstrip("s") or topic.lower()
+        if re.search(rf"\b{re.escape(base)}(?:s|es)?\b", lowered):
+            found.append(topic)
+    return found
+
+
+STRONG_BOOK_RE = re.compile(r"\b(?:books?|stor(?:y|ies)|read(?:ing)?)\b")
+STRONG_VIDEO_RE = re.compile(r"\b(?:videos?|watch(?:ing)?|movies?|clips?|cartoons?)\b")
+
+
+def _format_mismatch(message: str, pool: list[dict]) -> tuple[str, list[dict]]:
+    """The child asked for a topic in one format ("a book about pirates") and
+    the catalogue only has it in the other (a pirate video). That's known
+    exactly in code, so the chat model is TOLD instead of left to notice: it
+    gets a factual note plus the matching item in its numbered list, and can
+    offer "no book, but I do have a video about it" before falling back to
+    some other related topic."""
+    lowered = message.lower()
+    is_book, is_video = bool(STRONG_BOOK_RE.search(lowered)), bool(STRONG_VIDEO_RE.search(lowered))
+    if is_book == is_video:  # neither named, or both — nothing to mismatch against
+        return "", []
+    wanted = "book" if is_book else "video"
+    notes, items = [], []
+    for topic in _topics_in(message, _available_topics(pool, limit=100)):
+        of_topic = [c for c in pool if topic in c.get("genres", [])]
+        if of_topic and not any(c["type"] == wanted for c in of_topic):
+            other = of_topic[0]
+            items.append(other)
+            notes.append(
+                f'The catalogue has no {wanted} about {topic}, but it DOES have a {other["type"]} about it '
+                f'("{other["title"]}") — offer that {other["type"]} first.'
+            )
+    return " ".join(notes), items
+
+
+def _offered_topic_items(last_turn: dict, pool: list[dict], per_topic: int = 3) -> list[dict]:
+    """Items for the topic Pip just OFFERED as an alternative ("...would you
+    like to read about the ocean instead?"). When the child answers with a
+    bare "yes please", embedding retrieval has nothing to go on — and Pip's
+    own reply still names the topic they originally asked for ("pirates"), so
+    it pulls the wrong way. Topics named in Pip's last reply but NOT in the
+    child's own message before it are exactly the offered ones."""
+    topics = _available_topics(pool, limit=100)
+    asked = set(_topics_in(last_turn["message"], topics))
+    offered = [t for t in _topics_in(last_turn["reply"], topics) if t not in asked]
+    items: list[dict] = []
+    for topic in offered:
+        items.extend([c for c in pool if topic in c.get("genres", [])][:per_topic])
+    return items
 
 
 @dataclass
@@ -48,6 +121,17 @@ class PlaceholderBrain:
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
                 history: list[dict] | None = None, reading_level: str | None = None) -> BrainResult:
         text = f" {message.lower()} "
+        words = set(message.lower().replace("!", " ").replace("?", " ").replace(",", " ").replace(".", " ").split())
+
+        # Small talk that's still squarely Pip's job — a greeting or a
+        # thank-you deserves a real reply, not a random book pick.
+        if words and words <= GREETING_WORDS | {"there", "pip"}:
+            return BrainResult(
+                reply="Hi there! I'm Pip — I help you find fun books and videos. What are you in the mood for today?",
+                recommendations=[],
+            )
+        if words & THANKS_WORDS and not any(w in text for w in VIDEO_WORDS + BOOK_WORDS):
+            return BrainResult(reply="You're so welcome! Want me to find you another book or video?", recommendations=[])
 
         wanted_type = None
         if any(w in text for w in VIDEO_WORDS):
@@ -78,9 +162,14 @@ class PlaceholderBrain:
 
         picks = [c for c in catalogue if matches(c)]
 
-        # if genre asked but nothing matched, relax the genre filter
-        if not picks and wanted_genres:
-            picks = [c for c in catalogue if not wanted_type or c["type"] == wanted_type]
+        # Asked for something specific (a topic and/or a format) but nothing
+        # in the pool fits: say so honestly and offer something that DOES
+        # exist, instead of quietly handing back an unrelated pick (the old
+        # "relax the genre filter" behaviour — supervisor feedback: Pip
+        # should reply "Oops, there currently isn't any book related to X,
+        # would you like Y instead?", not pretend a random item was a match).
+        if not picks and (wanted_genres or wanted_type):
+            return self._no_match(catalogue, wanted_type, wanted_genres)
 
         random.shuffle(picks)
         picks = picks[:2]
@@ -109,6 +198,28 @@ class PlaceholderBrain:
                 "genres": item.get("genres", []),
             })
         return BrainResult(reply=reply, recommendations=recs)
+
+    @staticmethod
+    def _no_match(catalogue: list[dict], wanted_type: str | None, wanted_genres: list[str]) -> BrainResult:
+        topic = wanted_genres[0] if wanted_genres else None
+        kind = wanted_type or "book or video"
+        if topic:
+            missing = f"there currently isn't any {kind} related to {topic}"
+        else:
+            missing = f"there currently aren't any {kind}s to show you"
+
+        of_that_type = [c for c in catalogue if not wanted_type or c["type"] == wanted_type]
+        related = [t for t in _available_topics(of_that_type) if t not in wanted_genres]
+        if related:
+            verb = {"book": "read about", "video": "watch something about"}.get(wanted_type, "check out something about")
+            return BrainResult(reply=f"Oops, {missing}. Would you like to {verb} {related[0]} instead?", recommendations=[])
+        if wanted_type and any(c["type"] != wanted_type for c in catalogue):
+            other = "video" if wanted_type == "book" else "book"
+            return BrainResult(reply=f"Oops, {missing}. Would you like a {other} instead?", recommendations=[])
+        return BrainResult(
+            reply=f"Oops, {missing}. Try asking me for something else — like funny stories, animals, or space!",
+            recommendations=[],
+        )
 
     @staticmethod
     def _explain(item: dict, wanted_genres: list[str]) -> str:
@@ -187,7 +298,7 @@ class OpenAIBrain:
         pool = catalogue
         if not pool:
             return BrainResult(
-                reply="I don't have anything for you just yet — ask a grown-up to add some books or videos!",
+                reply="I don't have anything new to show you right now — try asking for a different kind of story, or ask a grown-up to add more books and videos!",
                 recommendations=[],
             )
 
@@ -224,6 +335,20 @@ class OpenAIBrain:
             shuffled = list(pool)
             random.shuffle(shuffled)
             candidates = shuffled[:RETRIEVAL_CANDIDATES]
+
+        # A short answer ("yes please", "sure", "that one") has no topic of its
+        # own — it's replying to what Pip just offered. Put the offered
+        # topic's items first so the chat model can actually recommend them.
+        if history and len(message.split()) <= 4:
+            offered = _offered_topic_items(history[-1], pool)
+            if offered:
+                offered_ids = {c["id"] for c in offered}
+                candidates = (offered + [c for c in candidates if c["id"] not in offered_ids])[: RETRIEVAL_CANDIDATES + 2]
+
+        mismatch_note, mismatch_items = _format_mismatch(message, pool)
+        if mismatch_items:
+            ids = {c["id"] for c in mismatch_items}
+            candidates = (mismatch_items + [c for c in candidates if c["id"] not in ids])[: RETRIEVAL_CANDIDATES + 2]
 
         # ---- stage 2: conversational LLM, constrained to the candidates ----
         # Candidates are numbered 0..N instead of exposing their real (long,
@@ -271,11 +396,36 @@ class OpenAIBrain:
             "0 while you're still figuring out what they want. "
             "You may ONLY recommend items from the numbered catalogue list given to you below — "
             "never invent a title, never describe or mention anything not in that list. "
-            "Stay strictly on topic: you only ever talk about finding books and videos for this "
-            "child to enjoy — nothing else. If they ask about something unrelated (general "
-            "knowledge, other topics, jokes, games, requests to do something else), don't answer "
-            "it; gently steer back instead, e.g. \"I'm just here to help you find a fun book or "
-            "video — what sounds good today?\" Never ask the child for personal details (their full "
+            "Match rule: only pick an item if it genuinely fits what the child asked for — the "
+            "topic, AND the format (book vs video) when they named one. Never recommend something "
+            "unrelated just to have something to show. If NONE of the numbered items genuinely fits "
+            "what they asked for, recommend nothing (empty \"picks\") and say so honestly and warmly "
+            "in this shape: \"Oops, there currently isn't any <book/video> about <what they asked "
+            "for> — would you like to <read/watch> something about <a related topic> instead?\" "
+            "(say \"book\" or \"video\" only if they named a format, otherwise \"book or video\"). "
+            "But if a numbered item matches the topic they asked for in the OTHER format (they "
+            "asked for a book and only a video fits, or the reverse), offer that first instead, "
+            "e.g. \"Oops, there isn't any book about pirates, but I do have a pirate video — want "
+            "to watch it?\" and only then fall back to a related topic. "
+            "Choose that related topic ONLY from the \"topics the catalogue covers\" list given "
+            "below the catalogue — the one closest in meaning to what they wanted — never invent one. "
+            "If they've already been shown everything that fits earlier in this conversation, say "
+            "you've shown them everything you have on that topic (rather than saying there's "
+            "nothing) and offer a related topic the same way. If they say no to something you "
+            "offered, or ask for something different, do NOT repeat the \"Oops\" line — just say "
+            "that's fine and offer a different topic from the list, or ask what they'd like. If they say yes to something you "
+            "offered, recommend from the numbered list right away instead of asking again. "
+            "Always answer what the child actually said, in a way that's relevant to it — never "
+            "ignore their question or reply with something unrelated to it. Everything that is part "
+            "of being Pip is in scope: greetings and friendly small talk (reply warmly, then bring "
+            "it back to books and videos), questions about you (you're Pip, a friendly helper who "
+            "finds books and videos), questions about a book or video you already mentioned (answer "
+            "ONLY from the title/description you were given — if you don't have that detail, say so "
+            "honestly instead of guessing), and feedback like \"I don't like that one\" (be "
+            "understanding and offer something different). Anything outside that — homework, "
+            "general knowledge, other topics, games, jokes, requests to do something else — is out "
+            "of scope: don't answer it; kindly say you can only help with books and videos, then "
+            "ask what they'd like to read or watch. Never ask the child for personal details (their full "
             "name, address, school, phone number, or exactly where they live) — their age band is "
             "all you need, and you already have it. If they share personal information anyway, "
             "don't repeat it back, comment on it, or dwell on it — just gently continue the "
@@ -310,7 +460,12 @@ class OpenAIBrain:
             messages.append({"role": "assistant", "content": turn["reply"]})
         messages.append({
             "role": "user",
-            "content": f"Child's message: {message!r}\n\nCatalogue:\n{json.dumps(catalogue_brief)}",
+            "content": (
+                f"Child's message: {message!r}\n\nCatalogue:\n{json.dumps(catalogue_brief)}\n\n"
+                f"Topics the catalogue covers overall (the ONLY topics you may suggest as an "
+                f"alternative): {json.dumps(_available_topics(pool))}"
+                + (f"\n\nNote: {mismatch_note}" if mismatch_note else "")
+            ),
         })
 
         try:

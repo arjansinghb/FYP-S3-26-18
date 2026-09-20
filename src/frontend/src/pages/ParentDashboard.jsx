@@ -22,6 +22,7 @@ import {
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
+import PasswordInput from '../components/PasswordInput'
 import { firstMissingField } from '../formValidation'
 import './parent.css'
 
@@ -72,6 +73,7 @@ function AuthPanel({ onAuthed }) {
   const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -80,9 +82,10 @@ function AuthPanel({ onAuthed }) {
   async function submit(e) {
     e.preventDefault()
     const missing = firstMissingField(mode === 'signup'
-      ? [[name, 'Your name'], [email, 'Email'], [password, 'Password']]
+      ? [[name, 'Your name'], [email, 'Email'], [password, 'Password'], [confirmPassword, 'Confirm password']]
       : [[email, 'Email'], [password, 'Password']])
     if (missing) { setError(missing); return }
+    if (mode === 'signup' && password !== confirmPassword) { setError("Passwords don't match."); return }
     setError(''); setBusy(true)
     try {
       const acc = mode === 'login'
@@ -112,8 +115,15 @@ function AuthPanel({ onAuthed }) {
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label>Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} />
+          <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} minLength={6}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         </label>
+        {mode === 'signup' && (
+          <label>Confirm password
+            <PasswordInput value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={6}
+              autoComplete="new-password" />
+          </label>
+        )}
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
           {busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
@@ -121,7 +131,7 @@ function AuthPanel({ onAuthed }) {
       </form>
       <p className="muted">
         {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-        <button className="linkbtn" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError('') }}>
+        <button className="linkbtn" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setConfirmPassword('') }}>
           {mode === 'login' ? 'Sign up' : 'Sign in'}
         </button>
       </p>
@@ -138,6 +148,7 @@ function ForgotPassword({ onBack }) {
   const [email, setEmail] = useState('')
   const [token, setToken] = useState('')
   const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -160,8 +171,9 @@ function ForgotPassword({ onBack }) {
 
   async function confirm(e) {
     e.preventDefault()
-    const missing = firstMissingField([[token, 'Reset token'], [newPassword, 'New password']])
+    const missing = firstMissingField([[token, 'Reset token'], [newPassword, 'New password'], [confirmNewPassword, 'Confirm new password']])
     if (missing) { setError(missing); return }
+    if (newPassword !== confirmNewPassword) { setError("Passwords don't match."); return }
     setError(''); setBusy(true)
     try {
       await confirmPasswordReset(token, newPassword)
@@ -193,7 +205,10 @@ function ForgotPassword({ onBack }) {
             <input value={token} onChange={(e) => setToken(e.target.value)} />
           </label>
           <label>New password
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} minLength={6} />
+            <PasswordInput value={newPassword} onChange={(e) => setNewPassword(e.target.value)} minLength={6} autoComplete="new-password" />
+          </label>
+          <label>Confirm new password
+            <PasswordInput value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} minLength={6} autoComplete="new-password" />
           </label>
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Set new password'}</button>
@@ -246,14 +261,13 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
   const visibleChildren = activeChildId === 'all' ? children : children.filter((c) => c.id === activeChildId)
 
   return (
-    <div className="parent">
+    <div className="parent dash-tight">
       <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><UserIcon width={20} height={20} /></div>
           <div>
             <h1>Parent Dashboard</h1>
-            <p className="muted">Signed in as {account.name} ({account.email})</p>
           </div>
         </div>
         <div className="row">
@@ -362,9 +376,6 @@ function ReviewPanel() {
         </div>
       ) : (
         <form className="review-form" onSubmit={submit}>
-          {review?.status === 'rejected' && (
-            <p className="review-rejected-note">Your last submission wasn't published — {review.rejection_reason || 'try rewording it.'} Feel free to try again.</p>
-          )}
           <p className="muted">Share your experience with Pip — your feedback helps us make it better for every family.</p>
           <div className="review-field">
             <span className="review-field-label">Rating</span>
@@ -599,6 +610,7 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
   const [name, setName] = useState(account.name)
   const [email, setEmail] = useState(account.email)
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -607,6 +619,7 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
     e.preventDefault()
     const missing = firstMissingField([[name, 'Name'], [email, 'Email']])
     if (missing) { setError(missing); return }
+    if (password !== confirmPassword) { setError("Passwords don't match."); return }
     setError(''); setBusy(true)
     const payload = { name, email }
     if (password) payload.password = password
@@ -614,6 +627,7 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
       const updated = await updateAccount(payload)
       onUpdated({ ...account, ...updated })
       setPassword('')
+      setConfirmPassword('')
       setEditing(false)
     } catch (err) {
       setError(err.message)
@@ -669,13 +683,16 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
           <label>Email
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
-          <label>New password<span className="muted"> (leave blank to keep current)</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} />
+          <label>New password
+            <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} minLength={6} autoComplete="new-password" />
+          </label>
+          <label>Confirm new password
+            <PasswordInput value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={6} autoComplete="new-password" />
           </label>
           {error && <p className="error">{error}</p>}
           <div className="row">
             <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
-            <button type="button" className="ghost" onClick={() => { setEditing(false); setName(account.name); setEmail(account.email); setPassword(''); setError('') }}>Cancel</button>
+            <button type="button" className="ghost" onClick={() => { setEditing(false); setName(account.name); setEmail(account.email); setPassword(''); setConfirmPassword(''); setError('') }}>Cancel</button>
           </div>
         </form>
       )}
@@ -976,7 +993,7 @@ function PrivacyPanel({ account }) {
 
 // ---------- PA28 consent (shown inline, right where it's triggered) ----------
 
-function ConsentStep({ account, onAccountUpdated, onDone }) {
+function ConsentStep({ account, onAccountUpdated, onDone, onBack }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -998,7 +1015,8 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
   }
 
   return (
-    <form onSubmit={submit} className="card" style={{ background: 'var(--primary-100)' }} noValidate>
+    <form onSubmit={submit} className="card consent-card" style={{ background: 'var(--primary-100)' }} noValidate>
+      {onBack && <button type="button" className="linkbtn" onClick={onBack} style={{ alignSelf: 'flex-start' }}>← Back</button>}
       <h3>Before you add a child…</h3>
       <p className="muted">
         Under PDPA, we need your verifiable consent before collecting any data about your child —
@@ -1006,7 +1024,7 @@ function ConsentStep({ account, onAccountUpdated, onDone }) {
         the account holder and agree to this.
       </p>
       <label>Password
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </label>
       {error && <p className="error">{error}</p>}
       <button type="submit" disabled={busy}>{busy ? 'Confirming…' : 'I agree — continue'}</button>
@@ -1053,7 +1071,7 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
     return <VerifyBanner account={account} onAccountUpdated={onAccountUpdated} />
   }
   if (!account.consent) {
-    return <ConsentStep account={account} onAccountUpdated={onAccountUpdated} onDone={() => {}} />
+    return <ConsentStep account={account} onAccountUpdated={onAccountUpdated} onDone={() => {}} onBack={() => setOpen(false)} />
   }
 
   return (
@@ -1518,7 +1536,7 @@ function EditChild({ child, onDone }) {
     // own, so this form's fields fell back to bare block stacking, same
     // gap-less look the "My account" edit form had before. Reusing that
     // same fix's class here instead of inventing a near-duplicate one.
-    <form className="panel account-edit-form" onSubmit={save} noValidate>
+    <form className="panel panel--flat account-edit-form" onSubmit={save} noValidate>
       <label>Name
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
@@ -1563,7 +1581,7 @@ function SafetySettings({ child, onDone }) {
   }
 
   return (
-    <div className="panel">
+    <div className="panel panel--flat">
       <label className="toggle">
         <input type="checkbox" checked={allowBooks} onChange={(e) => setAllowBooks(e.target.checked)} />
         Allow book recommendations
@@ -1611,7 +1629,7 @@ function ChildDataPrivacy({ child }) {
   const pending = requests.find((r) => r.status === 'pending')
 
   return (
-    <div className="panel">
+    <div className="panel panel--flat">
       <p className="muted">Request deletion of {child.name}'s stored chat history and favourites (separate from deleting the whole profile).</p>
       {pending ? (
         <>

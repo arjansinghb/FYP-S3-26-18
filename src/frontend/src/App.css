@@ -218,6 +218,11 @@
 .welcome-back-fav-chip svg { flex-shrink: 0; }
 .welcome-back-fav-chip span,
 .welcome-back-fav-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The title sits in a <span> so the ellipsis actually applies (a bare text
+   node inside an inline-flex button can't be ellipsised — it just overflowed
+   and got clipped on both sides). min-width: 0 lets the span shrink inside
+   the chip's max-width instead of forcing the chip wider. */
+.welcome-back-fav-chip span { min-width: 0; }
 /* Scoped through .welcome-back-fav-row so this reliably beats parent.css's
    global `button:hover:not(:disabled)` fill (same cross-page CSS-bundling
    bleed-through as the pills/logo in child.css — see those comments for

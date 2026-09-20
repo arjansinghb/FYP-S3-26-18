@@ -950,3 +950,62 @@
   .hero-copy h1 { font-size: var(--text-2xl); } /* was a hardcoded 36px, outside the type scale — --text-2xl (34px) is the nearest real step */
   .catalogue-card { flex-basis: 168px; } /* smaller cards on a narrow phone — the shelf still scrolls, just shows less of the next card at rest */
 }
+
+
+/* ---------- section rail (components/SideNav.jsx) ----------
+   A vertical line of dots down the left edge, one per section, with every
+   section's name beside its dot — always readable, never hover-only (the
+   first version showed labels only on hover, so nobody could tell what the
+   dots were). Styled as a progress timeline: hollow dots for sections still
+   ahead, filled for ones already scrolled past, a larger haloed dot for the
+   current one, and the line fills purple down to it.
+   It only shows from 1360px up, and there it RESERVES its own gutter: the
+   page's content column is narrowed symmetrically (both sides, so the
+   edge-to-edge tinted sections that are centred on the column stay
+   aligned) instead of letting the rail float on top of content. Above
+   ~1700px the gutter is wider than the rail needs anyway and content stays
+   at its full 1320px. Below 1360px, or on a short window, there's no room,
+   so it's hidden. */
+.side-nav { display: none; }
+@media (min-width: 1360px) and (min-height: 560px) {
+  .landing { --rail-gutter: 196px; }
+  .landing-nav, .hero, .section { max-width: min(1320px, calc(100vw - 2 * var(--rail-gutter))); }
+
+  .side-nav { display: block; position: fixed; left: 28px; top: 50%; transform: translateY(-50%); z-index: 40; }
+  .side-nav ol { list-style: none; margin: 0; padding: 0; position: relative; }
+  .side-nav li { height: 38px; }
+  /* One continuous line behind the dots (each dot is opaque, so it never
+     shows through), from the first dot's centre to the last's. */
+  .side-nav-track {
+    position: absolute; left: 6px; top: 19px; bottom: 19px; width: 2px; border-radius: 2px; background: var(--border);
+  }
+  .side-nav-track span { display: block; width: 100%; background: var(--primary-500); border-radius: 2px; transition: height 0.35s ease; }
+  .side-nav a { display: flex; align-items: center; gap: var(--space-3); height: 100%; text-decoration: none; }
+  .side-nav-dot {
+    position: relative; flex-shrink: 0; width: 14px; height: 14px; box-sizing: border-box;
+    border-radius: 50%; border: 2px solid color-mix(in srgb, var(--muted) 40%, var(--surface)); background: var(--surface);
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+  }
+  .side-nav-label {
+    font-size: var(--text-sm); font-weight: 600; white-space: nowrap; color: var(--muted);
+    transition: color 0.2s;
+  }
+  .side-nav a:hover .side-nav-dot { border-color: var(--primary-500); }
+  .side-nav a:hover .side-nav-label { color: var(--primary-700); }
+  .side-nav li.is-past .side-nav-dot { background: var(--primary-500); border-color: var(--primary-500); }
+  .side-nav li.is-past .side-nav-label { color: var(--text); }
+  .side-nav li.is-active .side-nav-dot {
+    background: var(--primary-700); border-color: var(--primary-700);
+    box-shadow: 0 0 0 4px var(--primary-100);
+  }
+  .side-nav li.is-active .side-nav-label { color: var(--primary-700); font-weight: 800; }
+  .side-nav a:focus-visible { outline: none; }
+  .side-nav a:focus-visible .side-nav-dot { box-shadow: 0 0 0 3px var(--primary-500); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-nav-dot, .side-nav-label, .side-nav-track span { transition: none; }
+}
+
+/* The sticky top nav is ~90px tall — without this a section jumped to from
+   the rail (or any #anchor) would land underneath it. */
+.hero, .section, .final-cta { scroll-margin-top: 96px; }

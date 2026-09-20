@@ -606,7 +606,7 @@ function Experience({ child, setChild, onLogout }) {
                         onClick={() => ask(`Tell me more about ${curateTitle(f.title)}`)}
                       >
                         {f.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />}
-                        {curateTitle(f.title)}
+                        <span>{curateTitle(f.title)}</span>
                       </button>
                     ))}
                   </div>

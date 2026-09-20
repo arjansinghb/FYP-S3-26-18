@@ -127,3 +127,59 @@ def suggest_catalogue_decision(item: dict) -> dict:
         "reason": str(result.get("reason") or "")[:200],
         "confidence": confidence,
     }
+
+
+def screen_import_candidates(results: list[dict], media_type: str) -> list[dict]:
+    """CM03 — the search-stage half of the moderator AI: a pre-screen that
+    filters out results the moderator would almost certainly reject anyway
+    (supervisor's prototype requirement: "an AI that will filter out
+    content that would be rejected by the moderator"), so their time goes
+    to plausible candidates instead of wading through adult/technical/spam
+    results a broad Google Books/YouTube query always mixes in.
+
+    One batched call for the whole result page (not one call per result).
+    Each result comes back annotated with `ai_filtered` (bool) and
+    `ai_filter_reason`, never removed — the moderator UI hides filtered
+    ones by default but can still reveal and import any of them, so a wrong
+    AI call costs one click to override rather than losing a good item.
+    Same fail-open posture as everything else in this file: if the AI call
+    doesn't run or doesn't parse, nothing is marked filtered.
+    """
+    annotated = [{**r, "ai_filtered": False, "ai_filter_reason": ""} for r in results]
+    if not annotated:
+        return annotated
+    system_prompt = (
+        "You pre-screen search results for a content moderator at a children's (ages 5-12) "
+        "book/video recommendation app, so the moderator only spends time on results they "
+        "would plausibly approve. For each result decide whether the moderator would REJECT "
+        "it: reject anything that isn't suitable children's content — violence or gore, "
+        "sexual or mature themes, drugs or alcohol, hate or harassment, horror aimed at older "
+        "audiences, adult/academic/technical/professional material not made for children "
+        "(e.g. a university textbook, an adult thriller, a gaming stream, news, commentary or "
+        "reaction content), or spam/clickbait with an empty or nonsensical description. When "
+        "in doubt about an ordinary, harmless children's book or video, do NOT reject it — you "
+        "are only removing what clearly wouldn't be approved, and a human moderator still "
+        "reviews everything that's left. Respond ONLY with JSON of this exact shape: "
+        '{"verdicts": [{"index": 0, "reject": true or false, "reason": "one short sentence, '
+        'only needed when reject is true"}]} with one entry per result.'
+    )
+    brief = [
+        {
+            "index": i,
+            "title": r.get("title"),
+            "description": (r.get("description") or "")[:240],
+            "by": r.get("authors") or r.get("channel"),
+            "categories": r.get("categories") or [],
+        }
+        for i, r in enumerate(annotated)
+    ]
+    result = _chat_json(system_prompt, json.dumps({"type": media_type, "results": brief}))
+    for verdict in (result or {}).get("verdicts") or []:
+        index = verdict.get("index")
+        if (
+            isinstance(index, int) and not isinstance(index, bool)
+            and 0 <= index < len(annotated) and verdict.get("reject") is True
+        ):
+            annotated[index]["ai_filtered"] = True
+            annotated[index]["ai_filter_reason"] = str(verdict.get("reason") or "")[:200]
+    return annotated

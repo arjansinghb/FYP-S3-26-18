@@ -6,11 +6,14 @@ import {
   listReports, resolveReport, searchBooks, searchVideos, importContent,
 } from '../api'
 import {
-  BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
+  AlertIcon, BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
   InboxIcon, PlusIcon, RefreshIcon, SearchIcon, SparkleIcon, TrashIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
+import PasswordInput from '../components/PasswordInput'
+import ConfirmDialog from '../components/ConfirmDialog'
+import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import { firstMissingField } from '../formValidation'
 import { timeAgo, logTime } from '../timeFormat'
@@ -96,7 +99,7 @@ function ModLogin({ onAuthed }) {
       <h1>Moderator Sign In</h1>
       <form onSubmit={submit} className="card" noValidate>
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label>Password<PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
         {error && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
       </form>
@@ -113,6 +116,7 @@ const TABS = [
 ]
 
 function Tools({ account, onLogout }) {
+  const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
   const [toast, notify] = useToast()
   // Live counts feed the little badges on the Submissions/Reports tabs —
@@ -135,14 +139,14 @@ function Tools({ account, onLogout }) {
   useEffect(() => { refreshCounts() }, [])
 
   return (
-    <div className="parent">
+    <div className="parent dash-tight">
+      <div className={`dash-top ${scrolled ? 'dash-top--scrolled' : ''}`}>
       <Link className="home-link" to="/">← Home</Link>
       <header className="parent-header">
         <div className="parent-header-who">
           <div className="parent-header-role"><GridIcon width={20} height={20} /></div>
           <div>
             <h1>Moderator Console</h1>
-            <p className="muted">Signed in as {account.name}</p>
           </div>
         </div>
         <button className="ghost" onClick={onLogout}>Log out</button>
@@ -158,6 +162,8 @@ function Tools({ account, onLogout }) {
             </button>
           )
         })}
+      </div>
+
       </div>
 
       <div className="tab-panel" key={tab}>
@@ -309,7 +315,7 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
             </div>
             <div className="row" style={{ marginTop: 'var(--space-2)' }}>
               {counts.pending > 0 && (
-                <button onClick={() => onNavigate('submissions')}>
+                <button style={{ gap: 'var(--space-2)' }} onClick={() => onNavigate('submissions')}>
                   <InboxIcon width={16} height={16} /> Review {counts.pending} waiting submission{counts.pending === 1 ? '' : 's'}
                 </button>
               )}
@@ -416,11 +422,15 @@ function SearchImport({ onImported, notify }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [importing, setImporting] = useState(null) // the search result being turned into a real entry
+  // The AI pre-screen (ai_assist.screen_import_candidates) flags results it
+  // expects the moderator to reject anyway. They're hidden by default but
+  // never gone — this toggle reveals them, and any one can still be imported.
+  const [showFiltered, setShowFiltered] = useState(false)
 
   async function search(e) {
     e.preventDefault()
     if (!q.trim()) return
-    setBusy(true); setError('')
+    setBusy(true); setError(''); setShowFiltered(false)
     try {
       setResults(type === 'book' ? await searchBooks(q) : await searchVideos(q))
     } catch (err) {
@@ -479,26 +489,59 @@ function SearchImport({ onImported, notify }) {
       {results && results.length === 0 && !error && (
         <p className="muted">No results — try a different search, or check the {type === 'book' ? 'Google Books' : 'YouTube Data'} API key is configured.</p>
       )}
-      {results && results.length > 0 && (
-        <div className="search-results">
-          {results.map((r) => (
-            <div className="search-result" key={r.external_id}>
-              {r.thumbnail ? (
-                <img className="search-result-cover" src={r.thumbnail} alt="" />
-              ) : (
-                <div className="search-result-cover search-result-cover-empty"><TypeIcon type={type} /></div>
-              )}
-              <div className="search-result-body">
-                <h4>{r.title}</h4>
-                <p className="muted">{truncate(r.description, 150)}</p>
-                {type === 'video' && r.channel && <p className="muted">Channel: {r.channel}</p>}
-                <button className="small" onClick={() => setImporting(r)}><PlusIcon width={14} height={14} /> Import for review</button>
+      {results && results.length > 0 && (() => {
+        const kept = results.filter((r) => !r.ai_filtered)
+        const filtered = results.filter((r) => r.ai_filtered)
+        return (
+          <>
+            {filtered.length > 0 && (
+              <div className="ai-filter-bar">
+                <span className="ai-filter-bar-text">
+                  <SparkleIcon width={15} height={15} />
+                  <span><b>AI filtered out {filtered.length} result{filtered.length === 1 ? '' : 's'}</b> it expects you'd reject.</span>
+                </span>
+                <button type="button" className="ghost small" onClick={() => setShowFiltered((v) => !v)}>
+                  {showFiltered ? 'Hide them' : 'Show them'}
+                </button>
               </div>
+            )}
+            {kept.length === 0 && !showFiltered && (
+              <p className="muted">Every result on this page was filtered out — show them to review anyway, or try a different search.</p>
+            )}
+            <div className="search-results">
+              {kept.map((r) => <SearchResultCard key={r.external_id} r={r} type={type} onImport={setImporting} />)}
+              {showFiltered && filtered.map((r) => <SearchResultCard key={r.external_id} r={r} type={type} onImport={setImporting} />)}
             </div>
-          ))}
-        </div>
-      )}
+          </>
+        )
+      })()}
     </section>
+  )
+}
+
+function SearchResultCard({ r, type, onImport }) {
+  return (
+    <div className={`search-result ${r.ai_filtered ? 'search-result--filtered' : ''}`}>
+      {r.thumbnail ? (
+        <img className="search-result-cover" src={r.thumbnail} alt="" />
+      ) : (
+        <div className="search-result-cover search-result-cover-empty"><TypeIcon type={type} /></div>
+      )}
+      <div className="search-result-body">
+        <h4>{r.title}</h4>
+        <p className="muted">{truncate(r.description, 150)}</p>
+        {type === 'video' && r.channel && <p className="muted">Channel: {r.channel}</p>}
+        {r.ai_filtered && (
+          <div className="ai-note ai-note--reject">
+            <SparkleIcon width={15} height={15} />
+            <span><b>AI would reject this</b>{r.ai_filter_reason && <> — {r.ai_filter_reason}</>}</span>
+          </div>
+        )}
+        <button className={r.ai_filtered ? 'ghost small' : 'small'} onClick={() => onImport(r)}>
+          <PlusIcon width={14} height={14} /> {r.ai_filtered ? 'Import anyway' : 'Import for review'}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -511,6 +554,7 @@ function Submissions({ notify, onCountsChange }) {
   // console genuinely felt static, since approve/reject had zero motion
   // and zero confirmation beyond the row disappearing.
   const [leaving, setLeaving] = useState(null)
+  const [confirmingReject, setConfirmingReject] = useState(null) // the submission awaiting a "reject this?" answer
 
   async function reload() {
     setLoading(true)
@@ -590,12 +634,25 @@ function Submissions({ notify, onCountsChange }) {
               <CheckIcon width={16} height={16} /> Approve
             </button>
             <button className="danger" disabled={leaving === i.id}
-              onClick={() => act(i, rejectContent, `“${i.title}” rejected.`, 'danger')}>
+              onClick={() => setConfirmingReject(i)}>
               <CloseIcon width={16} height={16} /> Reject
             </button>
           </div>
         </div>
       ))}
+      <ConfirmDialog
+        open={!!confirmingReject}
+        icon={<AlertIcon width={20} height={20} />}
+        title="Reject this submission?"
+        message={confirmingReject ? `“${confirmingReject.title}” will be rejected and won’t appear in the catalogue.` : ''}
+        confirmLabel="Reject"
+        onConfirm={() => {
+          const item = confirmingReject
+          setConfirmingReject(null)
+          act(item, rejectContent, `“${item.title}” rejected.`, 'danger')
+        }}
+        onCancel={() => setConfirmingReject(null)}
+      />
     </section>
   )
 }

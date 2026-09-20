@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import PasswordInput from './PasswordInput'
 
 // A themed stand-in for window.prompt() — same overlay/card language as
 // ConfirmDialog (see that file's own docstring for why the native browser
@@ -47,8 +48,8 @@ export default function PromptDialog({
         </div>
         <label>
           {label}
-          <input
-            ref={inputRef} type="password" value={value} placeholder={placeholder}
+          <PasswordInput
+            ref={inputRef} value={value} placeholder={placeholder}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && submit()}
           />
