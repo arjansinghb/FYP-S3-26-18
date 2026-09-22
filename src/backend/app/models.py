@@ -4,12 +4,10 @@ from pydantic import BaseModel, Field
 
 AgeBand = Literal["5-8", "9-12"]
 ContentType = Literal["book", "video"]
-# PA33/34/35 gating. "ultra" added 2026-09-07 (Kiefer's own ask) — same
-# Premium features plus unlimited child profiles (Premium stays capped at
-# 4). Every "!= premium" gate elsewhere in the app was audited and changed
-# to "== free" so Ultra inherits every Premium-gated feature as a superset,
-# not a separate track that has to re-earn each one.
-AccountTier = Literal["free", "premium", "ultra"]
+# PA33/34/35 gating. trimmed-demo branch: Ultra tier removed (kept to
+# Free/Premium only) for a leaner demo build — see prototype-demo-trimmed's
+# scope. The full prototype-real-integrations branch still has Ultra.
+AccountTier = Literal["free", "premium"]
 
 # ----- accounts / auth -----
 
@@ -149,7 +147,7 @@ class PaymentMethodOut(BaseModel):
 
 
 class SubscribeRequest(BaseModel):
-    tier: Literal["premium", "ultra"] = "premium"
+    tier: Literal["premium"] = "premium"
     billing_cycle: Literal["monthly", "annual"] = "monthly"
     payment_method: Optional[PaymentMethodIn] = None  # PA24 includes PA26 in the same flow
 

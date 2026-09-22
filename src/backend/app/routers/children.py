@@ -15,9 +15,8 @@ router = APIRouter(tags=["children"])
 
 FREE_CHILD_LIMIT = 1
 PREMIUM_CHILD_LIMIT = 4  # PA33
-ULTRA_CHILD_LIMIT = float("inf")  # Ultra tier (2026-09-07) — genuinely unlimited, not just "a bigger number"
 
-_TIER_CHILD_LIMITS = {"free": FREE_CHILD_LIMIT, "premium": PREMIUM_CHILD_LIMIT, "ultra": ULTRA_CHILD_LIMIT}
+_TIER_CHILD_LIMITS = {"free": FREE_CHILD_LIMIT, "premium": PREMIUM_CHILD_LIMIT}
 
 
 def _child_out(c: dict) -> ChildOut:
@@ -40,8 +39,7 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     """PA07. Gated behind UV06 (email verified) and PA28 (consent given) —
     "a child profile isn't allowed to exist without it" is the whole point
     of verifiable parental consent, not a checkbox nobody enforces. Also
-    enforces PA33's tier cap (free: 1 child, Premium: up to 4, Ultra:
-    unlimited)."""
+    enforces PA33's tier cap (free: 1 child, Premium: up to 4)."""
     if not parent.get("verified"):
         raise HTTPException(403, "Please verify your email before adding a child profile.")
     if not parent.get("consent"):
@@ -50,9 +48,9 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     tier = parent.get("tier", "free")
     limit = _TIER_CHILD_LIMITS[tier]
     if len(existing) >= limit:
-        msg = ("Free accounts can have 1 child profile — upgrade to Premium for up to 4, or Ultra for unlimited."
+        msg = ("Free accounts can have 1 child profile — upgrade to Premium for up to 4."
                if tier == "free" else
-               "You've reached the Premium limit of 4 child profiles — upgrade to Ultra for unlimited.")
+               "You've reached the Premium limit of 4 child profiles.")
         raise HTTPException(403, msg)
     # PIN/linking code is system-generated inside create_child now, not
     # parent-typed — see models.ChildCreate's docstring for why. No

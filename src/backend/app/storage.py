@@ -88,16 +88,12 @@ class Database:
                 "openai_zdr_status": settings.ZDR_STATUS,
             },
             "website": {"site_title": "Pip — Reading Buddy", "tagline": "Safe, age-appropriate books & videos for kids", "announcement": ""},
-            # One price pair per paid tier (SA13) — used to be a single
-            # `monthly_price` covering "Premium" only; `subscribe()` below
-            # never actually read it (charged a hardcoded 999/9900 cents
-            # regardless of what an admin set here) until the Ultra tier
-            # pass (2026-09-07) wired both tiers' real prices through for
-            # real, not just displayed them.
+            # Price pair for the one paid tier (SA13). trimmed-demo branch:
+            # Ultra tier's prices removed along with the tier itself — see
+            # models.AccountTier's comment.
             "billing": {
                 "provider": "none", "currency": "SGD", "billing_enabled": False,
                 "premium_monthly_price": 9.9, "premium_annual_price": 99.0,
-                "ultra_monthly_price": 19.9, "ultra_annual_price": 199.0,
             },
         }
         self.started = time.time()

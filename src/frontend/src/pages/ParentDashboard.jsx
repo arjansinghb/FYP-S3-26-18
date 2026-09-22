@@ -7,17 +7,14 @@ import {
   childActivity, childFavourites, reportContent,
   requestVerification, confirmVerification,
   requestPasswordReset, confirmPasswordReset,
-  giveConsent, getPrivacySettings, updatePrivacySettings,
-  requestChildDataDeletion, listChildDataDeletions, cancelChildDataDeletion,
-  listNotifications, markNotificationRead, getNotificationPreferences, updateNotificationPreferences,
+  giveConsent,
   getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
   getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
-  childReports, childTrends, compareChildren,
-  getMyReview, submitReview,
+  childReports,
 } from '../api'
 import {
-  AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
+  AlertIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
   PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
@@ -257,7 +254,6 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
           </div>
         </div>
         <div className="row">
-          <NotificationsBell />
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>
       </header>
@@ -283,122 +279,13 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
         </div>
       )}
 
-      {account.tier === 'premium' && children.length > 1 && activeChildId === 'all' && (
-        <CompareChildrenPanel />
-      )}
-
       <div className="child-grid">
         {visibleChildren.map((c) => (
           <ChildCard key={c.id} child={c} account={account} onChanged={reload} />
         ))}
       </div>
 
-      <NotificationSettings />
-
       <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
-
-      <ReviewPanel />
-
-      <PrivacyPanel account={account} />
-    </div>
-  )
-}
-
-// ---------- UV04: submit a review for the public landing page ----------
-// Real gap, not a restyle: there was no way for a parent to actually leave
-// one — the landing page's "Why families trust Pip" section deliberately
-// used verifiable product claims instead of invented quotes (see Home.jsx's
-// TRUST_POINTS comment), which is honest but isn't the same thing as a real
-// parent's own words. This is that real path: written here, screened for
-// safety, then only public once an admin explicitly approves it.
-function ReviewPanel() {
-  const [review, setReview] = useState(undefined) // undefined = loading, null = none yet
-  const [rating, setRating] = useState(0) // 0 = nothing picked yet — a parent should choose, not inherit a default
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  // Shown briefly right after a successful submit, then the panel reverts
-  // to the (blank) form on its own — a parent can always send another
-  // review later, so this is a passing confirmation, not a dead end.
-  const [justSubmitted, setJustSubmitted] = useState(false)
-
-  useEffect(() => {
-    getMyReview().then(setReview).catch(() => setReview(null))
-  }, [])
-
-  useEffect(() => {
-    if (!justSubmitted) return
-    const timer = setTimeout(() => setJustSubmitted(false), 3000)
-    return () => clearTimeout(timer)
-  }, [justSubmitted])
-
-  async function submit(e) {
-    e.preventDefault()
-    if (!rating) { setError('Pick a star rating first.'); return }
-    if (!text.trim()) { setError('Write a few words first.'); return }
-    setBusy(true); setError('')
-    try {
-      const saved = await submitReview(rating, text.trim())
-      setReview(saved)
-      setText('')
-      setRating(0)
-      setJustSubmitted(true)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (review === undefined) return null // avoid a flash of the form before we know
-
-  return (
-    <div className="card">
-      <h3><StarIcon width={18} height={18} filled /> Your review</h3>
-      {justSubmitted ? (
-        <div className="review-submitted review-submitted-thanks">
-          <CheckIcon width={20} height={20} />
-          <p className="review-submitted-text">Thank you for your feedback!</p>
-        </div>
-      ) : (
-        <form className="review-form" onSubmit={submit}>
-          {review?.status === 'rejected' && (
-            <p className="review-rejected-note">Your last submission wasn't published — {review.rejection_reason || 'try rewording it.'} Feel free to try again.</p>
-          )}
-          <p className="muted">Share your experience with Pip — your feedback helps us make it better for every family.</p>
-          <div className="review-field">
-            <span className="review-field-label">Rating</span>
-            <StarPicker value={rating} onChange={setRating} />
-          </div>
-          <div className="review-field">
-            <label htmlFor="review-text" className="review-field-label">Your review</label>
-            <textarea
-              id="review-text"
-              value={text} onChange={(e) => setText(e.target.value)} maxLength={600} rows={3}
-              placeholder="What's it actually like using Pip with your child?"
-            />
-          </div>
-          {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={busy} className="review-submit">{busy ? 'Submitting…' : 'Submit review'}</button>
-        </form>
-      )}
-    </div>
-  )
-}
-
-function StarPicker({ value, onChange, readOnly }) {
-  return (
-    <div className="star-picker" role={readOnly ? undefined : 'radiogroup'} aria-label="Rating">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n} type="button" className="star-btn" disabled={readOnly}
-          onClick={() => onChange?.(n)}
-          aria-label={`${n} star${n > 1 ? 's' : ''}`}
-          aria-pressed={n <= value}
-        >
-          <StarIcon width={22} height={22} filled={n <= value} />
-        </button>
-      ))}
     </div>
   )
 }
@@ -466,129 +353,6 @@ function VerifyBanner({ account, onAccountUpdated }) {
         )}
       </form>
     </div>
-  )
-}
-
-// ---------- PA20/22 notifications ----------
-
-function NotificationsBell() {
-  const [open, setOpen] = useState(false)
-  const [items, setItems] = useState([])
-  const [loaded, setLoaded] = useState(false)
-
-  // Fetch on mount, not just lazily when the bell is first clicked — a
-  // badge that only appears after you've already opened the panel once
-  // defeats the point of having one. Real found gap, not just a restyle:
-  // a parent had no way to *notice* something new happened (e.g. their
-  // child just activated their device) without already checking.
-  useEffect(() => {
-    listNotifications().then((n) => { setItems(n); setLoaded(true) }).catch(() => {})
-  }, [])
-
-  async function toggle() {
-    if (!open) {
-      // Refresh on every open too, so marking something read elsewhere
-      // (or a new notification landing while this was closed) isn't stale.
-      try { setItems(await listNotifications()); setLoaded(true) } catch { /* ignore */ }
-    }
-    setOpen(!open)
-  }
-
-  async function read(n) {
-    if (n.read) return
-    await markNotificationRead(n.id)
-    setItems(items.map((x) => (x.id === n.id ? { ...x, read: true } : x)))
-  }
-
-  const unread = items.filter((n) => !n.read).length
-
-  return (
-    <div className="notif-bell">
-      <button className="notif-trigger" onClick={toggle} aria-label="Notifications" aria-expanded={open}>
-        <BellIcon width={18} height={18} />
-        {loaded && unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
-      </button>
-      {open && (
-        <div className="notif-panel">
-          <div className="notif-panel-header">
-            <h3>Notifications</h3>
-            {loaded && unread > 0 && <span className="notif-unread-label">{unread} new</span>}
-          </div>
-          {items.length === 0 && <p className="muted notif-empty">Nothing yet — you'll see updates here as they happen.</p>}
-          {items.map((n) => (
-            <button key={n.id} className={`notif-item${n.read ? ' notif-item--read' : ''}`} onClick={() => read(n)}>
-              <span className="notif-dot" />
-              <span className="notif-text">
-                <span className="notif-title">{n.title}</span>
-                <span className="notif-body">{n.body}</span>
-                <span className="notif-ts">{new Date(n.created_at * 1000).toLocaleString()}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------- PA22: notification preferences ----------
-// The backend already had a real, working endpoint and even correctly
-// respected the in_app toggle server-side (storage.py's add_notification
-// checks it before ever creating a notification) — nothing here was ever
-// exposed in the UI, so a parent had no way to actually turn it off.
-// Honest about scope: only in_app is real right now (no email/SMS service
-// or push subscription infra exists in this backend) — email/push persist
-// as a preference like every real channel does, but don't deliver
-// anything yet, same "flag it, don't fake it" rule the rest of this
-// project follows for anything simulated.
-function NotificationSettings() {
-  const [prefs, setPrefs] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => { getNotificationPreferences().then(setPrefs).catch(() => {}) }, [])
-
-  async function toggle(channel) {
-    if (!prefs) return
-    const channels = { ...prefs.channels, [channel]: !prefs.channels[channel] }
-    setPrefs({ channels }) // optimistic — a preference toggle is low-stakes to revert if the save fails
-    setSaving(true); setError('')
-    try {
-      await updateNotificationPreferences(channels)
-    } catch (err) {
-      setError(err.message)
-      setPrefs(prefs) // revert on a genuine failure
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!prefs) return null
-
-  return (
-    <section className="card">
-      <h3><BellIcon width={18} height={18} /> Notifications</h3>
-      <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
-        <span>In-app <span className="muted">— shows in the bell icon above</span></span>
-      </label>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
-        <span>Email <span className="muted">— sent to your account email</span></span>
-      </label>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
-        <span>Push <span className="muted">— a notification on this device, even with the tab closed</span></span>
-      </label>
-      {/* Was framed as a "prototype" caveat ("aren't wired to a real
-          delivery service yet") — honest to the code, but reads oddly to
-          a parent, who isn't the audience for implementation status.
-          Same underlying honesty (nothing here is silently overpromised),
-          phrased as a normal product roadmap note instead. */}
-      <p className="muted">Email and push are coming soon — everything shows up in-app for now.</p>
-      {error && <p className="error">{error}</p>}
-    </section>
   )
 }
 
@@ -684,14 +448,10 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
 }
 
 // ---------- PA23-27: subscription / billing (simulated) ----------
-
-// Ultra tier (2026-09-07, Kiefer's own ask) — same Premium features plus
-// unlimited child profiles (Premium stays capped at 4). Kept as one small
-// lookup instead of scattering "premium vs ultra" copy across the JSX
-// below, so the two tiers' descriptions/prices stay next to each other.
+// trimmed-demo branch: one paid tier only (Premium) — Ultra removed, see
+// models.AccountTier's comment.
 const TIER_INFO = {
-  premium: { label: 'Premium', desc: 'Up to 4 child profiles, unlimited favourites, full activity trends, multi-child comparison.' },
-  ultra: { label: 'Ultra', desc: 'Everything in Premium, plus unlimited child profiles — no cap for larger families.' },
+  premium: { label: 'Premium', desc: 'Up to 4 child profiles, unlimited favourites.' },
 }
 
 function SubscriptionPanel({ account, onAccountUpdated }) {
@@ -817,28 +577,6 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
             </div>
           </form>
         )}
-        {tier === 'premium' && !status.cancel_at && (
-          <div className="row">
-            <button onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}>
-              <StarIcon width={16} height={16} /> Upgrade to Ultra
-            </button>
-          </div>
-        )}
-        {showUpgrade && upgradeTier === 'ultra' && tier === 'premium' && (
-          <form onSubmit={(e) => subscribe(e, 'ultra')}>
-            <label>Billing cycle
-              <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
-                <option value="monthly">Monthly — ${priceFor('ultra', 'monthly')?.toFixed(2)}</option>
-                <option value="annual">Annual — ${priceFor('ultra', 'annual')?.toFixed(2)}</option>
-              </Select>
-            </label>
-            {error && <p className="error">{error}</p>}
-            <div className="row">
-              <button type="submit" disabled={busy}>{busy ? 'Processing…' : 'Confirm upgrade'}</button>
-              <button type="button" className="ghost" onClick={() => setShowUpgrade(false)}>Cancel</button>
-            </div>
-          </form>
-        )}
         {status.cancel_at
           ? (
             <>
@@ -877,17 +615,10 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
             ? (
               <div className="row">
                 <button onClick={() => { setUpgradeTier('premium'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
-                <button className="ghost" onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Ultra</button>
               </div>
             )
             : (
               <form onSubmit={(e) => subscribe(e, upgradeTier)} noValidate>
-                <label>Plan
-                  <Select value={upgradeTier} onChange={(e) => setUpgradeTier(e.target.value)}>
-                    <option value="premium">Premium — {TIER_INFO.premium.desc}</option>
-                    <option value="ultra">Ultra — {TIER_INFO.ultra.desc}</option>
-                  </Select>
-                </label>
                 <label>Billing cycle
                   <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
                     <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
@@ -914,7 +645,6 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
       )}
 
       {status.tier === 'premium' && paidTierBody('premium')}
-      {status.tier === 'ultra' && paidTierBody('ultra')}
 
       <div className="row">
         <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
@@ -930,46 +660,6 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
           ))}
         </div>
       )}
-    </section>
-  )
-}
-
-// ---------- PA29: data & privacy settings ----------
-
-function PrivacyPanel({ account }) {
-  const [settings, setSettings] = useState(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (!account.consent) return
-    getPrivacySettings().then(setSettings).catch(() => {})
-  }, [account.consent])
-
-  async function change(value) {
-    setBusy(true)
-    try { setSettings(await updatePrivacySettings(value)) } finally { setBusy(false) }
-  }
-
-  if (!account.consent) {
-    return (
-      <section className="card">
-        <h3>Data &amp; Privacy</h3>
-        <p className="muted">Available once you've provided parental consent (see "Add a child profile" below).</p>
-      </section>
-    )
-  }
-  if (!settings) return null
-
-  return (
-    <section className="card">
-      <h3>Data &amp; Privacy</h3>
-      <p className="muted">Controls how long your child's activity data is kept, per PDPA.</p>
-      <label>Retention preference
-        <Select value={settings.retention_preference} disabled={busy} onChange={(e) => change(e.target.value)}>
-          <option value="standard">Standard (default retention period)</option>
-          <option value="minimal">Minimal (keep only what's needed right now)</option>
-        </Select>
-      </label>
     </section>
   )
 }
@@ -1081,35 +771,6 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   )
 }
 
-// ---------- PA32: multi-child comparison (Premium) ----------
-
-function CompareChildrenPanel() {
-  const [rows, setRows] = useState(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    compareChildren().then(setRows).catch((err) => setError(err.message))
-  }, [])
-
-  if (error) return null
-  if (!rows) return <p className="muted">Loading comparison…</p>
-
-  return (
-    <section className="card">
-      <h3>Compare Children</h3>
-      <div className="child-grid">
-        {rows.map((r) => (
-          <div key={r.child_id} className="child-card">
-            <h3>{r.name}</h3>
-            <p className="muted">{r.total_messages} messages · {r.total_recommendations} recommendations · {r.favourites_count} favourites</p>
-            <p className="muted">Top genres: {r.top_genres.length ? r.top_genres.join(', ') : '—'}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
 // PA14 — activity used to be one undifferentiated flat feed of every
 // message ever sent, oldest mixed with newest, with no sense of "this was
 // one conversation." The backend already tags every entry with the real
@@ -1172,7 +833,6 @@ function ChildCard({ child, account, onChanged }) {
         setData(favs)
         setOverrides(Object.fromEntries(ov.map((o) => [o.content_id, o.action])))
       } else if (which === 'reports') setData(await childReports(child.id))
-      else if (which === 'insights') setData([await childTrends(child.id)])
       else setData([])
     } catch {
       setData([])
@@ -1304,17 +964,14 @@ function ChildCard({ child, account, onChanged }) {
         <button className={view === 'activity' ? 'tab active' : 'tab'} onClick={() => toggle('activity')}>Activity</button>
         <button className={view === 'favourites' ? 'tab active' : 'tab'} onClick={() => toggle('favourites')}>Favourites</button>
         <button className={view === 'reports' ? 'tab active' : 'tab'} onClick={() => toggle('reports')}>Reports</button>
-        {account.tier === 'premium' && <button className={view === 'insights' ? 'tab active' : 'tab'} onClick={() => toggle('insights')}>Insights</button>}
         <button className={view === 'edit' ? 'tab active' : 'tab'} onClick={() => toggle('edit')}>Edit</button>
         <button className={view === 'safety' ? 'tab active' : 'tab'} onClick={() => toggle('safety')}>Safety</button>
-        <button className={view === 'privacy' ? 'tab active' : 'tab'} onClick={() => toggle('privacy')}>Data</button>
       </div>
 
       {view === 'edit' && <EditChild child={child} onDone={() => { setView(null); onChanged() }} />}
       {view === 'safety' && <SafetySettings child={child} onDone={() => { setView(null); onChanged() }} />}
-      {view === 'privacy' && <ChildDataPrivacy child={child} />}
 
-      {(view === 'activity' || view === 'favourites' || view === 'reports' || view === 'insights') && (
+      {(view === 'activity' || view === 'favourites' || view === 'reports') && (
         <div className="panel">
           {loading && <p className="muted">Loading…</p>}
           {!loading && data.length === 0 && <p className="muted">Nothing here yet.</p>}
@@ -1461,26 +1118,6 @@ function ChildCard({ child, account, onChanged }) {
             </div>
           ))}
 
-          {!loading && view === 'insights' && data.map((t, i) => (
-            <div key={i}>
-              {/* A glance, not a paragraph — same stat-tile pattern the
-                  Admin console's System Health uses, so a parent scanning
-                  for "is everything okay" doesn't have to read a sentence
-                  to get three numbers. */}
-              <div className="stat-grid">
-                <div className="stat"><div className="stat-num">{t.total_messages}</div><div className="stat-label">Messages</div></div>
-                <div className="stat"><div className="stat-num">{t.total_recommendations}</div><div className="stat-label">Recommendations</div></div>
-                <div className="stat"><div className="stat-num">{t.favourites_count}</div><div className="stat-label">Favourites</div></div>
-              </div>
-              {t.total_messages < 3
-                ? <p className="muted" style={{ marginTop: 10 }}>Not enough activity yet to show trends — check back after a few more chats.</p>
-                : (
-                  <p className="muted" style={{ marginTop: 10 }}>
-                    Top genres: <b style={{ color: 'var(--ink)' }}>{t.top_genres.join(', ') || '—'}</b>
-                  </p>
-                )}
-            </div>
-          ))}
         </div>
       )}
       <ToastHost toast={toast} />
@@ -1579,62 +1216,6 @@ function SafetySettings({ child, onDone }) {
       <div className="row">
         <button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button>
       </div>
-    </div>
-  )
-}
-
-// PA30 — Request Child Data Deletion
-// Deliberately stays open after a request/cancel (no onDone close-out) — the
-// scheduled/history status right below IS the confirmation the parent came
-// here to see, unlike EditChild/SafetySettings where closing back to the
-// list is the natural "done" signal.
-function ChildDataPrivacy({ child }) {
-  const [requests, setRequests] = useState([])
-  const [busy, setBusy] = useState(false)
-  const [confirming, setConfirming] = useState(false)
-
-  async function load() {
-    try { setRequests(await listChildDataDeletions(child.id)) } catch { /* ignore */ }
-  }
-  useEffect(() => { load() }, [])
-
-  async function request() {
-    setBusy(true)
-    try { await requestChildDataDeletion(child.id); await load(); setConfirming(false) } finally { setBusy(false) }
-  }
-
-  async function cancelRequest(id) {
-    await cancelChildDataDeletion(id)
-    await load()
-  }
-
-  const pending = requests.find((r) => r.status === 'pending')
-
-  return (
-    <div className="panel">
-      <p className="muted">Request deletion of {child.name}'s stored chat history and favourites (separate from deleting the whole profile).</p>
-      {pending ? (
-        <>
-          <p className="muted"><ClockIcon width={14} height={14} /> Deletion scheduled for {new Date(pending.scheduled_for * 1000).toLocaleDateString()}.</p>
-          <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
-        </>
-      ) : confirming ? (
-        <div className="row inline-confirm">
-          <span>Delete {child.name}'s chat history and favourites? Scheduled for 7 days out — cancellable any time before then.</span>
-          <button className="danger small" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Yes, request deletion'}</button>
-          <button className="ghost small" onClick={() => setConfirming(false)}>Cancel</button>
-        </div>
-      ) : (
-        <div className="row"><button className="danger" onClick={() => setConfirming(true)}>Delete child data</button></div>
-      )}
-      {requests.filter((r) => r.status !== 'pending').length > 0 && (
-        <>
-          <p className="muted" style={{ marginTop: 10 }}>History:</p>
-          {requests.filter((r) => r.status !== 'pending').map((r) => (
-            <p key={r.id} className="muted">{r.status} — requested {new Date(r.requested_at * 1000).toLocaleDateString()}</p>
-          ))}
-        </>
-      )}
     </div>
   )
 }

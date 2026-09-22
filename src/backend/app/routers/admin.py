@@ -50,7 +50,6 @@ def stats(admin: dict = Depends(require_role("admin"))):
         # only ever applies to parent accounts (staff don't have a tier).
         "tier_free": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier", "free") == "free"),
         "tier_premium": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier") == "premium"),
-        "tier_ultra": sum(1 for a in db.accounts.values() if a["role"] == "parent" and a.get("tier") == "ultra"),
         "children": len(db.children),
         "content_total": len(content),
         "content_approved": sum(1 for c in content if c["status"] == "approved"),

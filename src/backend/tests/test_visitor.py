@@ -20,7 +20,7 @@ def test_uv03_subscription_plans(client: TestClient):
     assert r.status_code == 200
     body = r.json()
     assert "currency" in body
-    assert "premium_monthly_price" in body and "ultra_monthly_price" in body
+    assert "premium_monthly_price" in body  # trimmed-demo branch: Ultra tier removed
 
 
 def test_uv02_catalogue_sample_only_approved(client: TestClient, moderator: dict):

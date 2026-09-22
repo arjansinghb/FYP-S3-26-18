@@ -24,7 +24,6 @@ def plans():
     return {
         "currency": b["currency"], "billing_enabled": b["billing_enabled"],
         "premium_monthly_price": b["premium_monthly_price"], "premium_annual_price": b["premium_annual_price"],
-        "ultra_monthly_price": b["ultra_monthly_price"], "ultra_annual_price": b["ultra_annual_price"],
     }
 
 

@@ -83,31 +83,14 @@ def test_pa32_multi_child_comparison(client: TestClient, active_parent: dict):
     assert len(r.json()) == 2
 
 
-def test_ultra_tier_upgrade_uses_real_configured_price(client: TestClient, active_parent: dict):
-    """Ultra tier (2026-09-07) — placed last in this module deliberately:
-    every test above assumes `active_parent` is on Premium (per its own
-    docstring), so upgrading past that point would break their assertions
-    if this ran earlier. A real upgrade FROM Premium (not just Free ->
-    Ultra directly), and the charge amount actually reflects the admin-
-    configurable price (see storage.py's `subscribe()` docstring — this
-    used to be hardcoded regardless of what SA13's own config held)."""
+# Ultra-tier tests removed on the trimmed-demo branch — Ultra doesn't exist
+# here (models.AccountTier is Free/Premium only). See prototype-real-
+# integrations for the full Ultra-tier coverage.
+
+
+def test_subscribe_rejects_unknown_tier(client: TestClient, active_parent: dict):
+    """Trimmed-demo branch: "ultra" is no longer a valid SubscribeRequest
+    tier at all — Pydantic itself rejects it (422) before any handler code
+    runs, rather than the app accepting and then mishandling it."""
     r = client.post("/api/account/subscribe", headers=active_parent["headers"], json={"tier": "ultra", "billing_cycle": "monthly"})
-    assert r.status_code == 200
-    assert r.json()["tier"] == "ultra"
-
-    history = client.get("/api/account/billing-history", headers=active_parent["headers"]).json()
-    latest = history[0]
-    assert "Ultra" in latest["description"]
-    assert latest["amount_cents"] == 1990  # ultra_monthly_price default (19.9) * 100
-
-    # already on the tier just subscribed to, with no pending cancellation
-    r = client.post("/api/account/subscribe", headers=active_parent["headers"], json={"tier": "ultra", "billing_cycle": "monthly"})
-    assert r.status_code == 400
-
-
-def test_ultra_tier_unlimited_child_profiles(client: TestClient, active_parent: dict):
-    """`active_parent` is on Ultra by now (previous test) and already has 2
-    children (PA33's premium test above) — Ultra's whole point (Kiefer's
-    own ask) is no cap, so a 3rd (Premium would reject this) must succeed."""
-    r = client.post("/api/children", headers=active_parent["headers"], json={"name": "Third Kid", "age_band": "5-8"})
-    assert r.status_code == 201
+    assert r.status_code == 422
