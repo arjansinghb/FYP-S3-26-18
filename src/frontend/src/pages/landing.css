@@ -78,6 +78,10 @@
   cursor: pointer;
 }
 .landing-brand .avatar { width: 34px; height: 34px; }
+/* Groups the nav's two right-side links (Log in / Parent sign up) so
+   .landing-nav's own space-between still just splits brand vs. this whole
+   group, not each individual link apart from the other. */
+.landing-nav-actions { display: flex; align-items: center; gap: var(--space-3); }
 .landing-nav-cta {
   font: inherit;
   font-weight: 600;
@@ -403,18 +407,18 @@
 .how-list p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); color: var(--text); }
 
 /* ---------- plans ---------- */
-/* max-width grew from 660px (fit for exactly 2 cards) to fit 3 side by
-   side now that Ultra (2026-09-07) joined Free/Premium — still wraps to
-   fewer columns on a narrower viewport via auto-fit, same as before. */
+/* Sized for exactly 2 cards (Free/Premium). A 3rd "Ultra" tier briefly grew
+   this to 1000px (2026-09-07) — reverted back to 660px alongside Ultra
+   itself being held back out of the prototype (2026-09-23, see
+   ParentDashboard.jsx's TIER_INFO comment). Still wraps to fewer columns on
+   a narrower viewport via auto-fit, same as before. */
 .plan-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-5); max-width: 1000px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-5); max-width: 660px; margin: 0 auto;
 }
 /* Grid's own default (`align-items: stretch`) already makes every card in
-   the row the same overall HEIGHT — but Ultra's shorter feature list still
-   left its own button sitting higher than Free/Premium's, since nothing
-   was pushing it down to fill that extra space. `display: flex` + the CTA's
-   `margin-top: auto` (below) is what actually aligns the buttons across
-   cards of different list lengths, not just the card outlines. */
+   the row the same overall HEIGHT — `display: flex` + the CTA's
+   `margin-top: auto` (below) is what aligns the buttons across cards of
+   different list lengths, not just the card outlines. */
 .plan {
   position: relative; background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-7); text-align: center;
   display: flex; flex-direction: column;

@@ -15,6 +15,8 @@ added.
 """
 from __future__ import annotations
 
+import html
+
 import httpx
 
 from .config import settings
@@ -48,12 +50,19 @@ def search_books(query: str, max_results: int = 20, start_index: int = 0) -> lis
         results.append({
             "external_id": item.get("id", ""),
             "type": "book",
-            "title": info.get("title", "Untitled"),
-            "description": info.get("description", "") or "",
+            # html.unescape guards against the same HTML-entity leak the
+            # YouTube branch below has (see that one's own comment) —
+            # Google Books hasn't been observed doing this in practice, but
+            # unescape is a no-op on already-plain text, so it costs nothing
+            # to apply consistently rather than wait for a real report.
+            "title": html.unescape(info.get("title", "Untitled")),
+            "description": html.unescape(info.get("description", "") or ""),
             "authors": info.get("authors", []),
             "thumbnail": info.get("imageLinks", {}).get("thumbnail"),
             "external_ref": info.get("infoLink") or info.get("previewLink"),
             "categories": info.get("categories", []),
+            "maturity": info.get("maturityRating"),  # "NOT_MATURE" | "MATURE"
+            "publisher": info.get("publisher", ""),
         })
     return results
 
@@ -80,8 +89,17 @@ def _youtube_search_request(query: str, max_results: int, channel_id: str | None
         results.append({
             "external_id": video_id,
             "type": "video",
-            "title": snippet.get("title", "Untitled"),
-            "description": snippet.get("description", "") or "",
+            # YouTube Data API's own documented quirk: `snippet.title`/
+            # `snippet.description` come back HTML-entity-escaped ("&amp;"
+            # for a literal "&", etc.) — real, reported bug (Kiefer,
+            # 2026-09-24): titles like "Law & Order" were showing up in the
+            # moderator console literally as "Law &amp; Order" because
+            # nothing ever decoded them. Decode once here, at ingestion,
+            # so every downstream reader (catalogue, AI triage, the child-
+            # facing title) gets clean plain text instead of each needing
+            # to know about this API's encoding behaviour itself.
+            "title": html.unescape(snippet.get("title", "Untitled")),
+            "description": html.unescape(snippet.get("description", "") or ""),
             "channel": snippet.get("channelTitle"),
             "channel_id": snippet.get("channelId"),
             "thumbnail": (snippet.get("thumbnails", {}).get("medium") or {}).get("url"),
@@ -123,3 +141,39 @@ def search_videos(query: str, max_results: int = 10) -> list[dict]:
                 seen_ids.add(result["external_id"])
                 merged.append(result)
     return merged[:max_results]
+
+
+def _youtube_kid_flags(video_ids: list[str]) -> dict[str, dict]:
+    """videos.list `status` for a batch of ids -> {id: {made_for_kids, embeddable}}.
+    Empty on any failure (callers then treat every video as unverified)."""
+    if not video_ids or not settings.YOUTUBE_DATA_API_KEY:
+        return {}
+    try:
+        resp = httpx.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={"part": "status", "id": ",".join(video_ids), "key": settings.YOUTUBE_DATA_API_KEY},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return {
+            v["id"]: {
+                "made_for_kids": (v.get("status") or {}).get("madeForKids"),
+                "embeddable": (v.get("status") or {}).get("embeddable"),
+            }
+            for v in resp.json().get("items", [])
+        }
+    except Exception:
+        return {}
+
+
+def search_for_import(topic: str, media_type: str, limit: int) -> list[dict]:
+    """Bulk-import search: like search_books/search_videos but narrowed to what
+    could plausibly be auto-triaged — English print books, and for videos the
+    `madeForKids` / `embeddable` flags attached so the triage gate can require
+    them. Over-fetches (the caller drops duplicates and stops at `limit`)."""
+    fetch = min(limit * 3, 40)
+    if media_type == "book":
+        return search_books(f"{topic} subject:juvenile", max_results=fetch)
+    results = search_videos(f"{topic} for kids", max_results=min(fetch, 25))
+    flags = _youtube_kid_flags([r["external_id"] for r in results])
+    return [{**r, **flags.get(r["external_id"], {"made_for_kids": None, "embeddable": None})} for r in results]

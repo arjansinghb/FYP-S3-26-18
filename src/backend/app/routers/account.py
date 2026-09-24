@@ -140,9 +140,11 @@ def subscribe(body: SubscribeRequest, account: dict = Depends(require_role("pare
     """PA24 — includes PA26 (Update Payment Method) in the same flow per the
     URS's Sub-Flows; a payment method must exist on file by the end of this
     call, either passed in here or already set via PUT /payment-method.
-    Also doubles as the upgrade/downgrade path BETWEEN paid tiers (e.g.
-    Premium -> Ultra) — only rejected if it's the exact same tier with no
-    pending cancellation, not any call while already paid."""
+    Also usable to re-subscribe after a cancellation — only rejected if
+    it's the exact same tier with no pending cancellation, not any call
+    while already paid. (Doubled as the upgrade path between paid tiers
+    while an "ultra" tier existed; held back out of this prototype for now
+    — see models.py's AccountTier comment.)"""
     if account["tier"] == body.tier and not account.get("subscription_cancel_at"):
         raise HTTPException(400, f"Already on {body.tier.capitalize()}")
     if not body.payment_method and not account.get("payment_method"):
@@ -156,9 +158,9 @@ def subscribe(body: SubscribeRequest, account: dict = Depends(require_role("pare
 @router.post("/cancel-premium", response_model=SubscriptionStatusOut)
 def cancel_premium(account: dict = Depends(require_role("parent"))):
     """Name kept as-is (existing route, existing frontend/tests call it) —
-    cancels whichever paid tier the account is actually on, Premium or
-    Ultra; "Not currently on Premium" -> "Not currently subscribed" so the
-    message is still accurate for an Ultra account cancelling."""
+    cancels whichever paid tier the account is actually on; "Not currently
+    on Premium" -> "Not currently subscribed" so the message stays accurate
+    if a 2nd paid tier returns later (see models.py's AccountTier comment)."""
     if account["tier"] == "free":
         raise HTTPException(400, "Not currently subscribed")
     db.cancel_subscription(account)

@@ -63,28 +63,64 @@ STRONG_BOOK_RE = re.compile(r"\b(?:books?|stor(?:y|ies)|read(?:ing)?)\b")
 STRONG_VIDEO_RE = re.compile(r"\b(?:videos?|watch(?:ing)?|movies?|clips?|cartoons?)\b")
 
 
+def _named_title_items(message: str, pool: list[dict]) -> list[dict]:
+    """Items whose own TITLE the child's message names directly, not just a
+    genre — "a video about the very hungry caterpillar" needs to surface The
+    Very Hungry Caterpillar (a book) even though nothing about "the very
+    hungry caterpillar" is a genre tag anywhere in the catalogue, so
+    `_topics_in`/`_format_mismatch`'s genre-keyword check has nothing to
+    match against at all. Real, reproduced case (QA pass, 2026-09-24): this
+    exact request got a generic "how about animals instead?" redirect
+    instead of the book being offered, because the format-mismatch check
+    only ever looked at genre tags. A literal title mention is even higher-
+    precision ground truth than a genre tag, so this only requires the full
+    title to appear in the message (deliberately strict, to avoid a short
+    title like "Go" false-triggering on unrelated text)."""
+    lowered = message.lower()
+    items = []
+    for item in pool:
+        title = (item.get("title") or "").strip()
+        if len(title) >= 4 and title.lower() in lowered:
+            items.append(item)
+    return items
+
+
 def _format_mismatch(message: str, pool: list[dict]) -> tuple[str, list[dict]]:
     """The child asked for a topic in one format ("a book about pirates") and
-    the catalogue only has it in the other (a pirate video). That's known
-    exactly in code, so the chat model is TOLD instead of left to notice: it
-    gets a factual note plus the matching item in its numbered list, and can
-    offer "no book, but I do have a video about it" before falling back to
-    some other related topic."""
+    the catalogue only has it in the other (a pirate video) — or named a
+    specific title that exists, just not in the format they asked for. That's
+    known exactly in code, so the chat model is TOLD instead of left to
+    notice: it gets a factual note plus the matching item in its numbered
+    list, and can offer "no book, but I do have a video about it" before
+    falling back to some other related topic."""
     lowered = message.lower()
     is_book, is_video = bool(STRONG_BOOK_RE.search(lowered)), bool(STRONG_VIDEO_RE.search(lowered))
     if is_book == is_video:  # neither named, or both — nothing to mismatch against
         return "", []
     wanted = "book" if is_book else "video"
-    notes, items = [], []
+    notes, items, seen_ids = [], [], set()
+
     for topic in _topics_in(message, _available_topics(pool, limit=100)):
         of_topic = [c for c in pool if topic in c.get("genres", [])]
         if of_topic and not any(c["type"] == wanted for c in of_topic):
             other = of_topic[0]
+            if other["id"] not in seen_ids:
+                seen_ids.add(other["id"])
+                items.append(other)
+                notes.append(
+                    f'The catalogue has no {wanted} about {topic}, but it DOES have a {other["type"]} about it '
+                    f'("{other["title"]}") — offer that {other["type"]} first.'
+                )
+
+    for other in _named_title_items(message, pool):
+        if other["type"] != wanted and other["id"] not in seen_ids:
+            seen_ids.add(other["id"])
             items.append(other)
             notes.append(
-                f'The catalogue has no {wanted} about {topic}, but it DOES have a {other["type"]} about it '
-                f'("{other["title"]}") — offer that {other["type"]} first.'
+                f'The child named "{other["title"]}" directly, which the catalogue has as a {other["type"]}, '
+                f'not a {wanted} — offer that {other["type"]} first, per the format-exception rule.'
             )
+
     return " ".join(notes), items
 
 
@@ -104,22 +140,116 @@ def _offered_topic_items(last_turn: dict, pool: list[dict], per_topic: int = 3) 
     return items
 
 
+def _named_genre_items(message: str, pool: list[dict], per_topic: int = 3) -> list[dict]:
+    """Items for a genre the child's OWN message literally names ("a book
+    about robots"). Guarantees a human-curated genre tag (CM10) is never
+    silently dropped just because embedding similarity alone didn't rank
+    the matching item(s) inside the top RETRIEVAL_CANDIDATES — real,
+    reproduced case (Kiefer, 2026-09-24): "I want to read a book about
+    robots" retrieved four completely unrelated books (a Barbie singalong,
+    a space story, a lion story, a dinosaur story) while the two books
+    actually tagged "robots" never appeared in the top matches at all,
+    purely because their title/description text didn't happen to phrase
+    things close enough to the query in embedding space — confirmed across
+    9 of 22 real catalogue genres the same way (ocean, pirates, music,
+    family, art, magic, superheroes, mystery, robots), not a one-off. A
+    moderator's own genre tag is reliable, human-verified ground truth
+    that a fuzzy text-similarity search alone shouldn't be allowed to
+    override just because a title happens to be phrased unhelpfully."""
+    topics = _topics_in(message, _available_topics(pool, limit=100))
+    items: list[dict] = []
+    for topic in topics:
+        items.extend([c for c in pool if topic in c.get("genres", [])][:per_topic])
+    return items
+
+
 @dataclass
 class BrainResult:
     reply: str
     recommendations: list = field(default_factory=list)  # list of content dicts
+    # Set only when Pip said "Oops, nothing about X" — the topic the child asked
+    # for that the catalogue can't serve, and in which format. routers/chat.py
+    # tallies these (storage.record_topic_miss) so moderators can see which
+    # topics to import next. Nothing about the child is attached.
+    missed_topic: str | None = None
+    missed_format: str | None = None  # "book" | "video" | "any"
+
+
+_TOPIC_OK_RE = re.compile(r"^[a-z][a-z' -]{1,38}[a-z]$")
+_TOPIC_STOPWORDS = {"a", "an", "the", "some", "any", "book", "books", "video", "videos", "story", "stories", "about", "of"}
+
+
+def clean_missed_topic(raw) -> str | None:
+    """Model output -> a short, plain topic label or None. Letters only, at
+    most three words, no filler ("a book about"): anything else (digits, links,
+    emails, a full sentence) is dropped rather than stored."""
+    if not isinstance(raw, str):
+        return None
+    text = re.sub(r"\s+", " ", raw.strip().lower())
+    words = [w for w in text.split(" ") if w not in _TOPIC_STOPWORDS]
+    text = " ".join(words)
+    if not text or len(words) > 3 or not _TOPIC_OK_RE.match(text):
+        return None
+    return text
+
+
+def topic_is_covered(topic: str, items: list[dict], fmt: str = "any") -> bool:
+    """True if some item already speaks to `topic` (every word of it appears,
+    plural-tolerant, in one item's title, description or genres). Used to keep
+    a "miss" honest: a topic the catalogue does cover isn't demand for new
+    content, whatever the model said. `fmt` ("book" | "video") narrows it to
+    that format — a child who asked for a VIDEO about mystery isn't served by
+    a mystery book."""
+    if fmt in ("book", "video"):
+        items = [i for i in items if i.get("type") == fmt]
+    stems = [w.rstrip("s") or w for w in re.findall(r"[a-z']+", topic.lower())]
+    if not stems:
+        return True
+    patterns = [re.compile(rf"\b{re.escape(stem)}(?:s|es)?\b") for stem in stems]
+    for item in items:
+        text = " ".join([item.get("title", ""), item.get("description", ""), *item.get("genres", [])]).lower()
+        if all(p.search(text) for p in patterns):
+            return True
+    return False
+
+
+def covering_item(topic: str, items: list[dict], fmt: str = "any") -> dict | None:
+    """The first item (in `items`' own order) that satisfies topic_is_covered's
+    exact match rule, returned instead of just True/False — for anything that
+    needs to point at a real item once a gap turns out to be filled (see
+    routers/chat.py's GET /resolved-topics: "Pip once said no to this child
+    about X, X is covered now, here's the actual thing to mention"). Kept as
+    its own function rather than refactoring topic_is_covered to use it —
+    that function's existing tests pin its exact contract (including the
+    "no real words in topic" edge case, which has no sensible single-item
+    equivalent here) and this only ever runs on a topic that's already
+    passed clean_missed_topic's validation, so that edge case never applies
+    to this caller anyway."""
+    if fmt in ("book", "video"):
+        items = [i for i in items if i.get("type") == fmt]
+    stems = [w.rstrip("s") or w for w in re.findall(r"[a-z']+", topic.lower())]
+    if not stems:
+        return None
+    patterns = [re.compile(rf"\b{re.escape(stem)}(?:s|es)?\b") for stem in stems]
+    for item in items:
+        text = " ".join([item.get("title", ""), item.get("description", ""), *item.get("genres", [])]).lower()
+        if all(p.search(text) for p in patterns):
+            return item
+    return None
 
 
 class PlaceholderBrain:
     """No real intelligence — just keyword matching over the catalogue.
-    Ignores `history` (no API key means no model to feed context to) and
+    Ignores `history` (no API key means no model to feed context to),
     `reading_level` (PA13) — there's no language model here to actually
-    tune sentence complexity with; the mock brain's whole job is
-    deterministic free/test-mode operation, not a faithful stand-in for
-    every real-brain behaviour."""
+    tune sentence complexity with — and `already_shown_note`, which only
+    means something to a model that can read prose; the mock brain's whole
+    job is deterministic free/test-mode operation, not a faithful stand-in
+    for every real-brain behaviour."""
 
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
-                history: list[dict] | None = None, reading_level: str | None = None) -> BrainResult:
+                history: list[dict] | None = None, reading_level: str | None = None,
+                already_shown_note: str | None = None) -> BrainResult:
         text = f" {message.lower()} "
         words = set(message.lower().replace("!", " ").replace("?", " ").replace(",", " ").replace(".", " ").split())
 
@@ -193,6 +323,7 @@ class PlaceholderBrain:
                 "title": item["title"],
                 "explanation": self._explain(item, wanted_genres),
                 "description": item.get("description", ""),
+                "synopsis": item.get("synopsis"),
                 "external_ref": item.get("external_ref"),
                 "thumbnail": item.get("thumbnail"),
                 "genres": item.get("genres", []),
@@ -208,17 +339,21 @@ class PlaceholderBrain:
         else:
             missing = f"there currently aren't any {kind}s to show you"
 
+        # Only a named topic is demand worth tallying; "any video" with none
+        # in the pool is a catalogue-size problem, not a topic to import.
+        miss = {"missed_topic": topic, "missed_format": wanted_type or "any"} if topic else {}
+
         of_that_type = [c for c in catalogue if not wanted_type or c["type"] == wanted_type]
         related = [t for t in _available_topics(of_that_type) if t not in wanted_genres]
         if related:
             verb = {"book": "read about", "video": "watch something about"}.get(wanted_type, "check out something about")
-            return BrainResult(reply=f"Oops, {missing}. Would you like to {verb} {related[0]} instead?", recommendations=[])
+            return BrainResult(reply=f"Oops, {missing}. Would you like to {verb} {related[0]} instead?", recommendations=[], **miss)
         if wanted_type and any(c["type"] != wanted_type for c in catalogue):
             other = "video" if wanted_type == "book" else "book"
-            return BrainResult(reply=f"Oops, {missing}. Would you like a {other} instead?", recommendations=[])
+            return BrainResult(reply=f"Oops, {missing}. Would you like a {other} instead?", recommendations=[], **miss)
         return BrainResult(
             reply=f"Oops, {missing}. Try asking me for something else — like funny stories, animals, or space!",
-            recommendations=[],
+            recommendations=[], **miss,
         )
 
     @staticmethod
@@ -267,7 +402,8 @@ class OpenAIBrain:
         self._model = model
 
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
-                history: list[dict] | None = None, reading_level: str | None = None) -> BrainResult:
+                history: list[dict] | None = None, reading_level: str | None = None,
+                already_shown_note: str | None = None) -> BrainResult:
         """`history` — prior turns *in this chat session* (see
         storage.session_history), oldest first, each `{message, reply}`.
         Real conversation memory: passed to the LLM as actual multi-turn
@@ -285,7 +421,19 @@ class OpenAIBrain:
         retrieval on it would silently empty the candidate pool for most
         children. This was previously stored and displayed on the parent
         dashboard but never actually read anywhere in the recommendation
-        path — a real, verified gap, not a hypothetical one."""
+        path — a real, verified gap, not a hypothetical one.
+
+        `already_shown_note` — a factual note from the caller (chat.py) when
+        it excluded items from `catalogue` because this child was already
+        shown them earlier in this session, AND those items would otherwise
+        have matched a genre the child's current message names. Without
+        this, the model sees an empty or thin candidate list with no way to
+        tell "nothing on this topic exists" from "you already showed them
+        everything on this topic" — real, reproduced inconsistency (QA pass,
+        2026-09-24): the exact same repeated request got a coin-flip
+        "here's something" / "there isn't any" answer turn to turn, because
+        that distinction was left for the model to guess at from prose
+        conversation history instead of being told outright."""
         history = history or []
         # No age_band re-filter here — the caller (chat.py's
         # _visible_catalogue) already narrowed `catalogue` by age band
@@ -350,6 +498,18 @@ class OpenAIBrain:
             ids = {c["id"] for c in mismatch_items}
             candidates = (mismatch_items + [c for c in candidates if c["id"] not in ids])[: RETRIEVAL_CANDIDATES + 2]
 
+        # A genre the child's message literally names must always be
+        # retrievable — see _named_genre_items' own docstring for the real,
+        # reproduced retrieval-miss bug this closes (embedding similarity
+        # alone missed a moderator-tagged match for 9 of 22 real catalogue
+        # genres tested). Runs regardless of message length/history, unlike
+        # the two guarantees above — a clear, explicit "book about X" should
+        # never depend on embedding luck.
+        named_genre_items = _named_genre_items(message, pool)
+        if named_genre_items:
+            ids = {c["id"] for c in named_genre_items}
+            candidates = (named_genre_items + [c for c in candidates if c["id"] not in ids])[: RETRIEVAL_CANDIDATES + 2]
+
         # ---- stage 2: conversational LLM, constrained to the candidates ----
         # Candidates are numbered 0..N instead of exposing their real (long,
         # opaque) ids to the model — a real bug found via testing: with the
@@ -376,84 +536,75 @@ class OpenAIBrain:
         # `len(history)` is used as a simple, good-enough proxy for "how far
         # into this conversation are we."
         turn_number = len(history) + 1
-        system_prompt = (
-            "You are Pip, a friendly companion chatting with a child to help them find a book or "
-            "video to enjoy — talk like a warm, curious friend having a real back-and-forth, not a "
-            "search engine that dumps results for every message. Only recommend something once you "
-            "actually have a reasonable sense of what they're in the mood for (format, topic, or "
-            "feeling) — if their message is vague and you don't genuinely have enough to go on, it's "
-            "completely fine to just chat and ask ONE short, friendly clarifying question instead of "
-            "recommending anything (return an empty \"picks\" list on turns like that). "
-            f"This is exchange {turn_number} of this conversation — " + (
-                "you've had some back-and-forth already, so lean toward actually recommending "
-                "something now with your best-effort guess rather than asking yet another question, "
-                "even if it isn't a perfect match. "
-                if turn_number >= 3 else
-                "it's still early, so don't feel pressured to recommend on every single turn — a "
-                "genuine question or two first reads as real conversation, not a stalling tactic. "
-            )
-            + "Never force exactly 2 picks just to fill space: pick 1 if only one genuinely fits, or "
-            "0 while you're still figuring out what they want. "
-            "You may ONLY recommend items from the numbered catalogue list given to you below — "
-            "never invent a title, never describe or mention anything not in that list. "
-            "Match rule: only pick an item if it genuinely fits what the child asked for — the "
-            "topic, AND the format (book vs video) when they named one. Never recommend something "
-            "unrelated just to have something to show. If NONE of the numbered items genuinely fits "
-            "what they asked for, recommend nothing (empty \"picks\") and say so honestly and warmly "
-            "in this shape: \"Oops, there currently isn't any <book/video> about <what they asked "
-            "for> — would you like to <read/watch> something about <a related topic> instead?\" "
-            "(say \"book\" or \"video\" only if they named a format, otherwise \"book or video\"). "
-            "But if a numbered item matches the topic they asked for in the OTHER format (they "
-            "asked for a book and only a video fits, or the reverse), offer that first instead, "
-            "e.g. \"Oops, there isn't any book about pirates, but I do have a pirate video — want "
-            "to watch it?\" and only then fall back to a related topic. "
-            "Choose that related topic ONLY from the \"topics the catalogue covers\" list given "
-            "below the catalogue — the one closest in meaning to what they wanted — never invent one. "
-            "If they've already been shown everything that fits earlier in this conversation, say "
-            "you've shown them everything you have on that topic (rather than saying there's "
-            "nothing) and offer a related topic the same way. If they say no to something you "
-            "offered, or ask for something different, do NOT repeat the \"Oops\" line — just say "
-            "that's fine and offer a different topic from the list, or ask what they'd like. If they say yes to something you "
-            "offered, recommend from the numbered list right away instead of asking again. "
-            "Always answer what the child actually said, in a way that's relevant to it — never "
-            "ignore their question or reply with something unrelated to it. Everything that is part "
-            "of being Pip is in scope: greetings and friendly small talk (reply warmly, then bring "
-            "it back to books and videos), questions about you (you're Pip, a friendly helper who "
-            "finds books and videos), questions about a book or video you already mentioned (answer "
-            "ONLY from the title/description you were given — if you don't have that detail, say so "
-            "honestly instead of guessing), and feedback like \"I don't like that one\" (be "
-            "understanding and offer something different). Anything outside that — homework, "
-            "general knowledge, other topics, games, jokes, requests to do something else — is out "
-            "of scope: don't answer it; kindly say you can only help with books and videos, then "
-            "ask what they'd like to read or watch. Never ask the child for personal details (their full "
-            "name, address, school, phone number, or exactly where they live) — their age band is "
-            "all you need, and you already have it. If they share personal information anyway, "
-            "don't repeat it back, comment on it, or dwell on it — just gently continue the "
-            "conversation about books and videos. "
-            "\"index\" numbers (e.g. 0, 1, 2) exist ONLY to identify your picks in the JSON "
-            "\"picks\" array below — they are an internal bookkeeping detail the child must never "
-            "see. The \"reply\" field is read directly by the child: write it in warm, natural "
-            "sentences that name each picked item by its real \"title\" from the list (never the "
-            "word \"index\", never a bare number standing in for a book or video, and never any "
-            "other internal detail like \"the list\" or \"the catalogue\"). "
-            "This conversation may have earlier turns before this message (shown below as prior "
-            "chat messages) — use them for context: if you already asked a clarifying question and "
-            "the child is now answering it, combine that answer with what they said earlier rather "
-            "than asking yet another question or treating this message in isolation. Don't repeat a "
-            "question you've already asked in this conversation. Speak in warm, "
-            "short, age-appropriate sentences for a child aged " + (age_band or "5-12") + ". "
-            + (
-                f"This child's parent has set their reading level as \"{reading_level}\" — keep your "
-                "own sentences and word choice matched to that level specifically (simpler vocabulary "
-                "and shorter sentences for an earlier reader, richer language for a confident one), "
-                "on top of the age-band guidance above. "
-                if reading_level else ""
-            )
-            + 'Respond ONLY with JSON of this exact shape: '
-            '{"reply": "string", "picks": [{"index": 0, "why": "one short sentence"}]}. '
-            "The numbered list is given fresh below every time and its numbering can differ from "
-            "earlier turns, so only ever use an index from THIS turn's list, never one mentioned earlier."
+        # Pulled out to their own named variables (were inline conditional
+        # expressions stitched into one giant concatenated paragraph) purely
+        # for readability — same wording, same behaviour, just no longer a
+        # single run-on string that's hard to audit or safely edit one rule
+        # at a time. The prompt itself below is restructured into headed
+        # sections for the same reason: production chat systems generally
+        # hold up better under a real spec (role / rules / format) than one
+        # dense paragraph, both for a human maintaining it and for the model
+        # actually following it turn after turn.
+        pacing_note = (
+            "You've already had some back-and-forth, so lean toward actually recommending "
+            "something now with your best-effort guess, even if it isn't a perfect match."
+            if turn_number >= 3 else
+            "It's still early — you don't need to recommend on every turn. A genuine question "
+            "or two first reads as real conversation, not stalling."
         )
+        reading_level_note = ""
+        if reading_level:
+            reading_level_note = (
+                f'This child\'s parent has set their reading level as "{reading_level}" — match '
+                "your sentences and word choice to that level specifically (simpler vocabulary and "
+                "shorter sentences for an earlier reader, richer language for a confident one), on "
+                "top of the age-band guidance above."
+            )
+        system_prompt = f"""You are Pip, a friendly companion chatting with a child to help them find a book or video to enjoy. Talk like a warm, curious friend having a real back-and-forth — never like a search engine dumping results for every message.
+
+## Conversation flow
+- This is exchange {turn_number} of this conversation. {pacing_note}
+- Only recommend once you have a reasonable sense of what they're in the mood for (format, topic, or feeling). If their message is vague and you don't genuinely have enough to go on, it's completely fine to just chat and ask ONE short, friendly clarifying question instead — return an empty "picks" list on turns like that.
+- Never force exactly 2 picks just to fill space: pick 1 if only one genuinely fits, or 0 while you're still figuring out what they want.
+- Use the conversation so far for context: if you already asked a clarifying question and the child is now answering it, combine that with what they said earlier rather than asking again. Never repeat a question you've already asked in this conversation.
+
+## What's in scope
+Everything that's part of being Pip:
+- Greetings and friendly small talk — INCLUDING a child just sharing something harmless about their day, feelings or life the way they'd chat with a friend ("I had pizza for dinner", "my dog did something funny", "I'm bored"). Actually engage with what they said (react to it, ask a small follow-up, show a bit of your own personality) like a real friend would, not a quick warm line you rush past on your way back to business. Let a little banter breathe for a turn or two before naturally steering back toward books and videos — that back-and-forth IS being a companion, not a detour from the job.
+- Questions about you (you're Pip, a friendly helper who finds books and videos).
+- Questions about a book or video you already mentioned — answer ONLY from the title/description you were given; if you don't have that detail, say so honestly instead of guessing.
+- Feedback like "I don't like that one" — be understanding and offer something different.
+
+Always answer what the child actually said, in a way that's relevant to it — never ignore their message or reply with something unrelated to it.
+
+## What's out of scope
+Homework, general-knowledge or factual questions, requests to write/solve/translate/code something, games, jokes/riddles, news, or weather. Don't answer any of it — kindly say you can only help with books and videos, then ask what they'd like to read or watch.
+
+## Recommending — catalogue and matching rules
+- You may ONLY recommend items from the numbered catalogue list given below — never invent a title, never describe or mention anything not in that list.
+- Match rule: only pick an item if it genuinely fits what the child asked for — the topic, AND the format (book vs video) when they named one. Never recommend something unrelated just to have something to show.
+- If NONE of the numbered items genuinely fits what they asked for: recommend nothing (empty "picks") and say so honestly and warmly, in this shape: "Oops, there currently isn't any <book/video> about <what they asked for> — would you like to <read/watch> something about <a related topic> instead?" (say "book" or "video" only if they named a format, otherwise "book or video").
+  - Exception: if a numbered item matches their topic in the OTHER format (they asked for a book and only a video fits, or the reverse), offer that first instead — e.g. "Oops, there isn't any book about pirates, but I do have a pirate video — want to watch it?" — and only fall back to a related topic if there's no other-format match either.
+  - Choose the related topic ONLY from the "topics the catalogue covers" list given below the catalogue — the one closest in meaning to what they wanted. Never invent one.
+- If they've already been shown everything that fits earlier in this conversation, say you've shown them everything you have on that topic (never say there's nothing) and offer a related topic the same way.
+- If they say no to something you offered, or ask for something different: don't repeat the "Oops" line — just say that's fine and offer a different topic, or ask what they'd like.
+- If they say yes to something you offered: recommend from the numbered list right away, don't ask again.
+
+## Privacy
+Never ask the child for personal details — their full name, address, school, phone number, or exactly where they live. Their age band is all you need, and you already have it.
+
+If they share personal information anyway — even mixed into ordinary chatter ("my school is Lincoln Elementary", "I live on Maple Street", "my name is Jamie") — do NOT repeat the specific identifying detail back, do NOT use it in your reply, do NOT ask a follow-up about it, and do NOT comment on it, even warmly. This overrides the small-talk guidance above: react to the rest of what they said (the feeling, the event) while treating the identifying detail itself as if you hadn't read it. Just gently continue the conversation about books and videos.
+
+## Speaking style
+Speak in warm, short, age-appropriate sentences for a child aged {age_band or "5-12"}. {reading_level_note}
+
+## Output format
+Respond ONLY with JSON of this exact shape:
+{{"reply": "string", "picks": [{{"index": 0, "why": "one short sentence"}}], "missing": null or {{"topic": "string", "format": "book" | "video" | "any"}}}}
+
+- "reply" is read directly by the child: warm, natural sentences that name each picked item by its real "title" from the list. Never say "index", never a bare number standing in for a book or video, and never mention internal details like "the list" or "the catalogue".
+- "index" numbers (0, 1, 2, ...) exist ONLY to identify your picks — internal bookkeeping the child must never see. The numbered list is given fresh every turn and its numbering can differ from earlier turns — only ever use an index from THIS turn's list, never one mentioned earlier.
+- "missing" is set ONLY when you used the "Oops" line because nothing in the list fits a topic they asked for: then it's the topic in their own words (1-3 lowercase words, never a person's name) plus the format they wanted. In every other case "missing" is null — including when they've already seen everything on that topic, or are just chatting."""
         messages = [{"role": "system", "content": system_prompt}]
         for turn in history:
             messages.append({"role": "user", "content": turn["message"]})
@@ -465,6 +616,7 @@ class OpenAIBrain:
                 f"Topics the catalogue covers overall (the ONLY topics you may suggest as an "
                 f"alternative): {json.dumps(_available_topics(pool))}"
                 + (f"\n\nNote: {mismatch_note}" if mismatch_note else "")
+                + (f"\n\nNote: {already_shown_note}" if already_shown_note else "")
             ),
         })
 
@@ -472,7 +624,21 @@ class OpenAIBrain:
             resp = self._client.chat.completions.create(
                 model=self._model,
                 response_format={"type": "json_object"},
-                temperature=0.7,
+                # Was 0.7 — lowered after a real, reproduced inconsistency
+                # (QA pass, 2026-09-24): the exact same repeated request for
+                # a narrow sub-topic ("space station") flip-flopped between
+                # "here's something" and "there isn't any" turn to turn, even
+                # with identical candidates on the table each time — a
+                # borderline "does this genuinely fit" call landing
+                # differently by chance, not a logic bug. `reply`/`picks`
+                # share one call (splitting them risks the Vercel timeout
+                # noted in this project's own hosting notes), so this is a
+                # single shared dial: 0.4 keeps enough variation for warm,
+                # non-repetitive phrasing (see `ai_assist.py`'s own 0.2 for
+                # a purely mechanical triage task, which would read as flat
+                # and robotic here) while making the actual fit/pick
+                # decision meaningfully more consistent run to run.
+                temperature=0.4,
                 timeout=15,
                 messages=messages,
             )
@@ -499,12 +665,19 @@ class OpenAIBrain:
                 "title": item["title"],
                 "explanation": pick.get("why") or item.get("description", ""),
                 "description": item.get("description", ""),
+                "synopsis": item.get("synopsis"),
                 "external_ref": item.get("external_ref"),
                 "thumbnail": item.get("thumbnail"),
                 "genres": item.get("genres", []),
             })
         reply = data.get("reply") or "Here's something you might like!"
-        return BrainResult(reply=reply, recommendations=recs)
+        result = BrainResult(reply=reply, recommendations=recs)
+        missing = data.get("missing")
+        if not recs and isinstance(missing, dict):  # a "miss" means nothing was recommended
+            result.missed_topic = clean_missed_topic(missing.get("topic"))
+            fmt = missing.get("format")
+            result.missed_format = fmt if fmt in ("book", "video") else "any"
+        return result
 
 
 @lru_cache(maxsize=1)

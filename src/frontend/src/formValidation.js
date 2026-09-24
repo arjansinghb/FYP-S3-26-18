@@ -11,7 +11,7 @@
 export function firstMissingField(fields) {
   for (const [value, label] of fields) {
     if (value === undefined || value === null || !String(value).trim()) {
-      return `${label} is required.`
+      return `${label} is required`
     }
   }
   return null

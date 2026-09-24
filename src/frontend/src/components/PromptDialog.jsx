@@ -6,7 +6,7 @@ import PasswordInput from './PasswordInput'
 // dialog had to go), but for the one admin action that actually needs a
 // typed value back: setting a user's new password (SA03).
 export default function PromptDialog({
-  open, title, message, icon, label, placeholder, minLength = 0,
+  open, title, message, icon, label, placeholder, minLength = 0, type = 'password',
   confirmLabel = 'Confirm', cancelLabel = 'Cancel', onConfirm, onCancel,
 }) {
   const [value, setValue] = useState('')
@@ -48,11 +48,19 @@ export default function PromptDialog({
         </div>
         <label>
           {label}
-          <PasswordInput
-            ref={inputRef} value={value} placeholder={placeholder}
-            onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-          />
+          {type === 'text' ? (
+            <input
+              ref={inputRef} value={value} placeholder={placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+          ) : (
+            <PasswordInput
+              ref={inputRef} value={value} placeholder={placeholder}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+          )}
         </label>
         <div className="confirm-actions">
           <button type="button" className="ghost small" onClick={onCancel}>{cancelLabel}</button>

@@ -22,7 +22,19 @@
 }
 .home-link:hover { text-decoration: underline; }
 
-.muted { color: var(--muted); font-size: var(--text-sm); margin: var(--space-1) 0; }
+/* index.css's global `p { max-width: var(--measure); text-wrap:
+   balance }` (--measure is 62ch) is tuned for long-form reading (landing-
+   page copy, article-
+   length paragraphs) — on this dashboard's short one-line captions
+   ("Share your experience with Pip…", TIER_INFO's plan descriptions, the
+   Notifications blurb) it was forcing an early, unnecessary wrap to a 2nd
+   line well before the card's own width ran out. These captions aren't
+   long-form text needing an ideal reading measure; letting them use
+   whatever width their actual container already gives them is the right
+   default here — `.muted` covers this everywhere across Parent/Admin/
+   Moderator (all three load this stylesheet), not just the couple of
+   spots flagged directly. */
+.muted { color: var(--muted); font-size: var(--text-sm); margin: var(--space-1) 0; max-width: none; }
 .error { color: var(--danger-700); font-weight: 600; margin: var(--space-2) 0; }
 
 /* Icons dropped inline into plain running text/paragraphs (not every icon
@@ -126,7 +138,13 @@
   transition: border-color 0.15s, box-shadow 0.15s, opacity 0.22s ease, transform 0.22s ease;
 }
 .card:hover { border-color: var(--primary-border); box-shadow: 0 10px 22px color-mix(in srgb, var(--primary-700) 10%, transparent); }
-.auth { max-width: 420px; }
+/* Widened from 420px — a field-error message ("Enter a valid email
+   address.", "Passwords don't match.") was wrapping to 2 lines in the old
+   width and reading cramped/broken instead of like real UI ("keliatan 2
+   baris jadi jelek" — flagged directly). Shared by both Sign In and Sign
+   Up (same AuthPanel, same .auth wrapper either way) and by ForgotPassword
+   below, so the fix applies everywhere this shell is used, not just signup. */
+.auth { max-width: 480px; }
 .auth .card { margin-top: var(--space-3); }
 
 label {
@@ -154,6 +172,33 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-100); }
 textarea { resize: vertical; min-height: 80px; line-height: var(--leading-body); }
+
+/* A field-level error, sitting right under the input it's actually about
+   (AuthPanel's email field first) instead of one generic banner at the
+   bottom of the whole form ("weh lu jgn taro di bawah confirm password" —
+   flagged directly). A tinted, icon-led box rather than plain red text —
+   the same "considered mark, not just colour" language .ai-note already
+   uses elsewhere, so an error reads as a real piece of UI, not an
+   afterthought. */
+input.field-invalid { border-color: var(--danger-700); }
+input.field-invalid:focus { border-color: var(--danger-700); box-shadow: 0 0 0 3px var(--danger-100); }
+.field-error {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  background: var(--danger-100); color: var(--danger-700);
+  border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm); font-weight: 600; line-height: var(--leading-snug);
+  margin: calc(-1 * var(--space-2)) 0 0;
+}
+.field-error svg { flex-shrink: 0; margin-top: 2px; }
+/* The negative top margin above is tuned for .field-error as a sibling
+   right after a <label> (AuthPanel's usage — pulls it in closer than the
+   form's normal vertical rhythm). SubscriptionPanel's card-last-4 error
+   nests it INSIDE the label instead (so it's scoped to just that column,
+   not the whole field-row), and label's own flex gap already spaces it
+   from the input — stacking both meant the negative margin pulled the box
+   up into the input's rounded corner, a visible collision ("tabrakan ga
+   rapi" — flagged directly). */
+label > .field-error { margin-top: 0; }
 
 /* ---------- components/Select.jsx — every dropdown in the app used a
    plain native <select>: a fine-looking closed pill, but its OPEN option
@@ -283,6 +328,21 @@ button.danger:hover:not(:disabled) { background: var(--danger-700); color: var(-
 button.success { background: var(--success-700); color: var(--on-primary); }
 button.success:hover:not(:disabled) { background: color-mix(in srgb, var(--success-700) 88%, black); }
 button.small { font-size: var(--text-sm); padding: var(--space-2) var(--space-4); }
+/* The landing page's .cta buttons grow with a small springy overshoot on
+   hover (see landing.css) instead of sitting flat — applied here to a
+   couple of dashboard Save buttons (EditChild, SafetySettings) that
+   asked for the same "more engaging" feel. Scoped to its own class
+   rather than every button, since a tactile grow reads right on a
+   deliberate "commit this" action, not on every small utility button in
+   the UI (Delete, Cancel, tab switches, etc.). */
+button.btn-grow:hover:not(:disabled) {
+  transform: scale(1.06);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s;
+}
+button.btn-grow:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 0.08s;
+}
 button.ghost.on { background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700); }
 
 /* tabs (moderator console) */
@@ -440,6 +500,64 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
 .badge-approved { background: var(--success-100); color: var(--success-700); }
 .badge-rejected { background: var(--danger-100); color: var(--danger-700); }
 
+/* SubscriptionPanel's Premium view — see paidTierBody()'s own comment for
+   why. .premium-status-icon reuses .stat-icon's exact chip proportions
+   (elsewhere in this file) rather than inventing a new size. */
+.premium-status { display: flex; align-items: flex-start; gap: var(--space-3); background: var(--primary-100); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.premium-status-icon {
+  width: 32px; height: 32px; flex-shrink: 0; margin-top: 2px;
+  border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--primary-700);
+}
+.premium-status-title { margin: 0; font-weight: 700; color: var(--ink); }
+/* max-width: none overrides index.css's global `p { max-width: var(--measure) }`
+   readable-line-length cap — same fix as .muted's own max-width: none
+   above, same reason: this box is plenty wide for the sentence, the global
+   cap was forcing an unnecessary 2nd line ("bisa ga jadi satu baris" —
+   flagged directly). Still wraps naturally if the card itself gets narrow
+   (mobile), just isn't capped below that on its own. */
+.premium-status-sub { margin: var(--space-1) 0 0; color: var(--text); font-size: var(--text-sm); max-width: none; }
+/* Un-boxed on purpose (had a border/background/padding at first) — next to
+   .premium-status and .cancel-status, a 3rd bordered block in a row made
+   the whole panel read as "everything is a card, nothing is just text"
+   ("piyeng" — flagged directly). This is the least consequential line of
+   the three (just what card is on file, not a status worth flagging), so
+   it's the one that goes back to plain text — a beat of visual quiet
+   between the two boxes that actually deserve the weight. */
+.card-on-file { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-sm); color: var(--text); }
+
+/* Billing history rows (View billing history, inside .panel) — see the
+   comment above billing-row's JSX for why this replaced .fav-item here. */
+.billing-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-2); border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-sm); transition: background 0.15s ease;
+}
+.billing-row:last-child { border-bottom: none; }
+.billing-row:hover { background: var(--bg); }
+.billing-row-icon {
+  width: 28px; height: 28px; flex-shrink: 0;
+  border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.billing-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.billing-row-desc { font-weight: 600; color: var(--ink); font-size: var(--text-sm); }
+.billing-row-date { font-size: var(--text-xs); color: var(--muted); }
+/* tabular-nums keeps a column of dollar amounts lining up digit-for-digit
+   rather than drifting with each row's own character widths. */
+.billing-row-amount { font-weight: 700; color: var(--ink); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Pending-cancellation notice — same layout as .premium-status above, in
+   the danger tone. See the JSX comment right above its usage. */
+.cancel-status { display: flex; align-items: flex-start; gap: var(--space-3); background: var(--danger-100); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.cancel-status-icon {
+  width: 32px; height: 32px; flex-shrink: 0; margin-top: 2px;
+  border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center;
+  background: var(--surface); color: var(--danger-700);
+}
+.cancel-status-title { margin: 0; font-weight: 700; color: var(--danger-700); }
+.cancel-status-sub { margin: var(--space-1) 0 0; color: var(--text); font-size: var(--text-sm); max-width: none; }
+
 /* ---------- moderator console: age-band/genre tags as real pill chips
    instead of a "Age: 5-8, 9-12 · Genres: funny, space" text line — reads
    as tagged metadata (CM09/CM10's actual job) rather than a caption. ---- */
@@ -481,6 +599,56 @@ button.ghost.on { background: var(--primary-700); color: var(--on-primary); bord
 }
 .ai-filter-bar-text { display: inline-flex; align-items: center; gap: var(--space-2); }
 .search-result--filtered { opacity: 0.8; }
+
+/* Moderator > Submissions: "Requested topics" — unmet demand from children. */
+.topic-requests-hint { margin: 0 0 var(--space-3); }
+.topic-requests { display: flex; flex-direction: column; gap: var(--space-2); }
+.topic-request {
+  display: flex; align-items: center; gap: var(--space-3);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.topic-request-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; font-size: var(--text-sm); }
+.topic-request-main b { font-size: var(--text-base); text-transform: capitalize; overflow-wrap: anywhere; }
+.topic-request-status { font-size: var(--text-xs); opacity: 0.85; }
+.topic-request-actions { flex: none; display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+.topic-request-actions button { gap: var(--space-1); }
+
+/* Moderator > Submissions: what an auto-import run did, item by item. */
+.bulk-busy { display: flex; align-items: center; gap: var(--space-2); color: var(--primary-700); font-size: var(--text-sm); margin: var(--space-3) 0; }
+.bulk-result { margin: var(--space-3) 0; }
+.bulk-result-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.bulk-result-head h3 { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; }
+.bulk-flagged-note {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  background: var(--danger-100); color: var(--danger-700);
+  border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm); font-weight: 600; line-height: var(--leading-snug);
+  margin: var(--space-3) 0 0;
+}
+.bulk-flagged-note svg { flex-shrink: 0; margin-top: 2px; }
+.bulk-summary { margin: var(--space-3) 0 var(--space-2); }
+.bulk-note { margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+.bulk-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.bulk-item { display: flex; align-items: flex-start; gap: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.bulk-item .badge { flex: none; min-width: 108px; text-align: center; }
+.bulk-item-main { min-width: 0; display: flex; flex-direction: column; font-size: var(--text-sm); }
+.bulk-item-main b { font-size: var(--text-base); overflow-wrap: anywhere; }
+
+/* Moderator > AI Audit — a random spot-check on auto-triaged decisions. */
+.audit-accuracy { align-items: center; margin: var(--space-3) 0; }
+/* .select is `display: inline-block` and shrink-wraps to whichever option
+   is CURRENTLY selected (.select-value) — an ancestor max-width alone
+   can't widen that (this class's first version tried exactly that and
+   still wrapped, flagged directly against a screenshot of it), because a
+   shrink-to-fit box only ever shrinks below a cap, never grows to meet
+   it. A `min-width` on .select itself is what actually reserves enough
+   room, on every render, for the longest label ("AI approved (0)") to
+   fit the popup list without wrapping, regardless of which option
+   happens to be selected at the time. */
+.audit-filter { margin: 0 0 var(--space-3); }
+.audit-filter .select { min-width: 200px; }
+.audit-filter .select-option { white-space: nowrap; }
 
 /* ---------- ConfirmDialog.jsx — a themed stand-in for window.confirm(),
    used anywhere an admin/moderator action is destructive or hard to
@@ -666,11 +834,23 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 .panel {
   margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--border);
   max-height: 320px; overflow-y: auto;
+  /* No right padding meant a scrolling list's own scrollbar sat flush
+     against its content's right edge — most visible on a right-aligned
+     value like .billing-row-amount, which ended up butted right up
+     against the scrollbar track ("scroll barnya agak nabrak" — flagged
+     directly). scrollbar-gutter reserves the lane even before a scrollbar
+     is actually needed, so short lists don't jump narrower the instant
+     they grow past 320px; the padding is the actual visual gap. */
+  padding-right: var(--space-3);
+  scrollbar-gutter: stable;
 }
-/* PA14's session browser needs more room than a flat list did — it's two
-   stacked scroll regions (session list, then the opened transcript), not
-   one. */
-.panel:has(.session-browser) { max-height: 480px; }
+/* PA14's session browser lays out list + transcript side by side (see
+   .session-body below), each scrolling independently at its own generous
+   height — the outer .panel itself no longer caps/scrolls this case (that
+   used to stack a 3rd scrollbar on top of the other two, the actual
+   "kok sempit banget" complaint: a whole conversation squeezed into a
+   letterbox). visible/none, not a bigger number, is the fix. */
+.panel:has(.session-browser) { max-height: none; overflow: visible; }
 /* Forms and settings (Edit / Safety / Data on a child card) aren't long lists
    — capping them at .panel's 320px hid their own Save button behind a tiny
    inner scrollbar. Only the list panels keep the cap. */
@@ -695,9 +875,16 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 }
 .session-search input:focus { box-shadow: none; }
 .session-search-count { margin: 0; font-size: var(--text-xs); }
+/* Sidebar (list) + main (transcript) — a real chat-history layout, room
+   enough to actually read a conversation instead of two tiny stacked
+   scroll strips. Sidebar keeps a comfortable fixed width; the transcript
+   takes whatever's left, which is most of the card once a single child
+   fills the full dashboard width (see .child-grid's own auto-fit note). */
+.session-body { display: flex; gap: var(--space-4); align-items: flex-start; }
 .session-list {
+  flex: 0 0 320px; min-width: 0;
   display: flex; flex-direction: column; gap: var(--space-1);
-  max-height: 220px; overflow-y: auto;
+  max-height: 560px; overflow-y: auto;
 }
 .session-row {
   display: flex; align-items: flex-start; justify-content: flex-start; gap: var(--space-2);
@@ -725,9 +912,40 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
   display: flex; align-items: center; gap: var(--space-1);
   font-size: var(--text-xs); color: var(--muted);
 }
+/* A real bordered/backed panel of its own — not just a divider line off
+   the list — so a SHORT conversation (1-2 messages) still reads as "a
+   deliberately-sized reading pane that happened to be short," not "empty
+   space where content should be" next to a much longer session list.
+   Messages stay top-anchored (flex-direction: column's own default,
+   chronological, oldest first) — a bottom-anchored "newest message" feel
+   fits a LIVE chat a parent is part of, not a past conversation they're
+   reviewing after the fact; a parent reads this top-down like a
+   transcript, not scrolled-to-the-latest like an inbox. */
 .session-transcript {
-  border-top: 1px dashed var(--border); padding-top: var(--space-3);
-  max-height: 240px; overflow-y: auto;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  min-height: 280px; max-height: 560px; overflow-y: auto;
+}
+.session-transcript--empty {
+  justify-content: center; align-items: center; text-align: center;
+  gap: var(--space-3); color: var(--muted);
+}
+.session-transcript--empty svg { color: var(--border); }
+.session-transcript--empty p { max-width: 32ch; margin: 0; }
+/* Narrow the layout back to stacked (list above, transcript below) once
+   there isn't room for a real sidebar + a readable transcript column
+   side by side. The 280px min-height stays desktop-only — on a phone the
+   transcript just continues naturally below the list in normal reading
+   order, so forcing extra empty height there would only push everything
+   else further down the page for no benefit. */
+@media (max-width: 760px) {
+  .session-body { flex-direction: column; }
+  .session-list { flex: none; width: 100%; max-height: 260px; }
+  .session-transcript {
+    width: 100%; min-height: 0; max-height: 360px;
+  }
 }
 .activity-item {
   padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
@@ -754,7 +972,12 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
 .activity-bubble {
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink);
-  line-height: var(--leading-snug); max-width: 88%;
+  line-height: var(--leading-snug);
+  /* The transcript column got a lot wider (see .session-transcript) — an
+     88%-of-container bubble would now stretch to an uncomfortable reading
+     line length instead of reading like a real chat message. Capped in px
+     too, so it grows with the column up to a point and then just stops. */
+  max-width: min(88%, 640px);
 }
 .activity-line--pip .activity-bubble { background: var(--primary-100); border-color: var(--primary-border); }
 .fav-item {
@@ -940,6 +1163,13 @@ button.add-btn:hover:not(:disabled) { background: var(--primary-100); }
    every form in this app, instead of relying on whatever the browser's
    own default block spacing happens to produce. */
 .account-edit-form { display: flex; flex-direction: column; gap: var(--space-4); }
+/* SubscriptionPanel's upgrade-to-Premium and update-card forms — same bare-
+   <form>-with-no-layout-class gap as .account-edit-form above (they sit
+   inside the section's own .card, not as one themselves, so they never
+   inherited that flex/gap for free) — reported as "too tight" right after
+   clicking Upgrade to Premium. space-4 read as too generous for a form
+   this dense (also flagged directly); space-3 matches .card's own gap. */
+.subscribe-form { display: flex; flex-direction: column; gap: var(--space-3); }
 .review-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .review-field-label { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
 .star-picker { display: flex; gap: var(--space-1); }

@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   getToken, getMe, login, logout,
   listContent, addContent, editContent, removeContent, approveContent, rejectContent,
-  listReports, resolveReport, searchBooks, searchVideos, importContent,
+  listReports, resolveReport, searchBooks, searchVideos, importContent, listTopicRequests, autoImportTopic,
+  dismissTopicRequest, bulkImport,
+  listAuditQueue, submitAudit,
 } from '../api'
 import {
   AlertIcon, BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
@@ -13,6 +15,7 @@ import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import ConfirmDialog from '../components/ConfirmDialog'
+import PromptDialog from '../components/PromptDialog'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import { firstMissingField } from '../formValidation'
@@ -93,14 +96,39 @@ function ModLogin({ onAuthed }) {
     }
   }
 
+  // Same field-routing pattern as ParentDashboard.jsx's AuthPanel: login's
+  // "Wrong email or password" mentions "email" so it lands under that
+  // field, "Incorrect password" lands under Password, anything else falls
+  // through to a plain banner (e.g. the role-check message below).
+  const isEmailError = /email/i.test(error || '')
+  const isWrongPassword = error === 'Incorrect password'
+
   return (
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
       <h1>Moderator Sign In</h1>
       <form onSubmit={submit} className="card" noValidate>
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
-        {error && <p className="error">{error}</p>}
+        <label>Email
+          <input
+            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            className={isEmailError ? 'field-invalid' : ''}
+            aria-invalid={isEmailError || undefined}
+          />
+        </label>
+        {isEmailError && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
+        <label>Password
+          <PasswordInput
+            value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+            className={isWrongPassword ? 'field-invalid' : ''}
+            aria-invalid={isWrongPassword || undefined}
+          />
+        </label>
+        {isWrongPassword && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
+        {error && !isEmailError && !isWrongPassword && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
       </form>
       <p className="muted">Demo login: <b>moderator@pip.local</b> / <b>moderator123</b></p>
@@ -112,6 +140,7 @@ const TABS = [
   { key: 'overview', label: 'Overview', icon: ChartIcon },
   { key: 'submissions', label: 'Submissions', icon: InboxIcon, countKey: 'pending' },
   { key: 'catalogue', label: 'Catalogue', icon: GridIcon },
+  { key: 'audit', label: 'AI Audit', icon: SparkleIcon, countKey: 'auditPending' },
   { key: 'reports', label: 'Reports', icon: FlagIcon, countKey: 'reportsOpen' },
 ]
 
@@ -123,15 +152,19 @@ function Tools({ account, onLogout }) {
   // a moderator lands on Overview and can already see "3 waiting" without
   // clicking into the tab, and the number stays in sync as items are
   // actioned (each tab calls onCountsChange after approve/reject/resolve).
-  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0 })
+  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0, auditPending: 0 })
 
   async function refreshCounts() {
     try {
-      const [pending, reports] = await Promise.all([
+      const [pending, reports, audit] = await Promise.all([
         listContent({ status: 'pending' }),
         listReports(),
+        listAuditQueue(),
       ])
-      setCounts({ pending: pending.length, reportsOpen: reports.filter((r) => r.status === 'open').length })
+      setCounts({
+        pending: pending.length, reportsOpen: reports.filter((r) => r.status === 'open').length,
+        auditPending: audit.pending_count,
+      })
     } catch {
       // Best-effort — badges just stay at their last known value.
     }
@@ -170,6 +203,7 @@ function Tools({ account, onLogout }) {
         {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} onRefreshCounts={refreshCounts} />}
         {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'catalogue' && <Catalogue notify={notify} />}
+        {tab === 'audit' && <AuditQueue notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
       </div>
 
@@ -415,7 +449,8 @@ function TypeIcon({ type }) {
 // hand-type every field into "Add catalogue entry," which is not what
 // CM03's own docstring describes ("search + import... a real editorial
 // judgement call a human makes here").
-function SearchImport({ onImported, notify }) {
+function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
+  const sectionRef = useRef(null)
   const [type, setType] = useState('book')
   const [q, setQ] = useState('')
   const [results, setResults] = useState(null)
@@ -427,18 +462,28 @@ function SearchImport({ onImported, notify }) {
   // never gone — this toggle reveals them, and any one can still be imported.
   const [showFiltered, setShowFiltered] = useState(false)
 
-  async function search(e) {
-    e.preventDefault()
-    if (!q.trim()) return
+  async function runSearch(searchType, query) {
+    if (!query.trim()) return
     setBusy(true); setError(''); setShowFiltered(false)
     try {
-      setResults(type === 'book' ? await searchBooks(q) : await searchVideos(q))
+      setResults(searchType === 'book' ? await searchBooks(query) : await searchVideos(query))
     } catch (err) {
       setError(err.message)
     } finally {
       setBusy(false)
     }
   }
+  function search(e) { e.preventDefault(); runSearch(type, q) }
+
+  // "Find content" on a requested topic (TopicRequests above) fills the box
+  // and runs the search straight away — `nonce` makes asking for the same
+  // topic twice still count as a new request.
+  useEffect(() => {
+    if (!prefill) return
+    setImporting(null); setType(prefill.type); setQ(prefill.q); setResults(null)
+    sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    runSearch(prefill.type, prefill.q)
+  }, [prefill?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Picking a result opens the same EntryForm used everywhere else,
   // pre-filled from the real search data — the moderator still has to
@@ -469,7 +514,7 @@ function SearchImport({ onImported, notify }) {
   }
 
   return (
-    <section>
+    <section ref={sectionRef}>
       <h2><SearchIcon width={20} height={20} /> Search &amp; import</h2>
       <form className="row" onSubmit={search}>
         <Select value={type} onChange={(e) => { setType(e.target.value); setResults(null) }}>
@@ -484,6 +529,13 @@ function SearchImport({ onImported, notify }) {
           style={{ flex: '1 1 220px' }}
         />
         <button type="submit" disabled={busy}>{busy ? 'Searching…' : 'Search'}</button>
+        <button
+          type="button" className="ghost" disabled={!q.trim() || autoBusy}
+          title="Import the top results and let AI triage them"
+          onClick={() => onAutoImport?.(q.trim(), type)}
+        >
+          <SparkleIcon width={15} height={15} /> Auto-import
+        </button>
       </form>
       {error && <p className="error">{error}</p>}
       {results && results.length === 0 && !error && (
@@ -546,7 +598,172 @@ function SearchResultCard({ r, type, onImport }) {
 }
 
 // CM06/CM07/CM08 — review new submissions, approve or reject
+// Unmet demand: topics children asked Pip for that the catalogue couldn't
+// serve, most-asked first (GET /api/content/topic-requests). Each row jumps
+// into Search & import below, pre-filled — the moderator's cue for what to
+// import next. A topic drops off this list by itself once approved content
+// covers it. Counts only: nothing about which child asked is stored.
+function TopicRequests({ onFind, onAutoImport, busy }) {
+  const [rows, setRows] = useState(null)
+  const [dismissing, setDismissing] = useState(null)
+  const [confirmingDismiss, setConfirmingDismiss] = useState(null)
+  useEffect(() => {
+    listTopicRequests().then(setRows).catch(() => setRows([]))
+    // Fire-and-forget, not awaited by the list load above: lets a
+    // popular-enough topic (see backend's _AUTO_IMPORT_THRESHOLD) import
+    // itself instead of waiting for a moderator to notice it below and
+    // click Auto-import themselves — same pipeline that button already
+    // runs, see POST /topic-requests/auto-import's own docstring for why
+    // this is a separate call rather than a side effect of the GET above.
+    // Only re-fetches the list if it actually imported something, so a
+    // moderator who was already reading doesn't see it flicker for
+    // nothing.
+    autoImportTopic()
+      .then((r) => { if (r.imported_topic) listTopicRequests().then(setRows).catch(() => {}) })
+      .catch(() => {})
+  }, [])
+  if (rows === null) return null
+
+  // Confirms first — a moderator clicked Dismiss by accident and lost the
+  // row with no way back (Kiefer, 2026-09-24). Dismissing only forgets a
+  // demand tally, never touches real catalogue content, and would
+  // naturally re-appear if children keep asking — but "instant, no undo"
+  // still isn't the right default when the only recovery is asking a
+  // child to repeat themselves 3 more times.
+  async function handleDismiss(r) {
+    setConfirmingDismiss(null)
+    setDismissing(r.key)
+    try {
+      await dismissTopicRequest(r.key)
+      setRows((cur) => cur.filter((x) => x.key !== r.key))
+    } catch {
+      // leave the row in place — the moderator can just try again
+    } finally {
+      setDismissing(null)
+    }
+  }
+
+  return (
+    <section>
+      <h2><ChartIcon width={20} height={20} /> Requested topics {rows.length > 0 && `(${rows.length})`}</h2>
+      <p className="muted topic-requests-hint">Things children asked Pip for that the catalogue doesn't have yet.</p>
+      {rows.length === 0 ? (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> No unmet requests — everything children asked for is covered.</p>
+      ) : (
+        <div className="topic-requests">
+          {rows.map((r) => {
+            const Icon = r.format === 'video' ? VideoIcon : BookIcon
+            const threshold = r.auto_import_threshold
+            // Why the manual button is still here even though this feature
+            // auto-imports on its own — real confusion (Kiefer, 2026-09-24):
+            // every row showed the same "Auto-import" button whether it was
+            // genuinely below the threshold (still waiting on more asks) or
+            // had already had its one automatic shot and just didn't fully
+            // resolve, which read as the automation being broken.
+            let statusNote = null
+            if (r.auto_imported) {
+              statusNote = 'Already auto-imported once — see the moderation queue, or search manually below'
+            } else if (threshold && r.count < threshold) {
+              statusNote = `${r.count}/${threshold} asked — auto-imports on its own once it reaches ${threshold}, or import it now`
+            } else if (threshold) {
+              statusNote = 'At the threshold — auto-importing shortly, or import it now'
+            }
+            return (
+              <div className="topic-request" key={r.topic}>
+                <span className="item-type-icon"><Icon width={16} height={16} /></span>
+                <div className="topic-request-main">
+                  <b>{r.topic}</b>
+                  <span className="muted">
+                    asked {r.count} time{r.count === 1 ? '' : 's'} · last {timeAgo(r.last_requested_at)}
+                  </span>
+                  {statusNote && <span className="muted topic-request-status">{statusNote}</span>}
+                </div>
+                <div className="topic-request-actions">
+                  <button type="button" className="ghost small" onClick={() => onFind(r)}>
+                    <SearchIcon width={14} height={14} /> Find content
+                  </button>
+                  <button type="button" className="small" disabled={busy} onClick={() => onAutoImport(r)}>
+                    <SparkleIcon width={14} height={14} /> {r.auto_imported ? 'Import again' : 'Import now'}
+                  </button>
+                  <button
+                    type="button" className="danger small" disabled={dismissing === r.key}
+                    onClick={() => setConfirmingDismiss(r)} title="Dismiss — not relevant, or a one-off/test message"
+                  >
+                    <TrashIcon width={14} height={14} /> Dismiss
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <ConfirmDialog
+        open={!!confirmingDismiss}
+        icon={<TrashIcon width={20} height={20} />}
+        title="Dismiss this topic request?"
+        message={confirmingDismiss ? `“${confirmingDismiss.topic}” will drop off this list. It'll come back on its own if children keep asking for it.` : ''}
+        confirmLabel="Dismiss"
+        onConfirm={() => handleDismiss(confirmingDismiss)}
+        onCancel={() => setConfirmingDismiss(null)}
+      />
+    </section>
+  )
+}
+
+// What an auto-import run did, item by item — nothing the AI decided is
+// hidden from the moderator. Approved/rejected ones were settled without a
+// human (and are stamped "AI auto-triage"); the "needs review" ones are now in
+// the queue below.
+const OUTCOME_LABEL = { approved: 'AI approved', rejected: 'AI rejected', pending: 'Needs review' }
+
+function BulkResult({ result, onDismiss }) {
+  return (
+    <section className="bulk-result card">
+      <div className="bulk-result-head">
+        <h3><SparkleIcon width={18} height={18} /> Auto-import: “{result.topic}”</h3>
+        <button type="button" className="ghost small" onClick={onDismiss}><CloseIcon width={14} height={14} /> Dismiss</button>
+      </div>
+      {result.topic_flagged && (
+        <p className="bulk-flagged-note">
+          <AlertIcon width={16} height={16} /> This topic was flagged by content moderation — nothing was
+          auto-approved, every result below needs your review regardless of how confident the AI was.
+        </p>
+      )}
+      <div className="chip-row bulk-summary">
+        <span className="badge badge-approved">{result.approved} approved</span>
+        <span className="badge badge-rejected">{result.rejected} rejected</span>
+        <span className="badge badge-pending">{result.pending} for you to review</span>
+      </div>
+      <p className="muted bulk-note">
+        Found {result.found}.{' '}
+        {result.skipped_duplicates > 0 && `${result.skipped_duplicates} already in the catalogue. `}
+        {result.skipped_off_topic > 0 && `${result.skipped_off_topic} skipped as off-topic. `}
+        {result.found === 0 && 'Nothing came back — check the Google Books / YouTube API keys, or try another topic.'}
+      </p>
+      {result.items.length > 0 && (
+        <ul className="bulk-items">
+          {result.items.map((i) => (
+            <li className="bulk-item" key={i.id}>
+              <span className={`badge badge-${i.outcome}`}>{OUTCOME_LABEL[i.outcome]}</span>
+              <div className="bulk-item-main">
+                <b>{i.title}</b>
+                <span className="muted">{i.reason}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function Submissions({ notify, onCountsChange }) {
+  const [prefill, setPrefill] = useState(null)
+  // Auto-import: ask first (it can approve content without a human), then run.
+  const [bulkAsk, setBulkAsk] = useState(null) // {topic, type} awaiting confirmation
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState(null)
+  const [topicsKey, setTopicsKey] = useState(0) // remount TopicRequests so a covered topic drops off // set by a requested topic's "Find content"
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   // The item mid-transition, so its card can fade/slide out instead of
@@ -588,7 +805,19 @@ function Submissions({ notify, onCountsChange }) {
 
   return (
     <section>
-      <SearchImport onImported={() => { reload(); onCountsChange?.() }} notify={notify} />
+      <TopicRequests
+        key={topicsKey} busy={bulkBusy}
+        onFind={(r) => setPrefill({ q: r.topic, type: r.format, nonce: Date.now() })}
+        onAutoImport={(r) => setBulkAsk({ topic: r.topic, type: r.format })}
+      />
+      <SearchImport
+        onImported={() => { reload(); onCountsChange?.() }} notify={notify} prefill={prefill}
+        autoBusy={bulkBusy} onAutoImport={(topic, type) => setBulkAsk({ topic, type })}
+      />
+      {bulkBusy && (
+        <p className="bulk-busy"><RefreshIcon width={16} height={16} /> Importing and triaging — this takes about 10 seconds…</p>
+      )}
+      {bulkResult && <BulkResult result={bulkResult} onDismiss={() => setBulkResult(null)} />}
       <h2><InboxIcon width={20} height={20} /> New submissions {!loading && `(${items.length})`}</h2>
       {loading && <p className="muted">Loading…</p>}
       {!loading && items.length === 0 && (
@@ -640,6 +869,27 @@ function Submissions({ notify, onCountsChange }) {
           </div>
         </div>
       ))}
+      <ConfirmDialog
+        open={!!bulkAsk}
+        tone="primary"
+        icon={<SparkleIcon width={20} height={20} />}
+        title="Auto-import this topic?"
+        message={bulkAsk ? `Up to 10 ${bulkAsk.type === 'book' ? 'books' : 'videos'} about “${bulkAsk.topic}” will be searched and checked by AI. Clear, child-safe matches are approved straight away, clearly unsuitable ones are rejected, and anything unsure waits here for you.` : ''}
+        confirmLabel="Import"
+        onConfirm={async () => {
+          const ask = bulkAsk
+          setBulkAsk(null); setBulkBusy(true); setBulkResult(null)
+          try {
+            setBulkResult(await bulkImport({ topic: ask.topic, type: ask.type, limit: 10, auto_approve: true }))
+            reload(); onCountsChange?.(); setTopicsKey((k) => k + 1)
+          } catch (err) {
+            notify?.(err.message, 'danger')
+          } finally {
+            setBulkBusy(false)
+          }
+        }}
+        onCancel={() => setBulkAsk(null)}
+      />
       <ConfirmDialog
         open={!!confirmingReject}
         icon={<AlertIcon width={20} height={20} />}
@@ -912,6 +1162,138 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
 }
 
 // CM11 review reported content + CM12 resolve
+// QA audit (step 4 of the catalogue-scale plan): a random slice of what
+// bulk import auto-approved/auto-rejected (app/bulk_import.py's
+// AUDIT_SAMPLE_RATE), waiting for a moderator to confirm or overturn the
+// AI's call. Not a second gate before publish — an overturned "approved"
+// item is already live until this action pulls it; an overturned "rejected"
+// one only goes live once confirmed here. That's why every row shows the
+// AI's own decision and reason before asking for a verdict.
+function AuditQueue({ notify, onCountsChange }) {
+  const [data, setData] = useState(null)
+  const [acting, setActing] = useState(null) // id mid-request
+  const [overturning, setOverturning] = useState(null) // the item awaiting an overturn reason
+  // Client-side only — the sample itself already fits in one page (see
+  // listAuditQueue's own default `limit`), so a second round-trip just to
+  // filter by a field already in hand would be waste. Real ask (Kiefer,
+  // 2026-09-24): a queue mixing AI-approved and AI-rejected spot-checks
+  // made it hard to tell at a glance whether the AI's approve calls or its
+  // reject calls needed more scrutiny.
+  const [statusFilter, setStatusFilter] = useState('')
+
+  async function reload() {
+    try { setData(await listAuditQueue()) } catch { setData({ items: [], pending_count: 0, confirmed: 0, overturned: 0, accuracy: null }) }
+  }
+  useEffect(() => { reload() }, [])
+
+  async function decide(item, decision, decisionNote) {
+    setActing(item.id)
+    try {
+      await submitAudit(item.id, { decision, note: decisionNote || undefined })
+      notify?.(
+        decision === 'confirm'
+          ? `Confirmed — the AI's call on “${item.title}” stands.`
+          : `Overturned — “${item.title}” is now ${item.status === 'approved' ? 'rejected' : 'approved'}.`,
+        decision === 'confirm' ? 'success' : 'danger',
+      )
+      await reload()
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  if (!data) return <p className="muted">Loading…</p>
+
+  const visibleItems = statusFilter ? data.items.filter((i) => i.status === statusFilter) : data.items
+  const approvedCount = data.items.filter((i) => i.status === 'approved').length
+  const rejectedCount = data.items.filter((i) => i.status === 'rejected').length
+
+  return (
+    <section>
+      <h2><SparkleIcon width={20} height={20} /> AI audit {data.pending_count > 0 && `(${data.pending_count})`}</h2>
+      <p className="muted">
+        A random sample of what the AI approved or rejected on its own during bulk import — a spot-check
+        after the fact, not a second gate before publish.
+      </p>
+      {data.accuracy !== null && (
+        <div className="chip-row audit-accuracy">
+          <span className="badge badge-approved">{Math.round(data.accuracy * 100)}% confirmed</span>
+          <span className="muted">{data.confirmed} confirmed · {data.overturned} overturned, out of {data.confirmed + data.overturned} audited so far</span>
+        </div>
+      )}
+      {data.items.length > 0 && (
+        <div className="audit-filter">
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by AI decision">
+            <option value="">All ({data.items.length})</option>
+            <option value="approved">AI approved ({approvedCount})</option>
+            <option value="rejected">AI rejected ({rejectedCount})</option>
+          </Select>
+        </div>
+      )}
+      {data.items.length === 0 && (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing sampled right now — check back after the next bulk import.</p>
+      )}
+      {data.items.length > 0 && visibleItems.length === 0 && (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> No {statusFilter} items in the current sample.</p>
+      )}
+      {visibleItems.map((item) => (
+        <div className="card" key={item.id}>
+          <div className="child-top">
+            <div className="item-with-thumb">
+              <TypeIcon type={item.type} />
+              <div>
+                <h3>{item.title}</h3>
+                <p className="muted">{truncate(item.description, 140)}</p>
+              </div>
+            </div>
+            <span className={`badge badge-${item.status}`}>AI {item.status}</span>
+          </div>
+          <p className={`ai-note ai-note--${item.status === 'approved' ? 'approve' : 'reject'}`}>
+            <SparkleIcon width={14} height={14} />
+            <span>
+              <b>AI reasoning:</b> {item.ai_reason || '—'}
+              {item.ai_confidence && <span className="ai-note-confidence"> · {item.ai_confidence} confidence</span>}
+            </span>
+          </p>
+          <div className="chip-row">
+            {item.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
+            {item.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
+          </div>
+          <div className="confirm-actions" style={{ justifyContent: 'flex-start' }}>
+            <button type="button" disabled={acting === item.id} onClick={() => decide(item, 'confirm')}>
+              <CheckIcon width={16} height={16} /> AI got it right
+            </button>
+            <button type="button" className="ghost" disabled={acting === item.id} onClick={() => setOverturning(item)}>
+              <CloseIcon width={16} height={16} /> AI got it wrong
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <PromptDialog
+        open={!!overturning}
+        icon={<AlertIcon width={20} height={20} />}
+        title="Overturn this decision?"
+        message={overturning ? `“${overturning.title}” will be ${overturning.status === 'approved' ? 'removed from the catalogue' : 'published'} right away. Say why, for the record.` : ''}
+        label="Reason" type="text"
+        placeholder="e.g. too intense for 5-8 after all"
+        minLength={3}
+        confirmLabel="Overturn"
+        onConfirm={(value) => {
+          const item = overturning
+          setOverturning(null)
+          decide(item, 'overturn', value)
+        }}
+        onCancel={() => setOverturning(null)}
+      />
+    </section>
+  )
+}
+
+
 function Reports({ notify, onCountsChange }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)

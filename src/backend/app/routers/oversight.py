@@ -107,7 +107,7 @@ def _genre_counts(child_id: str) -> Counter:
 
 @router.get("/{child_id}/trends", response_model=ChildTrendsOut)
 def child_trends(child_id: str, parent: dict = Depends(require_role("parent"))):
-    if parent.get("tier", "free") == "free":  # Premium AND Ultra both get insights
+    if parent.get("tier", "free") == "free":  # any paid tier gets insights
         raise HTTPException(403, "Insights are a Premium feature.")
     child = _owned_child(child_id, parent)
     activity = db.activity.get(child_id, [])
@@ -126,7 +126,7 @@ def child_trends(child_id: str, parent: dict = Depends(require_role("parent"))):
 
 @router.get("/compare", response_model=list[ChildComparisonOut])
 def compare_children(parent: dict = Depends(require_role("parent"))):
-    if parent.get("tier", "free") == "free":  # Premium AND Ultra both get comparison
+    if parent.get("tier", "free") == "free":  # any paid tier gets comparison
         raise HTTPException(403, "Comparing children is a Premium feature.")
     children = db.children_of(parent["id"])
     if len(children) < 2:

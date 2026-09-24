@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import {
   getToken, getMe, login, signup, logout,
   updateAccount, deleteAccount,
@@ -70,7 +70,14 @@ export default function ParentDashboard() {
 // ---------- login / sign up ----------
 
 function AuthPanel({ onAuthed }) {
-  const [mode, setMode] = useState('login')
+  // The landing page's nav now has two separate entry points ("Log in" /
+  // "Parent sign up", see Home.jsx) that each pass which form they mean
+  // via router state — read that here instead of always defaulting to one
+  // (this used to silently default to 'login' regardless of which link was
+  // clicked, so "Parent sign up" was actually landing a brand-new parent on
+  // a Sign In screen first, not the signup form its own label promised).
+  const location = useLocation()
+  const [mode, setMode] = useState(location.state?.mode === 'signup' ? 'signup' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -85,7 +92,7 @@ function AuthPanel({ onAuthed }) {
       ? [[name, 'Your name'], [email, 'Email'], [password, 'Password'], [confirmPassword, 'Confirm password']]
       : [[email, 'Email'], [password, 'Password']])
     if (missing) { setError(missing); return }
-    if (mode === 'signup' && password !== confirmPassword) { setError("Passwords don't match."); return }
+    if (mode === 'signup' && password !== confirmPassword) { setError("Passwords don't match"); return }
     setError(''); setBusy(true)
     try {
       const acc = mode === 'login'
@@ -101,6 +108,21 @@ function AuthPanel({ onAuthed }) {
 
   if (forgot) return <ForgotPassword onBack={() => setForgot(false)} />
 
+  // Every error this form can get back (bad/unreal address, already
+  // registered, "Email is required", even login's "Wrong email or
+  // password") happens to mention "email" — good enough to route it to
+  // sit right under the field it's actually about instead of a single
+  // generic banner at the bottom of the whole form, without needing the
+  // backend to return a structured per-field shape.
+  const isEmailError = /email/i.test(error || '')
+  // Exact match, not a substring sniff — this string is set by this same
+  // component (see submit() below), never something the backend sends.
+  const isPasswordMismatch = error === "Passwords don't match"
+  // Exact match against login's own distinct wrong-password message (see
+  // auth.py's login()) — deliberately doesn't mention "email", so it never
+  // collides with isEmailError above.
+  const isWrongPassword = error === "Incorrect password"
+
   return (
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
@@ -112,19 +134,40 @@ function AuthPanel({ onAuthed }) {
           </label>
         )}
         <label>Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            className={isEmailError ? 'field-invalid' : ''}
+            aria-invalid={isEmailError || undefined}
+          />
         </label>
+        {isEmailError && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
         <label>Password
-          <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} minLength={6}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+          <PasswordInput
+            value={password} onChange={(e) => setPassword(e.target.value)} minLength={6}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            className={isWrongPassword ? 'field-invalid' : ''}
+            aria-invalid={isWrongPassword || undefined}
+          />
         </label>
+        {isWrongPassword && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
         {mode === 'signup' && (
           <label>Confirm password
-            <PasswordInput value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={6}
-              autoComplete="new-password" />
+            <PasswordInput
+              value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} minLength={6}
+              autoComplete="new-password"
+              className={isPasswordMismatch ? 'field-invalid' : ''}
+              aria-invalid={isPasswordMismatch || undefined}
+            />
           </label>
         )}
-        {error && <p className="error">{error}</p>}
+        {isPasswordMismatch && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
+        {error && !isEmailError && !isPasswordMismatch && !isWrongPassword && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
           {busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
         </button>
@@ -173,7 +216,7 @@ function ForgotPassword({ onBack }) {
     e.preventDefault()
     const missing = firstMissingField([[token, 'Reset token'], [newPassword, 'New password'], [confirmNewPassword, 'Confirm new password']])
     if (missing) { setError(missing); return }
-    if (newPassword !== confirmNewPassword) { setError("Passwords don't match."); return }
+    if (newPassword !== confirmNewPassword) { setError("Passwords don't match"); return }
     setError(''); setBusy(true)
     try {
       await confirmPasswordReset(token, newPassword)
@@ -228,11 +271,21 @@ function ForgotPassword({ onBack }) {
 
 function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
   const [children, setChildren] = useState([])
+  // Real, reproduced bug (Kiefer, 2026-09-24): `children` starts as `[]`
+  // before the first `listChildren()` round-trip ever resolves, and with
+  // no loading state of its own, "No child profiles yet" rendered
+  // immediately on every fresh page load — indistinguishable from a
+  // genuinely empty account. On a slow connection a parent with a real
+  // child already set up would see that message flash before Alex (or
+  // whoever) actually showed up a moment later, which reads as "did I
+  // lose my child's profile?" rather than "still loading." Only gates the
+  // FIRST load — reload() after adding a child shouldn't re-show this.
+  const [childrenLoading, setChildrenLoading] = useState(true)
   const [error, setError] = useState('')
   const [activeChildId, setActiveChildId] = useState('all') // PA35 switcher
 
   async function reload() {
-    try { setChildren(await listChildren()) } catch (err) { setError(err.message) }
+    try { setChildren(await listChildren()) } catch (err) { setError(err.message) } finally { setChildrenLoading(false) }
   }
   useEffect(() => { reload() }, [])
 
@@ -285,7 +338,11 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
       <AddChild account={account} onAccountUpdated={onAccountUpdated} onAdded={reload} childCount={children.length} />
 
       <h2><UserIcon width={20} height={20} /> Your children ({children.length})</h2>
-      {children.length === 0 && <p className="muted">No child profiles yet. Add one above.</p>}
+      {childrenLoading ? (
+        <p className="muted">Loading your children…</p>
+      ) : children.length === 0 && (
+        <p className="muted">No child profiles yet. Add one above.</p>
+      )}
 
       {children.length > 1 && (
         // PA35 — Switch Between Child Profiles (Premium)
@@ -619,7 +676,7 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
     e.preventDefault()
     const missing = firstMissingField([[name, 'Name'], [email, 'Email']])
     if (missing) { setError(missing); return }
-    if (password !== confirmPassword) { setError("Passwords don't match."); return }
+    if (password !== confirmPassword) { setError("Passwords don't match"); return }
     setError(''); setBusy(true)
     const payload = { name, email }
     if (password) payload.password = password
@@ -702,13 +759,15 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
 
 // ---------- PA23-27: subscription / billing (simulated) ----------
 
-// Ultra tier (2026-09-07, Kiefer's own ask) — same Premium features plus
-// unlimited child profiles (Premium stays capped at 4). Kept as one small
-// lookup instead of scattering "premium vs ultra" copy across the JSX
-// below, so the two tiers' descriptions/prices stay next to each other.
+// Ultra tier existed briefly (2026-09-07) — same Premium features plus
+// unlimited child profiles — but is deliberately held back out of this
+// prototype (Kiefer's call, 2026-09-23): it's meant for the final product,
+// not the prototype build. Backend/models.py's AccountTier and
+// SubscribeRequest.tier were narrowed back to "free"/"premium" alongside
+// this, so re-adding it later is mostly reversing that one commit, not
+// rebuilding from scratch.
 const TIER_INFO = {
   premium: { label: 'Premium', desc: 'Up to 4 child profiles, unlimited favourites, full activity trends, multi-child comparison.' },
-  ultra: { label: 'Ultra', desc: 'Everything in Premium, plus unlimited child profiles — no cap for larger families.' },
 }
 
 function SubscriptionPanel({ account, onAccountUpdated }) {
@@ -716,7 +775,6 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   const [plans, setPlans] = useState(null)
   const [history, setHistory] = useState([])
   const [showUpgrade, setShowUpgrade] = useState(false)
-  const [upgradeTier, setUpgradeTier] = useState('premium')
   const [showHistory, setShowHistory] = useState(false)
   const [billingCycle, setBillingCycle] = useState('monthly')
   const [cardBrand, setCardBrand] = useState('Visa')
@@ -749,6 +807,12 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
     if (!status?.payment_method) {
       const missing = firstMissingField([[cardBrand, 'Card brand'], [cardLast4, 'Card last 4 digits']])
       if (missing) { setError(missing); return }
+      // firstMissingField only checks "typed something" — the input's own
+      // minLength/maxLength can't enforce the rest since the form carries
+      // noValidate. Without this, "1 digit typed" (or any wrong length)
+      // sailed straight through to a real subscribe call (reported directly
+      // — a card-less/underfilled purchase must never go through silently).
+      if (cardLast4.length !== 4) { setError('Enter all 4 digits of the card number'); return }
     }
     setError(''); setBusy(true)
     try {
@@ -797,7 +861,12 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   }
 
   if (!status) return null
-  const price = priceFor(upgradeTier, billingCycle)
+  const price = priceFor('premium', billingCycle)
+  // Same field-routing idea as AuthPanel's isWrongPassword — both card
+  // errors are actually about the last-4 box, not the form in general, so
+  // route them to sit right under it instead of one banner near the
+  // buttons ("jgn di posisi situ" — flagged directly).
+  const isCardLast4Error = error === 'Card last 4 digits is required' || error === 'Enter all 4 digits of the card number'
 
   // Shared by both paid tiers below — card-on-file management + cancel/
   // resume is identical either way, only the tier name/description
@@ -807,17 +876,36 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   // whole subtree (and drop input focus mid-keystroke in the card-update
   // form below) every time any of this panel's own state changes.
   function paidTierBody(tier) {
+    // Was just two lines of plain .muted text under the PREMIUM badge —
+    // "keliatan polos banget" right after actually buying it. A tinted
+    // status strip (same icon-chip language .stat-icon already uses
+    // elsewhere) gives the plan/billing-cycle/price its own visual weight
+    // instead of reading identically to any other caption in the app; the
+    // card-on-file line becomes a real bordered row instead of an inline
+    // underlined "Update" link buried in a sentence.
+    const cyclePrice = status.billing_cycle ? priceFor(tier, status.billing_cycle) : null
     return (
       <>
-        <p className="muted">{TIER_INFO[tier].desc}</p>
+        <div className="premium-status">
+          <span className="premium-status-icon"><StarIcon width={18} height={18} /></span>
+          <div>
+            <p className="premium-status-title">
+              {TIER_INFO[tier].label} plan
+              {status.billing_cycle && cyclePrice != null && (
+                <> — {status.billing_cycle === 'annual' ? 'Annual' : 'Monthly'}, ${cyclePrice.toFixed(2)}{status.billing_cycle === 'annual' ? '/yr' : '/mo'}</>
+              )}
+            </p>
+            <p className="premium-status-sub">{TIER_INFO[tier].desc}</p>
+          </div>
+        </div>
         {status.payment_method && !editingCard && (
-          <p className="muted">
-            Card on file: {status.payment_method.brand} •••• {status.payment_method.last4}{' '}
-            <button className="linkbtn" onClick={() => { setNewCardBrand(status.payment_method.brand); setEditingCard(true) }}>Update</button>
-          </p>
+          <div className="card-on-file">
+            <span>Card on file: <b>{status.payment_method.brand} •••• {status.payment_method.last4}</b></span>
+            <button className="ghost small" onClick={() => { setNewCardBrand(status.payment_method.brand); setEditingCard(true) }}>Update</button>
+          </div>
         )}
         {editingCard && (
-          <form onSubmit={updateCard} noValidate>
+          <form className="subscribe-form" onSubmit={updateCard} noValidate>
             <div className="field-row">
               <label>Card brand
                 <input value={newCardBrand} onChange={(e) => setNewCardBrand(e.target.value)} />
@@ -834,33 +922,26 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
             </div>
           </form>
         )}
-        {tier === 'premium' && !status.cancel_at && (
-          <div className="row">
-            <button onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}>
-              <StarIcon width={16} height={16} /> Upgrade to Ultra
-            </button>
-          </div>
-        )}
-        {showUpgrade && upgradeTier === 'ultra' && tier === 'premium' && (
-          <form onSubmit={(e) => subscribe(e, 'ultra')}>
-            <label>Billing cycle
-              <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
-                <option value="monthly">Monthly — ${priceFor('ultra', 'monthly')?.toFixed(2)}</option>
-                <option value="annual">Annual — ${priceFor('ultra', 'annual')?.toFixed(2)}</option>
-              </Select>
-            </label>
-            {error && <p className="error">{error}</p>}
-            <div className="row">
-              <button type="submit" disabled={busy}>{busy ? 'Processing…' : 'Confirm upgrade'}</button>
-              <button type="button" className="ghost" onClick={() => setShowUpgrade(false)}>Cancel</button>
-            </div>
-          </form>
-        )}
         {status.cancel_at
           ? (
+            // Was one plain .muted line — the single most consequential
+            // status this panel can show (losing Premium on a specific
+            // date) read identically to any other caption ("polos banget"
+            // — flagged directly). Same tinted-strip language as
+            // .premium-status above, in the danger tone instead — same
+            // "this is a status, colour signals its urgency" idea already
+            // used across the app (badges, .stat--attention). Resume stays
+            // the plain default button (tried .success/green first — asked
+            // back to the app's usual purple, not a semantic green CTA).
             <>
-              <p className="muted"><AlertIcon width={14} height={14} /> Cancels on {new Date(status.cancel_at * 1000).toLocaleDateString()} — you'll drop to Free after that.</p>
-              <div className="row"><button className="ghost" onClick={resume}>Resume subscription</button></div>
+              <div className="cancel-status">
+                <span className="cancel-status-icon"><AlertIcon width={16} height={16} /></span>
+                <div>
+                  <p className="cancel-status-title">Cancels on {new Date(status.cancel_at * 1000).toLocaleDateString()}</p>
+                  <p className="cancel-status-sub">You'll drop to Free after that — resume anytime before then to keep Premium.</p>
+                </div>
+              </div>
+              <div className="row"><button onClick={resume}>Resume subscription</button></div>
             </>
           )
           : confirmingCancel ? (
@@ -890,59 +971,91 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
       {status.tier === 'free' && (
         <>
           <p className="muted">Free plan: 1 child profile, 5 saved favourites per child, basic activity log.</p>
-          {!showUpgrade
-            ? (
-              <div className="row">
-                <button onClick={() => { setUpgradeTier('premium'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
-                <button className="ghost" onClick={() => { setUpgradeTier('ultra'); setShowUpgrade(true) }}><StarIcon width={16} height={16} /> Upgrade to Ultra</button>
-              </div>
-            )
-            : (
-              <form onSubmit={(e) => subscribe(e, upgradeTier)} noValidate>
-                <label>Plan
-                  <Select value={upgradeTier} onChange={(e) => setUpgradeTier(e.target.value)}>
-                    <option value="premium">Premium — {TIER_INFO.premium.desc}</option>
-                    <option value="ultra">Ultra — {TIER_INFO.ultra.desc}</option>
-                  </Select>
-                </label>
-                <label>Billing cycle
-                  <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
-                    <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
-                    <option value="annual">Annual — ${priceFor(upgradeTier, 'annual')?.toFixed(2)}</option>
-                  </Select>
-                </label>
+          {showUpgrade && (
+            <form className="subscribe-form" onSubmit={(e) => subscribe(e, 'premium')} noValidate>
+              <p className="muted">{TIER_INFO.premium.desc}</p>
+              <label>Billing cycle
+                <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
+                  <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
+                  <option value="annual">Annual — ${priceFor('premium', 'annual')?.toFixed(2)}</option>
+                </Select>
+              </label>
+              {status.payment_method ? (
+                // A card is already on file (e.g. from a previous
+                // subscription) — subscribe() below reuses it as-is, so
+                // showing blank, editable brand/last-4 boxes here would be
+                // pure misdirection: whatever gets typed into them is
+                // silently ignored either way. Same "Card on file" wording
+                // paidTierBody() already uses once Premium is active.
+                <p className="muted">Card on file: {status.payment_method.brand} •••• {status.payment_method.last4}</p>
+              ) : (
                 <div className="field-row">
                   <label>Card brand
                     <input value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} />
                   </label>
                   <label>Card last 4 digits
-                    <input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4} />
+                    <input
+                      value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} minLength={4} maxLength={4}
+                      className={isCardLast4Error ? 'field-invalid' : ''}
+                      aria-invalid={isCardLast4Error || undefined}
+                    />
+                    {/* Inside this label, not a field-row sibling — a
+                        sibling stretches full width across both columns;
+                        this keeps the warning scoped to just the field
+                        it's actually about ("ga ush sepanjang itu"). */}
+                    {isCardLast4Error && (
+                      <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+                    )}
                   </label>
                 </div>
-                <p className="muted">Simulated billing — no real charge.</p>
-                {error && <p className="error">{error}</p>}
-                <div className="row">
-                  <button type="submit" disabled={busy}>{busy ? 'Processing…' : `Confirm ${TIER_INFO[upgradeTier].label} subscription`}</button>
-                  <button type="button" className="ghost" onClick={() => setShowUpgrade(false)}>Cancel</button>
-                </div>
-              </form>
-            )}
+              )}
+              <p className="muted">Simulated billing — no real charge.</p>
+              {error && !isCardLast4Error && <p className="error">{error}</p>}
+              <div className="row">
+                <button type="submit" className="btn-grow" disabled={busy}>{busy ? 'Processing…' : `Confirm ${TIER_INFO.premium.label} subscription`}</button>
+                <button type="button" className="ghost" onClick={() => { setShowUpgrade(false); setError('') }}>Cancel</button>
+              </div>
+            </form>
+          )}
         </>
       )}
 
       {status.tier === 'premium' && paidTierBody('premium')}
-      {status.tier === 'ultra' && paidTierBody('ultra')}
 
+      {/* "Upgrade to Premium" and "View billing history" side by side — was
+          two separate stacked rows (Kiefer's own call: looks better as one
+          row together). Upgrade only sits in it while free and not already
+          mid-subscribe-form; billing history is always there either way.
+          Also clears `error` on open — otherwise a validation warning from
+          a previous attempt (e.g. "Card last 4 digits is required") stuck
+          around through Cancel and reappeared on the very next open, even
+          though it no longer applied to that fresh attempt ("harusnya pas
+          di certain session aja" — flagged directly). Cancel below clears
+          it too, for the same reason on the way out. */}
       <div className="row">
+        {status.tier === 'free' && !showUpgrade && (
+          <button className="btn-grow" onClick={() => { setShowUpgrade(true); setError('') }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
+        )}
         <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
       </div>
       {showHistory && (
         <div className="panel">
           {history.length === 0 && <p className="muted">No transaction history.</p>}
+          {/* Was .fav-item — borrowed straight from the favourites list,
+              which reads fine for "a book" but flattened every row here
+              into one plain line of text ("polos banget" — flagged
+              directly). Own row now: icon chip + description/date stacked
+              on the left (same idiom as .premium-status-icon above), the
+              amount pulled out on its own on the right so it's scannable
+              at a glance instead of buried mid-sentence. */}
           {history.map((b) => (
-            <div key={b.id} className="fav-item">
-              <span>{b.description}</span>
-              <span>${(b.amount_cents / 100).toFixed(2)} · {new Date(b.ts * 1000).toLocaleDateString()}</span>
+            <div key={b.id} className="billing-row">
+              <span className="billing-row-icon"><StarIcon width={14} height={14} /></span>
+              <div className="billing-row-main">
+                <span className="billing-row-desc">{b.description}</span>
+                <span className="billing-row-date">{new Date(b.ts * 1000).toLocaleDateString()}</span>
+              </div>
+              <span className="billing-row-amount">${(b.amount_cents / 100).toFixed(2)}</span>
             </div>
           ))}
         </div>
@@ -1369,40 +1482,53 @@ function ChildCard({ child, account, onChanged }) {
                 {query && sessions.length === 0 && (
                   <p className="muted">No conversations match “{activitySearch}”.</p>
                 )}
-                <div className="session-list">
-                  {sessions.map((s) => (
-                    <button
-                      key={s.id}
-                      className={`session-row ${s.id === openSessionId ? 'session-row--active' : ''}`}
-                      onClick={() => setOpenSessionId(s.id === openSessionId ? null : s.id)}
-                    >
-                      <ChatIcon width={14} height={14} />
-                      <span className="session-row-body">
-                        <span className="session-row-title">{s.title}</span>
-                        <span className="session-row-meta">
-                          <ClockIcon width={11} height={11} /> {new Date(s.lastTs * 1000).toLocaleString()} · {s.count} {s.count === 1 ? 'message' : 'messages'}
+                {/* Side by side (list | transcript) on a wide screen — a real
+                    chat-history layout, like the session-title comment above
+                    always intended — instead of stacking the opened
+                    transcript directly underneath the list inside the same
+                    cramped scroll box. Collapses to stacked on narrow
+                    viewports (see the media query next to .session-body). */}
+                <div className="session-body">
+                  <div className="session-list">
+                    {sessions.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`session-row ${s.id === openSessionId ? 'session-row--active' : ''}`}
+                        onClick={() => setOpenSessionId(s.id === openSessionId ? null : s.id)}
+                      >
+                        <ChatIcon width={14} height={14} />
+                        <span className="session-row-body">
+                          <span className="session-row-title">{s.title}</span>
+                          <span className="session-row-meta">
+                            <ClockIcon width={11} height={11} /> {new Date(s.lastTs * 1000).toLocaleString()} · {s.count} {s.count === 1 ? 'message' : 'messages'}
+                          </span>
                         </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                {open && (
-                  <div className="session-transcript">
-                    {open.entries.map((a, i) => (
-                      <div key={i} className="activity-entry">
-                        <div className="activity-line activity-line--child">
-                          <span className="activity-avatar activity-avatar--child"><UserIcon width={13} height={13} /></span>
-                          <span className="activity-bubble activity-bubble--child">{a.message}</span>
-                        </div>
-                        <div className="activity-line activity-line--pip">
-                          <span className="activity-avatar activity-avatar--pip"><ChatIcon width={13} height={13} /></span>
-                          <span className="activity-bubble activity-bubble--pip">{a.reply}</span>
-                        </div>
-                        <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
-                      </div>
+                      </button>
                     ))}
                   </div>
-                )}
+                  {open ? (
+                    <div className="session-transcript">
+                      {open.entries.map((a, i) => (
+                        <div key={i} className="activity-entry">
+                          <div className="activity-line activity-line--child">
+                            <span className="activity-avatar activity-avatar--child"><UserIcon width={13} height={13} /></span>
+                            <span className="activity-bubble activity-bubble--child">{a.message}</span>
+                          </div>
+                          <div className="activity-line activity-line--pip">
+                            <span className="activity-avatar activity-avatar--pip"><ChatIcon width={13} height={13} /></span>
+                            <span className="activity-bubble activity-bubble--pip">{a.reply}</span>
+                          </div>
+                          <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : sessions.length > 0 && (
+                    <div className="session-transcript session-transcript--empty">
+                      <ChatIcon width={28} height={28} />
+                      <p className="muted">Pick a conversation on the left to see what was actually said.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })()}

@@ -5,6 +5,7 @@ import ChildLogin from './ChildLogin'
 import {
   askPip, getChildToken, getChildMe, childLogout, setChildAvatar, getTopics,
   saveFavourite, removeFavourite, myFavourites, sendFeedback, startChatSession, endChatSession, speakPip,
+  resolvedTopic, ackResolvedTopic,
 } from '../api'
 import { curateTitle } from '../curate'
 import {
@@ -168,6 +169,23 @@ function Experience({ child, setChild, onLogout }) {
   // behind a header button. See the "Welcome back" strip below.
   useEffect(() => {
     myFavourites().then(setFavs).catch(() => {})
+  }, [child.id])
+
+  // A topic Pip once had to say "Oops" to THIS child about, that real
+  // content now actually covers — same "pick up where you left off"
+  // continuity as favourites above, for a gap that's since been filled.
+  // Null (not fetched yet, or genuinely nothing new) just renders nothing.
+  const [resolved, setResolved] = useState(null)
+  useEffect(() => {
+    resolvedTopic().then((r) => {
+      if (r) {
+        setResolved(r)
+        // Stamped the moment it's actually shown, not just fetched — a
+        // separate mutating call the GET above deliberately doesn't do
+        // itself (see that endpoint's own docstring for why).
+        ackResolvedTopic(r.topic).catch(() => {})
+      }
+    }).catch(() => {})
   }, [child.id])
 
   // Real topic chips (see FALLBACK_TOPIC_PROMPTS above for what shows
@@ -549,7 +567,19 @@ function Experience({ child, setChild, onLogout }) {
           <p className={`chat-status ${listening ? 'chat-status-listening' : ''}`} aria-live="polite">{statusLine || ' '}</p>
         </div>
 
+        {/* .chat-transcript itself is now the full-width scrolling surface
+            (no max-width of its own) — its native scrollbar sits at the
+            screen's real right edge instead of floating mid-page at the
+            edge of a centered column, which is what it did when the
+            content cap lived on this same element ("scroll barnya di
+            posisi itu... di bagian kanan pojok aja" — flagged directly,
+            screenshot showed it stranded ~300px in from the actual browser
+            edge on a wide monitor). .chat-transcript-inner below carries
+            the 1100px reading-column cap that used to live here, same
+            "full-width surface, capped inner column" split App.css already
+            uses for .child-bar/.chat-input-bar. */}
         <div className="chat-transcript" role="log" aria-live="polite">
+        <div className="chat-transcript-inner">
           {turns.map((turn, i) => (
             <div key={turn.id} className={`bubble-row bubble-row-${turn.role}`}>
               <div ref={i === turns.length - 1 ? lastBubbleRef : null} className={`bubble bubble-${turn.role}`}>
@@ -584,17 +614,33 @@ function Experience({ child, setChild, onLogout }) {
             </div>
           ))}
 
-          {!hasChatted && (streak > 1 || favs.length > 0) && (
+          {!hasChatted && (streak > 1 || favs.length > 0 || resolved) && (
             // A returning child's whole "product hub" is this screen — there's
             // no separate browse-first homepage by design (that's the search-
             // engine pattern this product exists to not be). So continuity has
-            // to live here: the streak they already earned, and real saved
-            // items they can jump straight back into talking about, instead of
-            // greeting a three-day regular exactly like a first-time visitor.
+            // to live here: the streak they already earned, real saved
+            // items they can jump straight back into talking about, and now
+            // a gap Pip once had to say "no" to them about that's since been
+            // filled — instead of greeting a three-day regular exactly like
+            // a first-time visitor.
             <div className="welcome-back">
               <p className="welcome-back-lead">
                 {streak > 1 ? `Welcome back — ${streak} days in a row!` : 'Welcome back!'}
               </p>
+              {resolved && (
+                <div className="welcome-back-favs">
+                  <span className="welcome-back-favs-label">I found something new!</span>
+                  <div className="welcome-back-fav-row">
+                    <button
+                      className="welcome-back-fav-chip"
+                      onClick={() => ask(`Tell me more about ${curateTitle(resolved.item.title)}`)}
+                    >
+                      {resolved.item.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />}
+                      <span>{curateTitle(resolved.item.title)}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
               {favs.length > 0 && (
                 <div className="welcome-back-favs">
                   <span className="welcome-back-favs-label">Pick up where you left off</span>
@@ -636,6 +682,7 @@ function Experience({ child, setChild, onLogout }) {
           )}
 
           <div ref={transcriptEndRef} />
+        </div>
         </div>
       </div>
 
@@ -690,16 +737,26 @@ function Experience({ child, setChild, onLogout }) {
         </Overlay>
       )}
 
-      {/* CH14 — content details. Deliberately shows ONLY the short,
-          curated `explanation` field, never the catalogue's raw scraped
-          `description` (real box-set/marketing listing text — verified
-          live to include asterisk-bullet lists and mid-word truncation).
-          That field is disposable ad copy, not something Pip would ever
-          say to a child; the explanation is the actual curated content. */}
+      {/* CH14 — content details. Still never shows the catalogue's raw
+          scraped `description` (real box-set/marketing listing text —
+          verified live to include asterisk-bullet lists and mid-word
+          truncation, disposable ad copy Pip would never actually say).
+          `synopsis` is the real thing to read — a genuine 2-4 sentence
+          summary generated once when the item went live (see
+          app/ai_assist.py's generate_synopsis) — this used to be the ONLY
+          thing shown here, which read as "too plain, nothing to actually
+          read" (flagged directly). `explanation` (why THIS pick fits what
+          the child asked for) now sits underneath as its own short line,
+          not standing in for a synopsis it was never meant to be. Falls
+          back to `explanation` alone for an older item that predates this
+          feature or whose generation failed, so Details is never empty. */}
       {details && (
         <Overlay title={curateTitle(details.title)} icon={details.type === 'book' ? BookIcon : VideoIcon} onClose={() => setDetails(null)}>
           {details.thumbnail && <img className="rec-cover" src={details.thumbnail} alt="" />}
-          <p className="rec-why">{details.explanation}</p>
+          <p className="rec-synopsis">{details.synopsis || details.explanation}</p>
+          {details.synopsis && (
+            <p className="rec-why"><SparkleIcon width={14} height={14} /> {details.explanation}</p>
+          )}
           <button className="pill overlay-more-like" onClick={() => moreLikeThis(details)}>
             <CompassIcon width={15} height={15} /> More like this
           </button>

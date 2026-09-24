@@ -33,6 +33,24 @@ def embed_text(text: str) -> list[float] | None:
         return None
 
 
+def embed_texts(texts: list[str]) -> list[list[float] | None]:
+    """Batch form of embed_text — one API call for the lot (bulk import embeds
+    a dozen items at once). Same contract: a None per text when unavailable."""
+    out: list[list[float] | None] = [None] * len(texts)
+    if not settings.OPENAI_API_KEY or not texts:
+        return out
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        resp = client.embeddings.create(model=EMBEDDING_MODEL, input=[t[:8000] or " " for t in texts])
+        for row in resp.data:
+            out[row.index] = row.embedding
+    except Exception:
+        pass
+    return out
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0

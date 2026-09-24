@@ -42,3 +42,18 @@ def is_unsafe(text: str) -> bool:
         return bool(result.results[0].flagged)
     except Exception:
         return False
+
+
+def flagged_many(texts: list[str]) -> list[bool]:
+    """Batch form of is_unsafe — one Moderation API call for the lot. Fails
+    open per the module's posture: all False when the check can't run."""
+    if not texts or not settings.INPUT_MODERATION_ENABLED or not settings.OPENAI_API_KEY:
+        return [False] * len(texts)
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        result = client.moderations.create(input=[t or " " for t in texts])
+        return [bool(r.flagged) for r in result.results]
+    except Exception:
+        return [False] * len(texts)

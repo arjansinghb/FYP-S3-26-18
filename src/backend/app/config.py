@@ -82,6 +82,23 @@ class Settings:
     # PII scrubbing.
     INPUT_MODERATION_ENABLED = os.getenv("INPUT_MODERATION_ENABLED", "true").lower() != "false"
 
+    # UV05 signup — app/email_validation.py's real DNS check on the email
+    # domain (format alone accepts a made-up domain like "x@y.anc"; this
+    # actually looks it up). On by default; off in tests (tests/conftest.py)
+    # since a real DNS lookup has no place in a free, deterministic suite —
+    # format-only validation still runs either way, this only toggles the
+    # network half.
+    EMAIL_DOMAIN_CHECK_ENABLED = os.getenv("EMAIL_DOMAIN_CHECK_ENABLED", "true").lower() != "false"
+
+    # Pip's guardrails (app/guardrails.py) — code-level enforcement around the
+    # brain: input hygiene, rate limit, prompt-injection and off-topic gates,
+    # and an output check on Pip's own replies. All on by default; the switches
+    # exist for debugging and for an emergency off-ramp, not routine use.
+    GUARDRAILS_ENABLED = os.getenv("GUARDRAILS_ENABLED", "true").lower() != "false"
+    SCOPE_CLASSIFIER_ENABLED = os.getenv("SCOPE_CLASSIFIER_ENABLED", "true").lower() != "false"
+    MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "500"))
+    CHAT_RATE_LIMIT_PER_MIN = int(os.getenv("CHAT_RATE_LIMIT_PER_MIN", "15"))  # per child; 0 = off
+
     # --- Firebase (Firestore persistence for the prototype's storage.py —
     # see app/firestore_store.py, the storage swap point) ---
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "")

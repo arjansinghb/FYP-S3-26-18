@@ -21,14 +21,21 @@
    a big monitor), but .child-bar/.chat-input-bar below span edge-to-edge as
    their own full-width surfaces — same "wide bars, capped reading column"
    split the landing page uses, so the page reads as one shell that fills
-   the window, not a phone-width card floating in dead space. */
+   the window, not a phone-width card floating in dead space.
+
+   .chat-shell itself carries NO width cap — it's purely the flex column
+   that gives .chat-transcript below room to scroll (min-height:0 is what
+   makes that overflow actually kick in). The 1100px cap used to sit here,
+   which meant .chat-transcript's own scrollbar rendered at the edge of
+   that centered column — visibly stranded mid-page on a wide monitor
+   instead of at the window's real right edge ("scroll bar nya... di
+   bagian kanan pojok aja" — flagged directly, with a screenshot showing it
+   a few hundred px in from the actual browser edge). The cap moved onto
+   .chat-transcript-inner instead. */
 .chat-shell {
-  max-width: 1100px;
   width: 100%;
-  margin: 0 auto;
-  padding: 0 var(--space-5);
   flex: 1;
-  min-height: 0; /* lets .chat-transcript's overflow-y:auto actually scroll */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -89,10 +96,21 @@
   color: var(--primary-700);
 }
 
+/* The actual scrolling element, edge-to-edge — its native scrollbar sits at
+   the true viewport edge because nothing here caps its own width (see the
+   .chat-shell comment above for why that matters). No horizontal padding
+   of its own either: .chat-transcript-inner below owns all of that, same
+   split as .chat-input-bar's own bar/content separation. */
 .chat-transcript {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-1) var(--space-1) var(--space-3);
+  width: 100%;
+}
+.chat-transcript-inner {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-1) var(--space-5) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);

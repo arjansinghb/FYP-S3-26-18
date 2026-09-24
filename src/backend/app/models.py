@@ -4,12 +4,14 @@ from pydantic import BaseModel, Field
 
 AgeBand = Literal["5-8", "9-12"]
 ContentType = Literal["book", "video"]
-# PA33/34/35 gating. "ultra" added 2026-09-07 (Kiefer's own ask) — same
-# Premium features plus unlimited child profiles (Premium stays capped at
-# 4). Every "!= premium" gate elsewhere in the app was audited and changed
-# to "== free" so Ultra inherits every Premium-gated feature as a superset,
-# not a separate track that has to re-earn each one.
-AccountTier = Literal["free", "premium", "ultra"]
+# PA33/34/35 gating. A 3rd "ultra" tier (added 2026-09-07, same Premium
+# features plus unlimited child profiles) is deliberately held back out of
+# this prototype for now — planned for the final product instead (Kiefer's
+# call, 2026-09-23). Every "!= premium" gate elsewhere in the app was
+# audited to "== free" when ultra existed, precisely so it's still correct
+# with ultra gone: "== free" only ever meant "free vs. anything paid", never
+# hardcoded a specific paid tier's name.
+AccountTier = Literal["free", "premium"]
 
 # ----- accounts / auth -----
 
@@ -149,7 +151,7 @@ class PaymentMethodOut(BaseModel):
 
 
 class SubscribeRequest(BaseModel):
-    tier: Literal["premium", "ultra"] = "premium"
+    tier: Literal["premium"] = "premium"
     billing_cycle: Literal["monthly", "annual"] = "monthly"
     payment_method: Optional[PaymentMethodIn] = None  # PA24 includes PA26 in the same flow
 
@@ -300,6 +302,18 @@ class ContentIn(BaseModel):
     thumbnail: Optional[str] = None  # CH14 "cover" — cover image URL
 
 
+class AuditDecision(BaseModel):
+    decision: Literal["confirm", "overturn"]
+    note: Optional[str] = None
+
+
+class BulkImportRequest(BaseModel):
+    topic: str
+    type: ContentType
+    limit: int = 10
+    auto_approve: bool = True
+
+
 class ContentOut(ContentIn):
     id: str
     status: Literal["approved", "pending", "rejected"]
@@ -321,7 +335,25 @@ class ContentOut(ContentIn):
     # is auto-approved by its own creator, so it gets both stamps at once.
     created_at: Optional[float] = None
     reviewed_at: Optional[float] = None
+    # CH14 — a real, child-facing synopsis (app/ai_assist.py's
+    # generate_synopsis), server-computed once when an item goes live, never
+    # client-supplied. `description` above stays the raw scraped listing
+    # text (never shown to a child, see ChildChat.jsx's own comment on why)
+    # — this is the actual curated summary Pip's Details view reads from.
+    synopsis: Optional[str] = None
     reviewed_by: Optional[str] = None
+    # True when bulk import's auto-triage (app/bulk_import.py) approved or
+    # rejected this without a human — lets the console mark and later sample it.
+    auto_triaged: Optional[bool] = None
+    # QA audit (app/bulk_import.py's AUDIT_SAMPLE_RATE, routers/content.py's
+    # /audit-queue and /{id}/audit): "pending" = sampled, waiting for a
+    # moderator's confirm/overturn; "not_sampled" = auto-triaged but not
+    # picked; "confirmed"/"overturned" = a moderator's verdict on this AI
+    # decision. None for anything not auto-triaged at all.
+    audit_status: Optional[Literal["pending", "not_sampled", "confirmed", "overturned"]] = None
+    audited_at: Optional[float] = None
+    audited_by: Optional[str] = None
+    audit_note: Optional[str] = None
 
 
 # ----- chat / recommendations -----
@@ -330,6 +362,13 @@ class ContentOut(ContentIn):
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None  # CH04 — ties this message to a chat session
+
+
+class AckResolvedTopicRequest(BaseModel):
+    """POST /api/chat/resolved-topics/ack — the topic string GET
+    /resolved-topics just returned, so it's stamped as already-mentioned
+    and never resurfaced to this child again."""
+    topic: str
 
 
 class SpeechRequest(BaseModel):
@@ -345,6 +384,13 @@ class Recommendation(BaseModel):
     title: str
     explanation: str
     description: str = ""
+    # CH14's Details view — a real, genuine synopsis (app/ai_assist.py's
+    # generate_synopsis), distinct from `explanation` (why THIS pick fits
+    # what the child asked for) and from `description` (raw scraped
+    # listing text, never shown to a child — see ChildChat.jsx). None for
+    # an item that predates this feature or whose generation failed; the
+    # frontend falls back to `explanation` in that case.
+    synopsis: Optional[str] = None
     external_ref: Optional[str] = None  # YouTube id for videos, once curated
     thumbnail: Optional[str] = None  # CH14 "cover"
     genres: list[str] = []  # CM10 tags, already on every catalogue item — was

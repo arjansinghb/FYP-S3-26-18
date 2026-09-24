@@ -113,3 +113,86 @@ def test_openai_brain_is_told_when_the_topic_only_exists_in_the_other_format(mon
     user_message = completions.calls[0]["messages"][-1]["content"]
     assert 'The catalogue has no book about pirates, but it DOES have a video about it ("Pirate Island")' in user_message
     assert "Pirate Island" in user_message.split("Catalogue:")[1].split("Topics the catalogue")[0]  # and it's pickable
+
+
+# ---- named-title format mismatch (real gap, QA pass 2026-09-24: "a video
+# about the very hungry caterpillar" fell through the genre-only mismatch
+# check entirely, since "the very hungry caterpillar" is a title, not a
+# genre tag, and got a generic unrelated-topic redirect instead of the book
+# being offered) ----
+
+def test_named_title_items_matches_a_title_named_directly_in_the_message():
+    pool = CATALOGUE + [{"id": "b3", "type": "book", "title": "The Sleepy Otter", "description": "A calm story.",
+                         "genres": ["cosy"]}]
+    items = brain_module._named_title_items("I want a video about the sleepy otter please", pool)
+    assert [i["id"] for i in items] == ["b3"]
+
+
+def test_named_title_items_empty_when_no_title_is_named():
+    assert brain_module._named_title_items("something fun please", CATALOGUE) == []
+
+
+def test_format_mismatch_covers_a_named_title_not_just_a_genre():
+    pool = CATALOGUE + [{"id": "b3", "type": "book", "title": "The Sleepy Otter", "description": "A calm story.",
+                         "genres": ["cosy"]}]
+    note, items = brain_module._format_mismatch("I want a video about the sleepy otter", pool)
+    assert [i["id"] for i in items] == ["b3"]
+    assert 'The child named "The Sleepy Otter" directly' in note
+    assert "offer that book first" in note
+
+
+def test_openai_brain_is_told_when_a_named_title_only_exists_in_the_other_format(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    pool = CATALOGUE + [{"id": "b3", "type": "book", "title": "The Sleepy Otter", "description": "A calm story.",
+                         "genres": ["cosy"]}]
+    brain, completions = _openai_brain({"reply": "No otter video, but there's a book!", "picks": []})
+
+    brain.respond("I want a video about the sleepy otter", "5-8", pool)
+
+    user_message = completions.calls[0]["messages"][-1]["content"]
+    assert 'The child named "The Sleepy Otter" directly' in user_message
+    assert "The Sleepy Otter" in user_message.split("Catalogue:")[1].split("Topics the catalogue")[0]
+
+
+# ---- already_shown_note — the exhaustion-consistency fix (real,
+# reproduced bug, QA pass 2026-09-24: the exact same repeated request got a
+# coin-flip "here's something" / "there isn't any" answer turn to turn,
+# because nothing told the model whether an empty candidate list meant the
+# topic never existed or had just already been fully shown) ----
+
+def test_already_shown_note_reaches_the_model_when_given(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    brain, completions = _openai_brain({"reply": "You've seen everything I have on that!", "picks": []})
+
+    brain.respond("a book about space again", "5-8", CATALOGUE,
+                  already_shown_note="Every catalogue item matching space has already been shown this session.")
+
+    user_message = completions.calls[0]["messages"][-1]["content"]
+    assert "Every catalogue item matching space has already been shown this session." in user_message
+
+
+def test_no_already_shown_note_adds_nothing_extra(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    brain, completions = _openai_brain({"reply": "Here!", "picks": []})
+
+    brain.respond("a funny book please", "5-8", CATALOGUE)
+
+    user_message = completions.calls[0]["messages"][-1]["content"]
+    assert user_message.count("\n\nNote:") == 0
+
+
+# ---- privacy prompt — strengthened wording (real gap, QA pass
+# 2026-09-24: a child sharing a fabricated school name mid-conversation got
+# it echoed back and built on, because the small-talk "engage warmly"
+# guidance and the privacy "don't repeat it back" guidance could point in
+# different directions on a message that mixes both) ----
+
+def test_system_prompt_tells_the_model_privacy_overrides_small_talk(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    brain, completions = _openai_brain({"reply": "Here!", "picks": []})
+
+    brain.respond("hi", "5-8", CATALOGUE)
+
+    system_prompt = completions.calls[0]["messages"][0]["content"]
+    assert "do NOT repeat the specific identifying detail back" in system_prompt
+    assert "This overrides the small-talk guidance above" in system_prompt

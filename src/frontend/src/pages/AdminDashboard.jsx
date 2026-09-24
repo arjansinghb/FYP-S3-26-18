@@ -90,14 +90,39 @@ function AdminLogin({ onAuthed }) {
     }
   }
 
+  // Same field-routing pattern as ParentDashboard.jsx's AuthPanel: login's
+  // "Wrong email or password" mentions "email" so it lands under that
+  // field, "Incorrect password" lands under Password, anything else falls
+  // through to a plain banner (e.g. the role-check message below).
+  const isEmailError = /email/i.test(error || '')
+  const isWrongPassword = error === 'Incorrect password'
+
   return (
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
       <h1>Admin Sign In</h1>
       <form onSubmit={submit} className="card" noValidate>
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
-        {error && <p className="error">{error}</p>}
+        <label>Email
+          <input
+            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+            className={isEmailError ? 'field-invalid' : ''}
+            aria-invalid={isEmailError || undefined}
+          />
+        </label>
+        {isEmailError && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
+        <label>Password
+          <PasswordInput
+            value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+            className={isWrongPassword ? 'field-invalid' : ''}
+            aria-invalid={isWrongPassword || undefined}
+          />
+        </label>
+        {isWrongPassword && (
+          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
+        )}
+        {error && !isEmailError && !isWrongPassword && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
       </form>
       <p className="muted">Demo login: <b>admin@pip.local</b> / <b>admin123</b></p>
@@ -246,7 +271,7 @@ function Overview({ onNavigate }) {
     { label: 'Avg latency', val: s.avg_latency_ms != null ? `${s.avg_latency_ms} ms` : '—', icon: ClockIcon, attention: s.avg_latency_ms > SLOW_MS },
     { label: 'NLP latency', val: s.nlp_avg_latency_ms != null ? `${s.nlp_avg_latency_ms} ms` : '—', icon: ChartIcon, attention: s.nlp_avg_latency_ms > SLOW_NLP_MS },
   ]
-  const paidTotal = s.tier_premium + s.tier_ultra
+  const paidTotal = s.tier_premium
   const freeVsPaidTotal = s.tier_free + paidTotal
   const paidPct = freeVsPaidTotal > 0 ? Math.round((paidTotal / freeVsPaidTotal) * 100) : null
 
@@ -313,7 +338,7 @@ function Overview({ onNavigate }) {
           <div className="stat-split">
             <div className="stat-split-label">
               <span>Free · {s.tier_free}</span>
-              <span>Premium + Ultra · {paidTotal}</span>
+              <span>Premium · {paidTotal}</span>
             </div>
             <div className="stat-split-bar">
               <div className="stat-split-fill" style={{ width: `${paidPct}%` }} />
@@ -333,7 +358,6 @@ function Overview({ onNavigate }) {
           <div className="chip-row">
             <span className="chip">Free · {s.tier_free}</span>
             <span className="chip chip-muted">Premium · {s.tier_premium}</span>
-            <span className="chip chip-muted">Ultra · {s.tier_ultra}</span>
           </div>
         </div>
       </section>
@@ -492,6 +516,7 @@ const CONFIG_SECTIONS = [
     { name: 'google_books_enabled', label: 'Google Books enabled', type: 'bool' },
     { name: 'youtube_enabled', label: 'YouTube enabled', type: 'bool' },
     { name: 'youtube_channel_allowlist', label: 'YouTube curated channel allowlist (comma-separated channel IDs — empty = open search, still moderator-gated)', type: 'list' },
+    { name: 'trusted_book_publishers', label: 'Trusted book publishers for bulk import (comma-separated, e.g. "DK Children, Scholastic, Usborne") — an easier auto-approve bar, never a skipped one', type: 'list' },
   ] },
   { key: 'compliance', title: 'Compliance & Data Retention', fields: [
     { name: 'data_retention_days', label: 'Data retention (days)', type: 'number' },
@@ -506,13 +531,13 @@ const CONFIG_SECTIONS = [
   { key: 'billing', title: 'Billing Configuration', fields: [
     { name: 'provider', label: 'Payment provider', type: 'text' },
     { name: 'currency', label: 'Currency', type: 'text' },
-    // One price pair per paid tier (Ultra tier, 2026-09-07) — these are
-    // the real prices `subscribe()` charges now, not just display copy
-    // (see storage.py's `subscribe()` docstring on the bug that fixed).
+    // These are the real prices `subscribe()` charges (see storage.py's
+    // `subscribe()` docstring). A 2nd, "Ultra" price pair existed briefly
+    // (2026-09-07) — held back out of the prototype for now, planned for
+    // the final product instead (Kiefer's call, 2026-09-23; see
+    // ParentDashboard.jsx's TIER_INFO comment).
     { name: 'premium_monthly_price', label: 'Premium — monthly price', type: 'number' },
     { name: 'premium_annual_price', label: 'Premium — annual price', type: 'number' },
-    { name: 'ultra_monthly_price', label: 'Ultra — monthly price', type: 'number' },
-    { name: 'ultra_annual_price', label: 'Ultra — annual price', type: 'number' },
     { name: 'billing_enabled', label: 'Billing enabled', type: 'bool' },
   ] },
 ]

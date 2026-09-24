@@ -35,6 +35,12 @@ class Database:
         # brain (see chat.py's `chat()` / brain.py's exclusion logic).
         self.feedback: dict[str, list] = {}      # child_id -> [ {content_id, liked, ts} ]
         self.reports: list[dict] = []
+        # Topics children asked Pip for that the catalogue couldn't serve —
+        # [{key, topic, count, formats: {book, video, any}, first_at, last_at}].
+        # Deliberately holds NO child id, session or message text: it is
+        # aggregate demand, so nothing here needs cleaning up when a child or
+        # parent deletes their data.
+        self.topic_misses: list[dict] = []
         # token -> {kind, id}. Persisted (see save()/_restore()) — Vercel can
         # route consecutive requests to different warm instances, each with
         # its own copy of this dict; without persistence, a token issued by
@@ -79,6 +85,13 @@ class Database:
                 # hasn't made yet (see content_sources.search_videos), not
                 # something this pass can invent — see SA09 admin UI.
                 "youtube_channel_allowlist": [],
+                # Bulk import's trust boost (app/bulk_import.py): a channel here
+                # is already trusted enough to be SEARCHED (see
+                # content_sources.search_videos), so its videos also get an
+                # easier auto-approve bar. Publishers are matched separately
+                # (books aren't search-scoped) against Google Books' own
+                # `publisher` field, case-insensitive substring match.
+                "trusted_book_publishers": [],
             },
             "compliance": {
                 "data_retention_days": 365, "pdpa_mode": True, "allow_under_13": True,
@@ -88,16 +101,18 @@ class Database:
                 "openai_zdr_status": settings.ZDR_STATUS,
             },
             "website": {"site_title": "Pip — Reading Buddy", "tagline": "Safe, age-appropriate books & videos for kids", "announcement": ""},
-            # One price pair per paid tier (SA13) — used to be a single
-            # `monthly_price` covering "Premium" only; `subscribe()` below
-            # never actually read it (charged a hardcoded 999/9900 cents
-            # regardless of what an admin set here) until the Ultra tier
-            # pass (2026-09-07) wired both tiers' real prices through for
-            # real, not just displayed them.
+            # Premium's real price (SA13) — used to be a single
+            # `monthly_price`; `subscribe()` below never actually read it
+            # (charged a hardcoded 999/9900 cents regardless of what an
+            # admin set here) until a later pass wired it through for real,
+            # not just displayed it. A 2nd `ultra_*` price pair existed
+            # briefly (2026-09-07, alongside a since-removed "ultra" tier)
+            # — held back out of this prototype for now, planned for the
+            # final product instead (Kiefer's call, 2026-09-23; see
+            # models.py's AccountTier comment).
             "billing": {
                 "provider": "none", "currency": "SGD", "billing_enabled": False,
                 "premium_monthly_price": 9.9, "premium_annual_price": 99.0,
-                "ultra_monthly_price": 19.9, "ultra_annual_price": 199.0,
             },
         }
         self.started = time.time()
@@ -108,6 +123,20 @@ class Database:
         else:
             self._seed()
             self.save()  # first run with Firestore configured: persist the seed immediately
+
+    def record_topic_miss(self, topic: str, fmt: str = "any") -> None:
+        """Tally one unmet request. Grouped by a singular key so "pirate" and
+        "pirates" count together."""
+        key = topic.rstrip("s") or topic
+        now = time.time()
+        row = next((r for r in self.topic_misses if r["key"] == key), None)
+        if row is None:
+            row = {"key": key, "topic": topic, "count": 0, "formats": {"book": 0, "video": 0, "any": 0},
+                   "first_at": now, "last_at": now}
+            self.topic_misses.append(row)
+        row["count"] += 1
+        row["formats"][fmt if fmt in ("book", "video") else "any"] += 1
+        row["last_at"] = now
 
     def _restore(self, state: dict) -> None:
         self.accounts = state.get("accounts", {})
@@ -122,6 +151,7 @@ class Database:
         for child_id in self.children:
             self.feedback.setdefault(child_id, [])
         self.reports = state.get("reports", [])
+        self.topic_misses = state.get("topic_misses", [])
         self.tickets = state.get("tickets", [])
         self.content_overrides = state.get("content_overrides", {})
         self.notifications = state.get("notifications", [])
@@ -142,6 +172,18 @@ class Database:
         # doesn't persist across restarts at all.
         from .config import settings as _settings
         self.system["compliance"]["openai_zdr_status"] = _settings.ZDR_STATUS
+        # Same reasoning as ZDR_STATUS above, for a narrower case: the merge
+        # two lines up brings back ANY key an old saved snapshot has, even
+        # one this code no longer defines — a real snapshot saved while
+        # "ultra" existed still carries `ultra_monthly_price`/
+        # `ultra_annual_price` in `billing`, and would otherwise keep
+        # reappearing in SA13's config editor forever with no field left to
+        # edit them from (see AdminDashboard.jsx's CONFIG_SECTIONS, which
+        # dropped those two). Explicit removal here, not just "stop adding
+        # new ones", so a pre-existing saved snapshot actually gets cleaned
+        # up too.
+        self.system["billing"].pop("ultra_monthly_price", None)
+        self.system["billing"].pop("ultra_annual_price", None)
         # Backfill account fields a saved snapshot predates (e.g. `tier` on
         # accounts created before this pass) so older saved state doesn't
         # crash newer code that expects the field to exist.
@@ -158,6 +200,10 @@ class Database:
         for child in self.children.values():
             child.setdefault("failed_pin_attempts", 0)
             child.setdefault("locked", False)
+            # GET /api/chat/resolved-topics — topics Pip once told THIS
+            # child "no" to that a moderator/auto-import has since covered,
+            # already mentioned once so it's never repeated on a later login.
+            child.setdefault("notified_resolved_topics", [])
             # 2026-09-09 — login_id/pin split (see create_child's docstring).
             # A snapshot saved before this change has `linking_code` (the old
             # single value) but no `login_id` yet — backfill a real, unique
@@ -191,6 +237,7 @@ class Database:
             "activity": self.activity,
             "feedback": self.feedback,
             "reports": self.reports,
+            "topic_misses": self.topic_misses,
             "tickets": self.tickets,
             "content_overrides": self.content_overrides,
             "notifications": self.notifications,
@@ -533,11 +580,12 @@ class Database:
     # ---------- PA23-27 billing (simulated) ----------
 
     def subscribe(self, account: dict, tier: str, billing_cycle: str, payment_method: dict | None = None) -> dict:
-        """`tier` is "premium" or "ultra" (SubscribeRequest). Price actually
-        comes from `system.billing`'s admin-configured values now — this
-        used to charge a hardcoded 999/9900 cents regardless of what SA13's
-        own admin panel had set, a real gap found while wiring the Ultra
-        tier through (2026-09-07), fixed alongside it rather than left."""
+        """`tier` is "premium" (SubscribeRequest — the only tier this
+        prototype offers a subscribe path for right now, see models.py's
+        AccountTier comment). Price actually comes from `system.billing`'s
+        admin-configured values, not a hardcoded constant — a real gap
+        found and fixed while a 2nd ("ultra") tier was briefly wired
+        through (2026-09-07)."""
         if payment_method:
             self.set_payment_method(account, payment_method["brand"], payment_method["last4"])
         account["tier"] = tier
@@ -681,6 +729,7 @@ class Database:
             "first_login_at": None,   # CH01 activation marker
             "failed_pin_attempts": 0,  # CH02 Alt Flow 2a
             "locked": False,           # requires parent intervention once tripped
+            "notified_resolved_topics": [],  # GET /api/chat/resolved-topics
         }
         self.children[child["id"]] = child
         self.favourites[child["id"]] = []

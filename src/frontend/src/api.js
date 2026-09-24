@@ -182,6 +182,20 @@ export async function removeFavourite(contentId) {
 export async function sendFeedback(contentId, liked) {
   return request('/api/chat/feedback', { method: 'POST', body: { content_id: contentId, liked }, auth: 'child' })
 }
+// Checked once per fresh chat load, same as favourites/topics below — a
+// topic Pip once had to say "Oops" to this child about, that real content
+// now actually covers. Returns null (not an object) when there's nothing
+// new to mention.
+export async function resolvedTopic() {
+  return request('/api/chat/resolved-topics', { auth: 'child' })
+}
+// Fire-and-forget, called right after the topic above is actually shown —
+// stamps it server-side so it's never resurfaced again (a separate mutating
+// call, not folded into the GET, so it actually persists — see that
+// endpoint's own docstring).
+export async function ackResolvedTopic(topic) {
+  return request('/api/chat/resolved-topics/ack', { method: 'POST', body: { topic }, auth: 'child' })
+}
 
 // ----- parent auth -----
 export async function signup(email, password, name) {
@@ -270,8 +284,8 @@ export async function markNotificationRead(id) {
 export async function getSubscriptionStatus() {
   return request('/api/account/subscription', { auth: true })
 }
-// `tier`: 'premium' | 'ultra' (Ultra tier, 2026-09-07) — also the upgrade
-// path between the two paid tiers, not just Free -> paid.
+// `tier`: 'premium' (a 2nd paid tier, "ultra", existed briefly but is held
+// back out of the prototype for now — see ParentDashboard.jsx's TIER_INFO).
 export async function subscribe(tier, billingCycle, paymentMethod) {
   return request('/api/account/subscribe', { method: 'POST', body: { tier, billing_cycle: billingCycle, payment_method: paymentMethod }, auth: true })
 }
@@ -337,6 +351,32 @@ export async function compareChildren() {
 export async function listContent(params = {}) {
   const qs = new URLSearchParams(params).toString()
   return request(`/api/content${qs ? `?${qs}` : ''}`, { auth: true })
+}
+export async function bulkImport(payload) {
+  return request('/api/content/bulk-import', { method: 'POST', body: payload, auth: true })
+}
+export async function listAuditQueue() {
+  return request('/api/content/audit-queue', { auth: true })
+}
+export async function submitAudit(id, payload) {
+  return request(`/api/content/${id}/audit`, { method: 'POST', body: payload, auth: true })
+}
+export async function listTopicRequests() {
+  return request('/api/content/topic-requests', { auth: true })
+}
+// Fire-and-forget from TopicRequests below, right after it loads the list
+// above — lets a popular-enough topic import itself instead of waiting for
+// a moderator to notice and click "Auto-import" one by one. Returns
+// {imported_topic: string | null}.
+export async function autoImportTopic() {
+  return request('/api/content/topic-requests/auto-import', { method: 'POST', auth: true })
+}
+// Real gap, not just unbuilt: the backend endpoint already existed, but
+// GET /topic-requests never included the `key` this needs, so no frontend
+// could ever have called it correctly (Kiefer, 2026-09-24, asking why
+// there's no dismiss control on the Requested topics list at all).
+export async function dismissTopicRequest(topicKey) {
+  return request(`/api/content/topic-requests/${encodeURIComponent(topicKey)}`, { method: 'DELETE', auth: true })
 }
 export async function addContent(payload) {
   return request('/api/content', { method: 'POST', body: payload, auth: true })

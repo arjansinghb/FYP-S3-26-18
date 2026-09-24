@@ -83,7 +83,6 @@ export default function Home() {
   const [site, setSite] = useState({ site_title: 'Pip', tagline: 'Safe, age-appropriate books & videos for kids', announcement: '' })
   const [plans, setPlans] = useState({
     currency: 'SGD', premium_monthly_price: 9.9, premium_annual_price: 99.0,
-    ultra_monthly_price: 19.9, ultra_annual_price: 199.0,
   })
   const [catalogue, setCatalogue] = useState([])
   const [reviews, setReviews] = useState([])
@@ -261,7 +260,17 @@ export default function Home() {
           <Avatar speaking={false} mood="happy" />
           <span>{site.site_title.split('—')[0].trim() || 'Pip'}</span>
         </Link>
-        <Link className="landing-nav-cta" to="/parent">Parent sign up</Link>
+        {/* Two separate entry points — an existing parent scanning the nav
+            was looking for a plain "log in," not a "sign up" link they'd
+            have to click through to find Sign In hiding behind it (which
+            is in fact all "Parent sign up" secretly opened onto by
+            default, before this — see ParentDashboard.jsx's AuthPanel).
+            Each passes its own intent via router state so /parent opens
+            straight into the right form instead of guessing. */}
+        <div className="landing-nav-actions">
+          <Link className="landing-nav-cta" to="/parent" state={{ mode: 'login' }}>Log in</Link>
+          <Link className="landing-nav-cta" to="/parent" state={{ mode: 'signup' }}>Parent sign up</Link>
+        </div>
       </nav>
 
       <main>
@@ -478,18 +487,11 @@ export default function Home() {
               </ul>
               <Link className="cta cta-child" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Premium plan</Link>
             </div>
-            {/* Ultra — the one plan with no "Most popular" badge, per
-                Kiefer's explicit call: that stays a single, unambiguous
-                signal on Premium alone, not something a 3rd tier dilutes. */}
-            <div className="plan">
-              <h3>Ultra</h3>
-              <p className="plan-price">{money(plans.ultra_monthly_price)}<span>/month</span></p>
-              <ul>
-                <li><StarIcon width={16} height={16} /> Everything in Premium</li>
-                <li><UsersIcon width={16} height={16} /> Unlimited child profiles</li>
-              </ul>
-              <Link className="cta cta-parent" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Ultra plan</Link>
-            </div>
+            {/* A 3rd "Ultra" tier existed briefly (2026-09-07) — held back
+                out of this prototype for now, planned for the final
+                product instead (Kiefer's call, 2026-09-23). See
+                ParentDashboard.jsx's TIER_INFO comment for the reversal
+                note. */}
           </div>
           <p className="plan-note">Free to start, for one child profile, for as long as you like.</p>
         </section>

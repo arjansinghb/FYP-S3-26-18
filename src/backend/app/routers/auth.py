@@ -9,7 +9,7 @@ comes back directly in the API response instead of being emailed.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import email_service
+from .. import email_service, email_validation
 from ..config import settings
 from ..deps import current_account
 from ..models import (
@@ -37,7 +37,11 @@ def signup(body: SignupRequest):
     sandbox mode rejecting a recipient that isn't the account's own verified
     address) the token falls back to coming back here directly, same as
     dev mode, so a delivery failure never leaves the parent with zero way
-    to verify."""
+    to verify. That fallback assumes the address was real to begin with —
+    app/email_validation.py checks that first (format AND a real DNS
+    lookup on the domain), so a made-up email never gets that far at all."""
+    if not email_validation.is_plausible_email(body.email):
+        raise HTTPException(422, "Enter a valid email address")
     try:
         acc = db.create_account(body.email, body.password, body.name, role="parent")
     except ValueError as e:
@@ -51,9 +55,21 @@ def signup(body: SignupRequest):
 
 @router.post("/login", response_model=AuthOut)
 def login(body: LoginRequest):
+    """Deliberately distinguishes "no such account" from "wrong password"
+    (unlike request_password_reset's non-enumeration design below) — a
+    parent asked to be told specifically which field is wrong rather than
+    a single generic message. Frontend routes each message to sit under
+    the right field (ParentDashboard.jsx's AuthPanel, and the same
+    treatment on ModeratorDashboard.jsx/AdminDashboard.jsx's staff logins:
+    "Wrong email or password" still mentions "email" so it lands under
+    that field for an unknown address; "Incorrect password" lands under
+    Password). No trailing period on these — they read as short inline
+    warnings next to a field, not sentences in a paragraph."""
     acc = db.find_account_by_email(body.email)
-    if not acc or not db.check_password(acc, body.password):
+    if not acc:
         raise HTTPException(401, "Wrong email or password")
+    if not db.check_password(acc, body.password):
+        raise HTTPException(401, "Incorrect password")
     if acc.get("suspended"):
         raise HTTPException(403, "This account has been suspended. Please contact support.")
     token = db.issue_token("account", acc["id"])

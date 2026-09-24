@@ -14,6 +14,12 @@ changes what they see first. That's a different job from app/moderation.py
 from it) — these suggestions are advisory-only, staff-facing, and always
 overridable.
 
+One exception: generate_synopsis() below produces real child-facing text
+(CH14's Details view), not a staff suggestion — it runs its own output
+through app/moderation.py's is_unsafe before ever returning it, same
+belt-and-suspenders check guardrails.py applies to everything else Pip
+says to a child.
+
 Same fail-open posture as moderation.py: if the API key isn't configured,
 the call fails, or the response doesn't parse, return a "no suggestion"
 result rather than raise — an AI hiccup should never block a human from
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import json
 
+from . import moderation
 from .config import settings
 
 
@@ -129,6 +136,47 @@ def suggest_catalogue_decision(item: dict) -> dict:
     }
 
 
+_MAX_SYNOPSIS_CHARS = 700
+
+
+def generate_synopsis(item: dict) -> str | None:
+    """CH14's "details" view — a real, genuine synopsis, not the raw
+    scraped catalogue `description` (actual box-set/marketing listing
+    text, verified to include asterisk-bullet lists and mid-word
+    truncation — never shown to a child; see ChildChat.jsx's own comment
+    on why) and not just the one-line recommendation `explanation` either
+    (that's about why THIS pick fits what the child asked for, not what
+    the book/video is actually about). Called once, at the moment an item
+    goes live (routers/content.py's add_entry()/approve(), bulk_import's
+    own auto-approve branch) and cached on the item — never generated
+    live inside a child-facing request. Returns None on any failure (no
+    key, bad/oversized response, empty title); callers keep the item's
+    existing `synopsis` (or leave it unset) rather than overwrite a good
+    one with nothing, same fail-open posture as the rest of this file."""
+    title = (item.get("title") or "").strip()
+    if not title:
+        return None
+    system_prompt = (
+        "Write a short, genuine synopsis of a children's book or video for a kids' companion app's "
+        "\"details\" view (read by, or read aloud to, a child aged 5-12). 2-4 short sentences: what "
+        "it's actually about, warm and inviting, spoiler-light (no ending reveals), age-appropriate "
+        "language. No marketing language (\"bestseller\", \"don't miss\", star ratings, calls to "
+        "action) and no raw catalogue metadata (index numbers, IDs, URLs, playlist links). If the "
+        "given description is too thin, promotional, or unclear to summarise honestly, write a short "
+        "general synopsis from the title and genres instead, without inventing specific plot details "
+        'you can\'t be sure of. Respond ONLY with JSON: {"synopsis": "string"}.'
+    )
+    user_content = json.dumps({
+        "type": item.get("type"), "title": title, "description": (item.get("description") or "")[:600],
+        "genres": item.get("genres", []), "age_bands": item.get("age_bands", []),
+    })
+    result = _chat_json(system_prompt, user_content)
+    text = str((result or {}).get("synopsis") or "").strip()
+    if not text or len(text) > _MAX_SYNOPSIS_CHARS or moderation.is_unsafe(text):
+        return None
+    return text
+
+
 def screen_import_candidates(results: list[dict], media_type: str) -> list[dict]:
     """CM03 — the search-stage half of the moderator AI: a pre-screen that
     filters out results the moderator would almost certainly reject anyway
@@ -183,3 +231,77 @@ def screen_import_candidates(results: list[dict], media_type: str) -> list[dict]
             annotated[index]["ai_filtered"] = True
             annotated[index]["ai_filter_reason"] = str(verdict.get("reason") or "")[:200]
     return annotated
+
+
+TRIAGE_AGE_BANDS = ("5-8", "9-12")
+
+
+def triage_candidates(candidates: list[dict], media_type: str, topic: str, genre_vocab: list[str]) -> list[dict | None]:
+    """Bulk import — the triage half of the moderator AI: one batched call that
+    judges every candidate for a requested topic and proposes the metadata a
+    moderator would otherwise type in (age bands, genres).
+
+    Per candidate: `{decision: approve|reject|off_topic|review, confidence: low|medium|high,
+    on_topic: bool, reason, age_bands: [...], genres: [...]}`, or None for a
+    candidate the AI didn't return a usable verdict for. The whole list is
+    None-filled when the call can't run — and bulk_import treats "no verdict"
+    as "needs a human", never as approval, so an AI outage can't wave anything
+    through. What the verdict is ALLOWED to do (auto-approve / auto-reject) is
+    decided by bulk_import's gates, not here.
+    """
+    verdicts: list[dict | None] = [None] * len(candidates)
+    if not candidates:
+        return verdicts
+    system_prompt = (
+        "You triage import candidates for a children's (ages 5-12) book/video recommendation "
+        "app. A child asked for the topic given below and the catalogue has nothing on it, so a "
+        "moderator is importing candidates. For each candidate decide: "
+        '"approve" — a real, specific, wholesome children\'s book/video that is genuinely ABOUT '
+        'the topic and clearly age-appropriate; "reject" — UNSUITABLE FOR CHILDREN, and only that '
+        "(violence or gore, sexual or mature themes, drugs or alcohol, hate, horror for older "
+        "audiences, adult/academic/technical/professional material, news, commentary, gaming "
+        'streams, spam or clickbait); "off_topic" — perfectly fine for children but not really '
+        'about the topic (never use "reject" for this); "review" — anything uncertain, '
+        "borderline, thin on detail, or only loosely related. Be strict about approving: when in "
+        "any doubt choose review, never approve. `confidence` is how sure you are of the "
+        "decision. `on_topic` is whether it is genuinely about the topic. `unsuitable` is true ONLY if "
+        "the item itself is inappropriate for children — never for being off topic, mislabelled, "
+        "low quality or badly described. `age_bands` is the "
+        "subset of [\"5-8\", \"9-12\"] it suits. `genres` is 1-3 lowercase one- or two-word tags, "
+        "preferring these existing ones when they fit: "
+        f"{json.dumps(genre_vocab[:30])}. Respond ONLY with JSON of this exact shape: "
+        '{"verdicts": [{"index": 0, "decision": "approve" | "reject" | "off_topic" | "review", '
+        '"confidence": "low" | "medium" | "high", "on_topic": true | false, '
+        '"unsuitable": true | false, "reason": "one short sentence", "age_bands": ["5-8"], "genres": ["animals"]}]} '
+        "with one entry per candidate."
+    )
+    brief = [
+        {
+            "index": i, "title": c.get("title"),
+            "description": (c.get("description") or "")[:300],
+            "by": c.get("authors") or c.get("channel"),
+            "categories": c.get("categories") or [],
+        }
+        for i, c in enumerate(candidates)
+    ]
+    result = _chat_json(system_prompt, json.dumps({"type": media_type, "topic": topic, "candidates": brief}))
+    for raw in (result or {}).get("verdicts") or []:
+        index = raw.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or not (0 <= index < len(candidates)):
+            continue
+        if raw.get("decision") not in ("approve", "reject", "off_topic", "review"):
+            continue
+        genres = [
+            g.strip().lower() for g in (raw.get("genres") or [])
+            if isinstance(g, str) and 2 <= len(g.strip()) <= 30
+        ][:3]
+        verdicts[index] = {
+            "decision": raw["decision"],
+            "confidence": raw.get("confidence") if raw.get("confidence") in ("low", "medium", "high") else "low",
+            "on_topic": raw.get("on_topic") is True,
+            "unsuitable": raw.get("unsuitable") is True,
+            "reason": str(raw.get("reason") or "")[:200],
+            "age_bands": [b for b in (raw.get("age_bands") or []) if b in TRIAGE_AGE_BANDS],
+            "genres": genres,
+        }
+    return verdicts
