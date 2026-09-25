@@ -5,7 +5,6 @@ import {
   listContent, addContent, editContent, removeContent, approveContent, rejectContent,
   listReports, resolveReport, searchBooks, searchVideos, importContent, listTopicRequests, autoImportTopic,
   dismissTopicRequest, bulkImport,
-  listAuditQueue, submitAudit,
 } from '../api'
 import {
   AlertIcon, BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
@@ -15,7 +14,6 @@ import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import ConfirmDialog from '../components/ConfirmDialog'
-import PromptDialog from '../components/PromptDialog'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import { firstMissingField } from '../formValidation'
@@ -140,7 +138,6 @@ const TABS = [
   { key: 'overview', label: 'Overview', icon: ChartIcon },
   { key: 'submissions', label: 'Submissions', icon: InboxIcon, countKey: 'pending' },
   { key: 'catalogue', label: 'Catalogue', icon: GridIcon },
-  { key: 'audit', label: 'AI Audit', icon: SparkleIcon, countKey: 'auditPending' },
   { key: 'reports', label: 'Reports', icon: FlagIcon, countKey: 'reportsOpen' },
 ]
 
@@ -152,18 +149,16 @@ function Tools({ account, onLogout }) {
   // a moderator lands on Overview and can already see "3 waiting" without
   // clicking into the tab, and the number stays in sync as items are
   // actioned (each tab calls onCountsChange after approve/reject/resolve).
-  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0, auditPending: 0 })
+  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0 })
 
   async function refreshCounts() {
     try {
-      const [pending, reports, audit] = await Promise.all([
+      const [pending, reports] = await Promise.all([
         listContent({ status: 'pending' }),
         listReports(),
-        listAuditQueue(),
       ])
       setCounts({
         pending: pending.length, reportsOpen: reports.filter((r) => r.status === 'open').length,
-        auditPending: audit.pending_count,
       })
     } catch {
       // Best-effort — badges just stay at their last known value.
@@ -203,7 +198,6 @@ function Tools({ account, onLogout }) {
         {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} onRefreshCounts={refreshCounts} />}
         {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'catalogue' && <Catalogue notify={notify} />}
-        {tab === 'audit' && <AuditQueue notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
       </div>
 
@@ -1162,137 +1156,6 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
 }
 
 // CM11 review reported content + CM12 resolve
-// QA audit (step 4 of the catalogue-scale plan): a random slice of what
-// bulk import auto-approved/auto-rejected (app/bulk_import.py's
-// AUDIT_SAMPLE_RATE), waiting for a moderator to confirm or overturn the
-// AI's call. Not a second gate before publish — an overturned "approved"
-// item is already live until this action pulls it; an overturned "rejected"
-// one only goes live once confirmed here. That's why every row shows the
-// AI's own decision and reason before asking for a verdict.
-function AuditQueue({ notify, onCountsChange }) {
-  const [data, setData] = useState(null)
-  const [acting, setActing] = useState(null) // id mid-request
-  const [overturning, setOverturning] = useState(null) // the item awaiting an overturn reason
-  // Client-side only — the sample itself already fits in one page (see
-  // listAuditQueue's own default `limit`), so a second round-trip just to
-  // filter by a field already in hand would be waste. Real ask (Kiefer,
-  // 2026-09-24): a queue mixing AI-approved and AI-rejected spot-checks
-  // made it hard to tell at a glance whether the AI's approve calls or its
-  // reject calls needed more scrutiny.
-  const [statusFilter, setStatusFilter] = useState('')
-
-  async function reload() {
-    try { setData(await listAuditQueue()) } catch { setData({ items: [], pending_count: 0, confirmed: 0, overturned: 0, accuracy: null }) }
-  }
-  useEffect(() => { reload() }, [])
-
-  async function decide(item, decision, decisionNote) {
-    setActing(item.id)
-    try {
-      await submitAudit(item.id, { decision, note: decisionNote || undefined })
-      notify?.(
-        decision === 'confirm'
-          ? `Confirmed — the AI's call on “${item.title}” stands.`
-          : `Overturned — “${item.title}” is now ${item.status === 'approved' ? 'rejected' : 'approved'}.`,
-        decision === 'confirm' ? 'success' : 'danger',
-      )
-      await reload()
-      onCountsChange?.()
-    } catch (err) {
-      notify?.(err.message, 'danger')
-    } finally {
-      setActing(null)
-    }
-  }
-
-  if (!data) return <p className="muted">Loading…</p>
-
-  const visibleItems = statusFilter ? data.items.filter((i) => i.status === statusFilter) : data.items
-  const approvedCount = data.items.filter((i) => i.status === 'approved').length
-  const rejectedCount = data.items.filter((i) => i.status === 'rejected').length
-
-  return (
-    <section>
-      <h2><SparkleIcon width={20} height={20} /> AI audit {data.pending_count > 0 && `(${data.pending_count})`}</h2>
-      <p className="muted">
-        A random sample of what the AI approved or rejected on its own during bulk import — a spot-check
-        after the fact, not a second gate before publish.
-      </p>
-      {data.accuracy !== null && (
-        <div className="chip-row audit-accuracy">
-          <span className="badge badge-approved">{Math.round(data.accuracy * 100)}% confirmed</span>
-          <span className="muted">{data.confirmed} confirmed · {data.overturned} overturned, out of {data.confirmed + data.overturned} audited so far</span>
-        </div>
-      )}
-      {data.items.length > 0 && (
-        <div className="audit-filter">
-          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by AI decision">
-            <option value="">All ({data.items.length})</option>
-            <option value="approved">AI approved ({approvedCount})</option>
-            <option value="rejected">AI rejected ({rejectedCount})</option>
-          </Select>
-        </div>
-      )}
-      {data.items.length === 0 && (
-        <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing sampled right now — check back after the next bulk import.</p>
-      )}
-      {data.items.length > 0 && visibleItems.length === 0 && (
-        <p className="empty-state"><CheckIcon width={18} height={18} /> No {statusFilter} items in the current sample.</p>
-      )}
-      {visibleItems.map((item) => (
-        <div className="card" key={item.id}>
-          <div className="child-top">
-            <div className="item-with-thumb">
-              <TypeIcon type={item.type} />
-              <div>
-                <h3>{item.title}</h3>
-                <p className="muted">{truncate(item.description, 140)}</p>
-              </div>
-            </div>
-            <span className={`badge badge-${item.status}`}>AI {item.status}</span>
-          </div>
-          <p className={`ai-note ai-note--${item.status === 'approved' ? 'approve' : 'reject'}`}>
-            <SparkleIcon width={14} height={14} />
-            <span>
-              <b>AI reasoning:</b> {item.ai_reason || '—'}
-              {item.ai_confidence && <span className="ai-note-confidence"> · {item.ai_confidence} confidence</span>}
-            </span>
-          </p>
-          <div className="chip-row">
-            {item.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
-            {item.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
-          </div>
-          <div className="confirm-actions" style={{ justifyContent: 'flex-start' }}>
-            <button type="button" disabled={acting === item.id} onClick={() => decide(item, 'confirm')}>
-              <CheckIcon width={16} height={16} /> AI got it right
-            </button>
-            <button type="button" className="ghost" disabled={acting === item.id} onClick={() => setOverturning(item)}>
-              <CloseIcon width={16} height={16} /> AI got it wrong
-            </button>
-          </div>
-        </div>
-      ))}
-
-      <PromptDialog
-        open={!!overturning}
-        icon={<AlertIcon width={20} height={20} />}
-        title="Overturn this decision?"
-        message={overturning ? `“${overturning.title}” will be ${overturning.status === 'approved' ? 'removed from the catalogue' : 'published'} right away. Say why, for the record.` : ''}
-        label="Reason" type="text"
-        placeholder="e.g. too intense for 5-8 after all"
-        minLength={3}
-        confirmLabel="Overturn"
-        onConfirm={(value) => {
-          const item = overturning
-          setOverturning(null)
-          decide(item, 'overturn', value)
-        }}
-        onCancel={() => setOverturning(null)}
-      />
-    </section>
-  )
-}
-
 
 function Reports({ notify, onCountsChange }) {
   const [items, setItems] = useState([])

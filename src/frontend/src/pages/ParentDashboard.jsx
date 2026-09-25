@@ -9,15 +9,13 @@ import {
   requestPasswordReset, confirmPasswordReset,
   giveConsent, getPrivacySettings, updatePrivacySettings,
   requestChildDataDeletion, listChildDataDeletions, cancelChildDataDeletion,
-  listNotifications, markNotificationRead, getNotificationPreferences, updateNotificationPreferences,
   getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
   getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
   childReports, childTrends, compareChildren,
-  getMyReview, submitReview,
 } from '../api'
 import {
-  AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
+  AlertIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
   PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
@@ -324,7 +322,6 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
           </div>
         </div>
         <div className="row">
-          <NotificationsBell />
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>
       </header>
@@ -364,11 +361,7 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
         ))}
       </div>
 
-      <NotificationSettings />
-
       <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
-
-      <ReviewPanel />
 
       <PrivacyPanel account={account} />
     </div>
@@ -376,101 +369,6 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 }
 
 // ---------- UV04: submit a review for the public landing page ----------
-// Real gap, not a restyle: there was no way for a parent to actually leave
-// one — the landing page's "Why families trust Pip" section deliberately
-// used verifiable product claims instead of invented quotes (see Home.jsx's
-// TRUST_POINTS comment), which is honest but isn't the same thing as a real
-// parent's own words. This is that real path: written here, screened for
-// safety, then only public once an admin explicitly approves it.
-function ReviewPanel() {
-  const [review, setReview] = useState(undefined) // undefined = loading, null = none yet
-  const [rating, setRating] = useState(0) // 0 = nothing picked yet — a parent should choose, not inherit a default
-  const [text, setText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  // Shown briefly right after a successful submit, then the panel reverts
-  // to the (blank) form on its own — a parent can always send another
-  // review later, so this is a passing confirmation, not a dead end.
-  const [justSubmitted, setJustSubmitted] = useState(false)
-
-  useEffect(() => {
-    getMyReview().then(setReview).catch(() => setReview(null))
-  }, [])
-
-  useEffect(() => {
-    if (!justSubmitted) return
-    const timer = setTimeout(() => setJustSubmitted(false), 3000)
-    return () => clearTimeout(timer)
-  }, [justSubmitted])
-
-  async function submit(e) {
-    e.preventDefault()
-    if (!rating) { setError('Pick a star rating first.'); return }
-    if (!text.trim()) { setError('Write a few words first.'); return }
-    setBusy(true); setError('')
-    try {
-      const saved = await submitReview(rating, text.trim())
-      setReview(saved)
-      setText('')
-      setRating(0)
-      setJustSubmitted(true)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (review === undefined) return null // avoid a flash of the form before we know
-
-  return (
-    <div className="card">
-      <h3><StarIcon width={18} height={18} filled /> Your review</h3>
-      {justSubmitted ? (
-        <div className="review-submitted review-submitted-thanks">
-          <CheckIcon width={20} height={20} />
-          <p className="review-submitted-text">Thank you for your feedback!</p>
-        </div>
-      ) : (
-        <form className="review-form" onSubmit={submit}>
-          <p className="muted">Share your experience with Pip — your feedback helps us make it better for every family.</p>
-          <div className="review-field">
-            <span className="review-field-label">Rating</span>
-            <StarPicker value={rating} onChange={setRating} />
-          </div>
-          <div className="review-field">
-            <label htmlFor="review-text" className="review-field-label">Your review</label>
-            <textarea
-              id="review-text"
-              value={text} onChange={(e) => setText(e.target.value)} maxLength={600} rows={3}
-              placeholder="What's it actually like using Pip with your child?"
-            />
-          </div>
-          {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={busy} className="review-submit">{busy ? 'Submitting…' : 'Submit review'}</button>
-        </form>
-      )}
-    </div>
-  )
-}
-
-function StarPicker({ value, onChange, readOnly }) {
-  return (
-    <div className="star-picker" role={readOnly ? undefined : 'radiogroup'} aria-label="Rating">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n} type="button" className="star-btn" disabled={readOnly}
-          onClick={() => onChange?.(n)}
-          aria-label={`${n} star${n > 1 ? 's' : ''}`}
-          aria-pressed={n <= value}
-        >
-          <StarIcon width={22} height={22} filled={n <= value} />
-        </button>
-      ))}
-    </div>
-  )
-}
-
 // ---------- UV06 email verification ----------
 
 function VerifyBanner({ account, onAccountUpdated }) {
@@ -534,129 +432,6 @@ function VerifyBanner({ account, onAccountUpdated }) {
         )}
       </form>
     </div>
-  )
-}
-
-// ---------- PA20/22 notifications ----------
-
-function NotificationsBell() {
-  const [open, setOpen] = useState(false)
-  const [items, setItems] = useState([])
-  const [loaded, setLoaded] = useState(false)
-
-  // Fetch on mount, not just lazily when the bell is first clicked — a
-  // badge that only appears after you've already opened the panel once
-  // defeats the point of having one. Real found gap, not just a restyle:
-  // a parent had no way to *notice* something new happened (e.g. their
-  // child just activated their device) without already checking.
-  useEffect(() => {
-    listNotifications().then((n) => { setItems(n); setLoaded(true) }).catch(() => {})
-  }, [])
-
-  async function toggle() {
-    if (!open) {
-      // Refresh on every open too, so marking something read elsewhere
-      // (or a new notification landing while this was closed) isn't stale.
-      try { setItems(await listNotifications()); setLoaded(true) } catch { /* ignore */ }
-    }
-    setOpen(!open)
-  }
-
-  async function read(n) {
-    if (n.read) return
-    await markNotificationRead(n.id)
-    setItems(items.map((x) => (x.id === n.id ? { ...x, read: true } : x)))
-  }
-
-  const unread = items.filter((n) => !n.read).length
-
-  return (
-    <div className="notif-bell">
-      <button className="notif-trigger" onClick={toggle} aria-label="Notifications" aria-expanded={open}>
-        <BellIcon width={18} height={18} />
-        {loaded && unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
-      </button>
-      {open && (
-        <div className="notif-panel">
-          <div className="notif-panel-header">
-            <h3>Notifications</h3>
-            {loaded && unread > 0 && <span className="notif-unread-label">{unread} new</span>}
-          </div>
-          {items.length === 0 && <p className="muted notif-empty">Nothing yet — you'll see updates here as they happen.</p>}
-          {items.map((n) => (
-            <button key={n.id} className={`notif-item${n.read ? ' notif-item--read' : ''}`} onClick={() => read(n)}>
-              <span className="notif-dot" />
-              <span className="notif-text">
-                <span className="notif-title">{n.title}</span>
-                <span className="notif-body">{n.body}</span>
-                <span className="notif-ts">{new Date(n.created_at * 1000).toLocaleString()}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------- PA22: notification preferences ----------
-// The backend already had a real, working endpoint and even correctly
-// respected the in_app toggle server-side (storage.py's add_notification
-// checks it before ever creating a notification) — nothing here was ever
-// exposed in the UI, so a parent had no way to actually turn it off.
-// Honest about scope: only in_app is real right now (no email/SMS service
-// or push subscription infra exists in this backend) — email/push persist
-// as a preference like every real channel does, but don't deliver
-// anything yet, same "flag it, don't fake it" rule the rest of this
-// project follows for anything simulated.
-function NotificationSettings() {
-  const [prefs, setPrefs] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => { getNotificationPreferences().then(setPrefs).catch(() => {}) }, [])
-
-  async function toggle(channel) {
-    if (!prefs) return
-    const channels = { ...prefs.channels, [channel]: !prefs.channels[channel] }
-    setPrefs({ channels }) // optimistic — a preference toggle is low-stakes to revert if the save fails
-    setSaving(true); setError('')
-    try {
-      await updateNotificationPreferences(channels)
-    } catch (err) {
-      setError(err.message)
-      setPrefs(prefs) // revert on a genuine failure
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!prefs) return null
-
-  return (
-    <section className="card">
-      <h3><BellIcon width={18} height={18} /> Notifications</h3>
-      <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
-        <span>In-app <span className="muted">— shows in the bell icon above</span></span>
-      </label>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
-        <span>Email <span className="muted">— sent to your account email</span></span>
-      </label>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
-        <span>Push <span className="muted">— a notification on this device, even with the tab closed</span></span>
-      </label>
-      {/* Was framed as a "prototype" caveat ("aren't wired to a real
-          delivery service yet") — honest to the code, but reads oddly to
-          a parent, who isn't the audience for implementation status.
-          Same underlying honesty (nothing here is silently overpromised),
-          phrased as a normal product roadmap note instead. */}
-      <p className="muted">Email and push are coming soon — everything shows up in-app for now.</p>
-      {error && <p className="error">{error}</p>}
-    </section>
   )
 }
 
