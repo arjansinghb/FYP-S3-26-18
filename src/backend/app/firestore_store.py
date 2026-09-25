@@ -65,6 +65,24 @@ _EMBEDDINGS_COLLECTION = "prototype_state_embeddings"
 _client = None
 
 
+class LoadFailed(Exception):
+    """Raised by `load_state` when the Firestore *read itself* blew up
+    (network blip, credentials hiccup, transient outage) — as opposed to a
+    clean "no document exists yet" answer. The distinction matters a lot:
+    storage.py's `Database.__init__` treats "no saved state" as "first run,
+    seed fresh defaults and persist them" — correct for a real first run,
+    catastrophic for a transient read failure, since it means a single
+    unlucky network hiccup on a serverless cold start would seed-and-save
+    over a real snapshot, permanently destroying it. (Real, reproduced
+    2026-09-25: this is exactly what happened — a genuine account/child/
+    catalogue built up over weeks got silently overwritten by the code's
+    own bootstrap seed after one such hiccup.) Callers must treat this
+    differently from a clean `None`: keep serving from an in-memory seed for
+    THIS process if they have to, but never call `save_state` in response to
+    it — that would write the seed over whatever's actually still sitting in
+    Firestore, again, for real this time."""
+
+
 def _pack_embeddings(state: dict) -> dict:
     """Kept ONLY so `load_state` can still read a snapshot saved before the
     embeddings-split fix above (where a catalogue item's embedding was
@@ -121,40 +139,71 @@ def _strip_content_embeddings(content: dict) -> dict:
     }
 
 
+# Real, reproduced perf problem (2026-09-25, once the catalogue grew from
+# ~20 to ~100 real items): `main.py`'s persistence middleware calls
+# load_state then save_state on EVERY mutating request — including ones
+# that have nothing to do with the catalogue at all, like a plain login.
+# Rewriting/re-streaming every item's embedding (1536 floats each) on every
+# single one of those requests measured at ~15s for a bare login once the
+# catalogue reached ~95 approved items — each embedding rarely if ever
+# changes after CM09/10 tagging, so paying a full Firestore round-trip for
+# all of them, every request, was pure waste. This in-process cache (reset
+# each cold start, same lifetime as `db` itself) makes `_load_embeddings`
+# a cache hit after the first call in a warm instance, and makes
+# `_save_embeddings` only write the entries that actually changed instead
+# of rewriting the whole collection every time.
+_embeddings_cache: dict[str, list] | None = None
+
+
 def _save_embeddings(content: dict) -> None:
     """One small document per catalogue item that actually HAS a computed
     embedding, batched (Firestore caps a batch at 500 writes; chunked well
-    under that). Rewrites all of them on every call rather than tracking
-    which ones actually changed — matches this file's existing "whole
-    state, every mutating request" trade-off (see the module docstring):
-    simpler, and cheap at this app's real catalogue size. Nothing here
-    deletes a document for an item that's lost its embedding (rejected,
-    etc.) — a stray leftover embedding for a non-approved item is inert
-    (approved_content()/top_matches never look at it) and not worth the
-    extra round-trip to clean up."""
-    client = _get_client()
-    coll = client.collection(_EMBEDDINGS_COLLECTION)
-    items_with_embeddings = [
-        (cid, item["embedding"]) for cid, item in content.items()
+    under that) — but only for entries that actually changed since the last
+    load/save in THIS process (see `_embeddings_cache` above); an unchanged
+    embedding costs nothing here. Nothing here deletes a document for an
+    item that's lost its embedding (rejected, etc.) — a stray leftover
+    embedding for a non-approved item is inert (approved_content()/
+    top_matches never look at it) and not worth the extra round-trip to
+    clean up."""
+    global _embeddings_cache
+    current = {
+        cid: item["embedding"] for cid, item in content.items()
         if isinstance(item, dict) and isinstance(item.get("embedding"), list)
-    ]
-    for start in range(0, len(items_with_embeddings), 400):
-        batch = client.batch()
-        for cid, embedding in items_with_embeddings[start:start + 400]:
-            batch.set(coll.document(cid), {"embedding": embedding})
-        batch.commit()
+    }
+    baseline = _embeddings_cache if _embeddings_cache is not None else {}
+    changed = [(cid, emb) for cid, emb in current.items() if baseline.get(cid) != emb]
+    if changed:
+        client = _get_client()
+        coll = client.collection(_EMBEDDINGS_COLLECTION)
+        for start in range(0, len(changed), 400):
+            batch = client.batch()
+            for cid, embedding in changed[start:start + 400]:
+                batch.set(coll.document(cid), {"embedding": embedding})
+            batch.commit()
+    _embeddings_cache = current
 
 
 def _load_embeddings() -> dict[str, list]:
-    """`{content_id: embedding}` for every item that has one saved. Any
-    Firestore hiccup here degrades to "no embeddings loaded this run" rather
-    than failing the whole state load — same fail-open posture as
+    """`{content_id: embedding}` for every item that has one saved. Served
+    from `_embeddings_cache` after the first call in a warm instance — see
+    that variable's own comment for why re-streaming this every request was
+    a real, measured performance problem. Any Firestore hiccup on the actual
+    (first-per-process) fetch degrades to "no embeddings loaded this run"
+    rather than failing the whole state load — same fail-open posture as
     embeddings.py's own embed_text: a missing embedding just means that
-    item sorts last in retrieval (see embeddings.top_matches), never a crash."""
+    item sorts last in retrieval (see embeddings.top_matches), never a
+    crash. Deliberately NOT cached on that failure path, so the next call
+    gets a real retry instead of being stuck on an empty result for the
+    rest of the process's lifetime."""
+    global _embeddings_cache
+    if _embeddings_cache is not None:
+        return dict(_embeddings_cache)
     try:
-        return {doc.id: (doc.to_dict() or {}).get("embedding") for doc in _get_client().collection(_EMBEDDINGS_COLLECTION).stream()}
+        loaded = {doc.id: (doc.to_dict() or {}).get("embedding") for doc in _get_client().collection(_EMBEDDINGS_COLLECTION).stream()}
     except Exception:
         return {}
+    _embeddings_cache = loaded
+    return dict(loaded)
 
 
 def _get_client():
@@ -185,16 +234,17 @@ def _get_client():
 
 
 def load_state() -> dict | None:
-    """Returns the last-saved state dict, or None if Firestore isn't
-    configured or nothing has been saved yet (first run)."""
+    """Returns the last-saved state dict, None if Firestore isn't configured
+    or nothing has been saved yet (a real first run — safe to seed), or
+    raises `LoadFailed` if the read itself errored (NOT safe to seed-and-
+    save over — see that class's docstring for the exact incident this
+    closes)."""
     if not settings.firebase_configured:
         return None
     try:
         doc = _get_client().collection(_COLLECTION).document(_DOC_ID).get()
-    except Exception:
-        # Real network/credentials/project issue — don't take the whole
-        # backend down over it, just fall back to a fresh in-memory seed.
-        return None
+    except Exception as e:
+        raise LoadFailed(str(e)) from e
     if not doc.exists:
         return None
     data = doc.to_dict()

@@ -85,6 +85,12 @@ def fake_client(monkeypatch):
     monkeypatch.setattr(fs, "_client", client)
     monkeypatch.setattr(fs, "_get_client", lambda: client)
     monkeypatch.setattr(type(fs.settings), "firebase_configured", property(lambda self: True))
+    # _embeddings_cache is a module-level, in-process cache (see its own
+    # comment in firestore_store.py) meant to survive across requests within
+    # one warm instance — but that means it also survives across tests in
+    # this file unless reset here, which would let one test's cached values
+    # silently suppress another test's expected writes.
+    monkeypatch.setattr(fs, "_embeddings_cache", None)
     return client
 
 

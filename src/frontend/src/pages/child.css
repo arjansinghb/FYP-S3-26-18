@@ -228,7 +228,15 @@
 .library-card-action--remove {
   flex: 0 0 auto; background: transparent; border-color: var(--border); color: var(--muted);
 }
-.library-card-action--remove:hover { background: var(--danger-100); border-color: var(--danger-700); color: var(--danger-700); }
+/* Same parent.css global `button:hover:not(:disabled)` bleed-through
+   documented throughout this codebase — a bare `.library-card-action--
+   remove:hover` has no `button` element in its selector, so it's actually
+   WEAKER than the global rule (not just tied), and always lost to it,
+   leaving this specifically-designed-to-look-muted remove button filling
+   solid primary purple on hover instead of the intended danger tint.
+   Adding :not(:disabled) matches the established fix pattern elsewhere
+   (see .linkbtn:hover:not(:disabled) etc.) and wins outright. */
+.library-card-action--remove:hover:not(:disabled) { background: var(--danger-100); border-color: var(--danger-700); color: var(--danger-700); }
 
 /* Scoped (not a bare `.muted`) so this page's own colour always wins
    regardless of CSS import order — a bare `.muted` here previously

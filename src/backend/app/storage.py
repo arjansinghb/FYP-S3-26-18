@@ -117,7 +117,20 @@ class Database:
         }
         self.started = time.time()
 
-        saved = firestore_store.load_state()
+        # See firestore_store.LoadFailed's docstring for the exact incident
+        # this branch closes: a transient Firestore read error used to look
+        # identical to "no state saved yet" here, so a single unlucky
+        # cold-start network hiccup would seed fresh defaults AND
+        # immediately persist them, permanently overwriting a real
+        # snapshot. Now a real read failure seeds THIS PROCESS in memory
+        # only (so it can still serve requests) but never calls save() —
+        # nothing gets written to Firestore until a future request's
+        # load actually succeeds and there's real state to persist.
+        try:
+            saved = firestore_store.load_state()
+        except firestore_store.LoadFailed:
+            self._seed()
+            return
         if saved:
             self._restore(saved)
         else:
@@ -375,8 +388,19 @@ class Database:
         cheap single-document Firestore read (see firestore_store.py's own
         docstring: the whole prototype state is one snapshot, not
         per-record documents), no-op in local dev where Firebase isn't
-        configured (`load_state()` returns None)."""
-        saved = firestore_store.load_state()
+        configured (`load_state()` returns None).
+
+        A transient read failure (`LoadFailed`) is swallowed here on
+        purpose, same "don't take the request down over it" posture the
+        old code had — the difference (see `__init__` and
+        `firestore_store.LoadFailed`'s docstring) is this call site was
+        never the dangerous one: it only ever *restores* on success, it
+        never seeds-and-saves on failure, so skipping the reload and
+        carrying on with whatever's already in memory was always safe."""
+        try:
+            saved = firestore_store.load_state()
+        except firestore_store.LoadFailed:
+            return False
         if saved:
             self._restore(saved)
         return bool(saved)
