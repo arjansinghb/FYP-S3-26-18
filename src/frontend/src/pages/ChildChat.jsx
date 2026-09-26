@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import RecommendationCard from '../components/RecommendationCard'
+import ConfirmDialog from '../components/ConfirmDialog'
 import ChildLogin from './ChildLogin'
 import {
   askPip, getChildToken, getChildMe, childLogout, setChildAvatar, getTopics,
@@ -793,6 +794,10 @@ function Experience({ child, setChild, onLogout }) {
 // are one product, not two features bolted together. Remove closes the
 // free-tier cap dead-end (PA34's 5-item limit was otherwise permanent).
 function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
+  // A child's tap on the bin is easy to do by accident — ask first, in
+  // words a young child can follow, instead of removing straight away.
+  const [pendingRemove, setPendingRemove] = useState(null)
+
   return (
     <div className="library-view">
       <div className="library-head">
@@ -841,7 +846,7 @@ function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
                   </button>
                   <button
                     className="library-card-action library-card-action--remove"
-                    onClick={() => onRemove(f)}
+                    onClick={() => setPendingRemove(f)}
                     aria-label={`Remove ${curateTitle(f.title)} from your library`}
                   >
                     <TrashIcon width={14} height={14} />
@@ -852,6 +857,21 @@ function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingRemove}
+        icon={<TrashIcon width={20} height={20} />}
+        title="Take this out of your library?"
+        message={pendingRemove ? `Do you want to remove “${curateTitle(pendingRemove.title)}”? You can always save it again later.` : ''}
+        confirmLabel="Yes, remove it"
+        cancelLabel="No, keep it"
+        onConfirm={() => {
+          const item = pendingRemove
+          setPendingRemove(null)
+          if (item) onRemove(item)
+        }}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   )
 }

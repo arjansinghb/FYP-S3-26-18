@@ -8,14 +8,23 @@ import './child.css'
 // CH01 (enter linking code, first time on this device) + CH02 (simplified
 // PIN login on a device that's already activated — code isn't re-asked for).
 export default function ChildLogin({ onLoggedIn }) {
-  const activatedChildId = getActivatedChildId()
+  // Held in state, not re-read from localStorage on every render: "Not you?"
+  // only clears localStorage, which never triggers a re-render on its own,
+  // so the screen used to stay on the PIN-only form until a manual refresh.
+  const [activatedChildId, setActivatedChildId] = useState(() => getActivatedChildId())
   return activatedChildId
-    ? <PinOnlyLogin childId={activatedChildId} onLoggedIn={onLoggedIn} />
+    ? (
+      <PinOnlyLogin
+        childId={activatedChildId}
+        onLoggedIn={onLoggedIn}
+        onForget={() => { forgetDevice(); setActivatedChildId(null) }}
+      />
+    )
     : <FullLogin onLoggedIn={onLoggedIn} />
 }
 
 // CH02 — returning to a device this profile already activated.
-function PinOnlyLogin({ childId, onLoggedIn }) {
+function PinOnlyLogin({ childId, onLoggedIn, onForget }) {
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -54,7 +63,7 @@ function PinOnlyLogin({ childId, onLoggedIn }) {
           {busy ? 'One sec…' : "Let's go!"}
         </button>
       </form>
-      <button className="linkbtn" style={{ marginTop: 12 }} onClick={forgetDevice}>Not you? Use a different code</button>
+      <button className="linkbtn" style={{ marginTop: 12 }} onClick={onForget}>Not you? Use a different code</button>
       <Link className="home-link" to="/" style={{ marginTop: 16 }}>← Home</Link>
     </div>
   )
