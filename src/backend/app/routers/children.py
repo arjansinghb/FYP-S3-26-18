@@ -31,6 +31,7 @@ def _child_out(c: dict) -> ChildOut:
         id=c["id"], parent_id=c["parent_id"], name=c["name"], age_band=c["age_band"],
         reading_level=c.get("reading_level"), login_id=c["login_id"], pin=c["pin"], avatar=c["avatar"],
         settings=ChildSettings(**c.get("settings", {})), locked=c.get("locked", False),
+        gender=c.get("gender"), interests=c.get("interests", []),
     )
 
 
@@ -62,7 +63,10 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     # PIN/linking code is system-generated inside create_child now, not
     # parent-typed — see models.ChildCreate's docstring for why. No
     # pin_in_use check needed here: it's unique by construction.
-    child = db.create_child(parent["id"], body.name, body.age_band, body.reading_level)
+    child = db.create_child(
+        parent["id"], body.name, body.age_band, body.reading_level,
+        gender=body.gender, interests=body.interests,
+    )
     return _child_out(child)
 
 
@@ -84,7 +88,7 @@ def update_child(child_id: str, body: ChildUpdate, parent: dict = Depends(requir
     bug: PA13 guidance could be set but never removed again."""
     child = _owned_child(child_id, parent)
     updates = body.model_dump(exclude_unset=True)
-    for f in ("name", "age_band", "reading_level"):
+    for f in ("name", "age_band", "reading_level", "gender", "interests"):
         if f in updates:
             child[f] = updates[f]
     return _child_out(child)

@@ -4,6 +4,20 @@ from pydantic import BaseModel, Field
 
 AgeBand = Literal["5-8", "9-12"]
 ContentType = Literal["book", "video"]
+# Optional, parent-supplied, never required — a child profile is valid with
+# neither set. "prefer_not_to_say" is a real, first-class choice here (not
+# just an absent value), since the field is being surfaced on the form at
+# all and a parent should be able to say so explicitly rather than the
+# option just being to leave it blank.
+Gender = Literal["girl", "boy", "prefer_not_to_say"]
+# A child's declared interests — plain strings, not a Literal enum, since
+# the real set of catalogue genres (CM09/CM10) can grow as moderators tag
+# new content, and this shouldn't need a backend deploy to keep up. The
+# frontend's picker (ParentDashboard.jsx's INTEREST_OPTIONS) offers the
+# genres actually present in the live catalogue, so in practice this is
+# self-consistent with real content without the backend having to enforce
+# it structurally.
+Interests = list[str]
 # PA33/34/35 gating. A 3rd "ultra" tier (added 2026-09-07, same Premium
 # features plus unlimited child profiles) is deliberately held back out of
 # this prototype for now — planned for the final product instead (Kiefer's
@@ -34,6 +48,18 @@ class AccountOut(BaseModel):
     role: str
     verified: bool
     tier: AccountTier = "free"
+    # Real, pre-existing gap found while testing gender/interests (this field
+    # was never on AccountOut at all, on any code path): the frontend reads
+    # `account.consent` directly (ParentDashboard.jsx) to decide whether to
+    # show PA28's "Before you add a child..." re-confirmation step, but
+    # every fresh login returned an account with no `consent` key — so a
+    # parent who had already given consent, sometimes with existing child
+    # profiles, was asked to re-enter their password and re-agree every
+    # single time they opened "Add a child profile". `give_consent()` only
+    # ever set `account["consent"]` to a `{timestamp, version}` dict or left
+    # it `None`; this exposes that as the plain boolean the frontend was
+    # always expecting.
+    consent: bool = False
 
 
 class AccountUpdate(BaseModel):
@@ -216,6 +242,13 @@ class ChildCreate(BaseModel):
     name: str
     age_band: AgeBand
     reading_level: Optional[str] = None
+    # Both optional, requested by the assessor so the profile captures more
+    # than the bare minimum needed to *gate* content (age_band) — gender and
+    # interests feed the brain directly (see brain.py's respond()) instead
+    # of Pip having to infer a child's tastes purely from what they happen
+    # to type in their first few messages.
+    gender: Optional[Gender] = None
+    interests: Interests = []
 
 
 class ChildUpdate(BaseModel):
@@ -225,6 +258,8 @@ class ChildUpdate(BaseModel):
     name: Optional[str] = None
     age_band: Optional[AgeBand] = None
     reading_level: Optional[str] = None
+    gender: Optional[Gender] = None
+    interests: Optional[Interests] = None
 
 
 class ChildSettings(BaseModel):
@@ -246,6 +281,8 @@ class ChildOut(BaseModel):
     name: str
     age_band: AgeBand
     reading_level: Optional[str]
+    gender: Optional[Gender] = None
+    interests: Interests = []
     login_id: str
     pin: str
     avatar: str

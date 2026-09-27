@@ -725,7 +725,7 @@ class Database:
         paired with a distinguishing account number."""
         return f"{secrets.randbelow(1_000_000):06d}"
 
-    def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None) -> dict:
+    def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None, gender=None, interests=None) -> dict:
         """PA07/PA10/CH01. Two separate system-generated values, not one
         doing double duty (see _generate_unique_login_id's docstring for why
         this changed from the original single-code design): `login_id`
@@ -741,6 +741,8 @@ class Database:
             "name": name,
             "age_band": age_band,
             "reading_level": reading_level,
+            "gender": gender,
+            "interests": interests or [],
             "login_id": self._generate_unique_login_id(),
             "pin": self._generate_pin(),
             "avatar": "purple",  # avatar colour variant the child can change

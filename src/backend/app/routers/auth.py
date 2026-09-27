@@ -24,7 +24,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 def _account_out(acc: dict) -> AccountOut:
     return AccountOut(id=acc["id"], email=acc["email"], name=acc["name"],
-                      role=acc["role"], verified=acc["verified"], tier=acc.get("tier", "free"))
+                      role=acc["role"], verified=acc["verified"], tier=acc.get("tier", "free"),
+                      consent=bool(acc.get("consent")))
 
 
 @router.post("/signup", response_model=SignupOut)

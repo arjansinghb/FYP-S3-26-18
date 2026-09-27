@@ -281,6 +281,7 @@ def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends
             body.message, child["age_band"] if child else None, catalogue,
             history=history, reading_level=child.get("reading_level") if child else None,
             already_shown_note=already_shown_note,
+            interests=child.get("interests") if child else None,
         )
         result.reply, guardrail = guardrails.check_output(result.reply)
         if guardrail:

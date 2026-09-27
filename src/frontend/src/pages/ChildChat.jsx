@@ -139,6 +139,12 @@ function Experience({ child, setChild, onLogout }) {
   // element, so a new reply can stop whatever Pip was already saying,
   // same way window.speechSynthesis.cancel() does for the browser fallback.
   const audioRef = useRef(null)
+  // False once this screen has been left (logout, route change). speak()
+  // awaits a network round-trip for the real voice, so a reply that was
+  // still being generated when the child left used to start playing anyway
+  // afterwards, on a page Pip is no longer on — the unmount cleanup below
+  // can only pause audio that already exists.
+  const aliveRef = useRef(true)
 
   const hasChatted = turns.some((t) => t.role === 'child')
 
@@ -299,6 +305,7 @@ function Experience({ child, setChild, onLogout }) {
   // hiccup). Voice quality here is entirely device/OS-dependent; kept as a
   // safety net so Pip never goes fully silent, not as the primary voice.
   function speakBrowser(text) {
+    if (!aliveRef.current) return
     if (!('speechSynthesis' in window)) { setStatus('idle'); return }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
@@ -342,7 +349,10 @@ function Experience({ child, setChild, onLogout }) {
     }
     try {
       const url = await speakPip(text)
-      if (muted) return // toggled off while the request was in flight
+      if (muted || !aliveRef.current) { // muted, or left the screen, while the request was in flight
+        URL.revokeObjectURL(url)
+        return
+      }
       const audio = new Audio(url)
       audioRef.current = audio
       audio.onplay = () => setStatus('speaking')
@@ -450,11 +460,13 @@ function Experience({ child, setChild, onLogout }) {
   }
 
   useEffect(() => {
+    aliveRef.current = true // re-armed on every mount (StrictMode mounts, unmounts, mounts again)
     if ('speechSynthesis' in window) {
       window.speechSynthesis.getVoices()
       window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices()
     }
     return () => {
+      aliveRef.current = false
       window.speechSynthesis?.cancel()
       audioRef.current?.pause()
       recognitionRef.current?.abort?.()

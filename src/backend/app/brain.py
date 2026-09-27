@@ -242,14 +242,15 @@ class PlaceholderBrain:
     """No real intelligence — just keyword matching over the catalogue.
     Ignores `history` (no API key means no model to feed context to),
     `reading_level` (PA13) — there's no language model here to actually
-    tune sentence complexity with — and `already_shown_note`, which only
+    tune sentence complexity with —, `interests` (same reason: nothing
+    here reads a system prompt), and `already_shown_note`, which only
     means something to a model that can read prose; the mock brain's whole
     job is deterministic free/test-mode operation, not a faithful stand-in
     for every real-brain behaviour."""
 
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
                 history: list[dict] | None = None, reading_level: str | None = None,
-                already_shown_note: str | None = None) -> BrainResult:
+                already_shown_note: str | None = None, interests: list[str] | None = None) -> BrainResult:
         text = f" {message.lower()} "
         words = set(message.lower().replace("!", " ").replace("?", " ").replace(",", " ").replace(".", " ").split())
 
@@ -403,7 +404,7 @@ class OpenAIBrain:
 
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
                 history: list[dict] | None = None, reading_level: str | None = None,
-                already_shown_note: str | None = None) -> BrainResult:
+                already_shown_note: str | None = None, interests: list[str] | None = None) -> BrainResult:
         """`history` — prior turns *in this chat session* (see
         storage.session_history), oldest first, each `{message, reply}`.
         Real conversation memory: passed to the LLM as actual multi-turn
@@ -433,7 +434,21 @@ class OpenAIBrain:
         2026-09-24): the exact same repeated request got a coin-flip
         "here's something" / "there isn't any" answer turn to turn, because
         that distinction was left for the model to guess at from prose
-        conversation history instead of being told outright."""
+        conversation history instead of being told outright.
+
+        `interests` — genres a parent picked for this child at PA07/PA08
+        profile setup (ChildCreate/ChildUpdate.interests), from the same
+        genre vocabulary the catalogue itself is tagged with. Unlike
+        `reading_level` above, this DOES feed retrieval (folded into the
+        embedding query below), not just phrasing — the whole point (an
+        assessor's own ask) is that Pip already has a real signal about
+        this child's taste going into the very first message of a
+        session, instead of only ever learning it by asking or by what
+        got liked/saved after the fact. Still never the only signal: it's
+        blended into one embedding query alongside the actual message, so
+        a child asking for something else entirely isn't dragged back
+        toward a declared interest that has nothing to do with what they
+        just asked for."""
         history = history or []
         # No age_band re-filter here — the caller (chat.py's
         # _visible_catalogue) already narrowed `catalogue` by age band
@@ -473,6 +488,12 @@ class OpenAIBrain:
         # dinosaurs" should retrieve dinosaur *books*, not rely on turn 2's
         # three words alone.
         retrieval_text = " ".join([t["message"] for t in history] + [message])
+        if interests:
+            # Appended once, not repeated per turn — its share of the
+            # blended embedding shrinks naturally as real conversation
+            # accumulates, so it nudges an early/vague turn toward known
+            # tastes without overriding a later, specific, different ask.
+            retrieval_text = f"{retrieval_text} (likes: {', '.join(interests)})"
         query_embedding = embeddings.embed_text(retrieval_text)
         if query_embedding:
             candidates = embeddings.top_matches(query_embedding, pool, limit=RETRIEVAL_CANDIDATES)
@@ -560,7 +581,20 @@ class OpenAIBrain:
                 "shorter sentences for an earlier reader, richer language for a confident one), on "
                 "top of the age-band guidance above."
             )
+        interests_note = ""
+        if interests:
+            interests_note = (
+                f"## What you already know about this child\n"
+                f"This child's parent says they especially enjoy: {', '.join(interests)}. You don't need "
+                f"to ask what they're interested in — you already have a real signal, so it's fine to lean "
+                f"on it, especially early in a conversation or when their message is vague (e.g. \"surprise "
+                f"me\" or \"I want something to read\"). Never let it override what they're actually asking "
+                f"for right now, though — if they name a different topic or format, that wins; a declared "
+                f"interest is a tiebreaker and a good first guess, never a rule that forces a pick.\n"
+            )
         system_prompt = f"""You are Pip, a friendly companion chatting with a child to help them find a book or video to enjoy. Talk like a warm, curious friend having a real back-and-forth — never like a search engine dumping results for every message.
+
+{interests_note}
 
 ## Conversation flow
 - This is exchange {turn_number} of this conversation. {pacing_note}

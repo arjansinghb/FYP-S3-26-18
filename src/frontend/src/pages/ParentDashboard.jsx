@@ -15,7 +15,7 @@ import {
   childReports, childTrends, compareChildren,
 } from '../api'
 import {
-  AlertIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, FlagIcon, LockIcon,
+  AlertIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, FlagIcon, LockIcon,
   PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
@@ -23,6 +23,91 @@ import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import { firstMissingField } from '../formValidation'
 import './parent.css'
+
+// The same genre vocabulary the catalogue is actually tagged with (CM09/
+// CM10) — an interest picked here is guaranteed to match real content, not
+// a word that means nothing to retrieval. Order is roughly most-to-least
+// common across the live catalogue, so the first row a parent sees is the
+// most likely to be useful.
+const INTEREST_OPTIONS = [
+  'funny', 'adventure', 'science', 'animals', 'friendship', 'cosy',
+  'fairytale', 'nature', 'educational', 'mystery', 'vehicles', 'space',
+  'art', 'history', 'sports', 'music', 'dinosaur',
+]
+
+const MAX_INTEREST_LENGTH = 30
+
+// Every interest picker on this page shares this one control — a row of
+// toggle chips rather than a <select multiple>, whose native UI is both
+// unstylable and a poor fit for "pick a few from a dozen" on a touch
+// device.
+//
+// Preset chips only guarantee a match against something the catalogue is
+// actually tagged with (CM09/CM10) — real, but capped at whatever genres
+// happen to exist. A parent's own words ("loves Wild Kratts", "obsessed
+// with dragons") can be far more specific than any fixed list, and
+// brain.py's retrieval is embedding-based (semantic similarity, not exact
+// tag matching), so a free-typed interest still meaningfully nudges what
+// Pip retrieves even with no catalogue item tagged that exact word.
+function InterestPicker({ value, onChange }) {
+  const [draft, setDraft] = useState('')
+
+  function toggle(v) {
+    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v])
+  }
+
+  function addCustom(e) {
+    e.preventDefault()
+    const v = draft.trim().toLowerCase().slice(0, MAX_INTEREST_LENGTH)
+    if (v && !value.includes(v)) onChange([...value, v])
+    setDraft('')
+  }
+
+  // Anything already in `value` that isn't one of the preset options — a
+  // custom word this child's parent typed in (here or on an earlier edit)
+  // — still needs to render as a real, removable chip, not silently
+  // disappear because it's not in INTEREST_OPTIONS.
+  const custom = value.filter((v) => !INTEREST_OPTIONS.includes(v))
+
+  return (
+    <div>
+      <div className="chip-row">
+        {INTEREST_OPTIONS.map((v) => (
+          <button
+            type="button" key={v}
+            className={`chip-toggle ${value.includes(v) ? 'chip-toggle--active' : ''}`}
+            aria-pressed={value.includes(v)}
+            onClick={() => toggle(v)}
+          >
+            {v}
+          </button>
+        ))}
+        {custom.map((v) => (
+          <button
+            type="button" key={v}
+            className="chip-toggle chip-toggle--active chip-toggle--custom"
+            onClick={() => toggle(v)}
+            title={`Remove "${v}"`}
+          >
+            {v} <CloseIcon width={11} height={11} />
+          </button>
+        ))}
+      </div>
+      <div className="row" style={{ marginTop: 'var(--space-2)', gap: 'var(--space-2)' }}>
+        <input
+          value={draft} maxLength={MAX_INTEREST_LENGTH}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addCustom(e) }}
+          placeholder="Something else? Type it here…"
+          style={{ flex: 1 }}
+        />
+        <button type="button" className="ghost small" onClick={addCustom} disabled={!draft.trim()}>
+          <PlusIcon width={14} height={14} /> Add
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // A book/video type icon in a tinted chip — same "icon-led title" pattern
 // ModeratorDashboard.jsx's queue rows already use, applied here to the
@@ -924,6 +1009,8 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [ageBand, setAgeBand] = useState('5-8')
+  const [gender, setGender] = useState('')
+  const [interests, setInterests] = useState([])
   const [readingLevel, setReadingLevel] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -937,8 +1024,11 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
       // No pin field — the server generates a unique 6-digit linking
       // code/PIN itself (see models.ChildCreate's docstring for why letting
       // a parent type one caused real collisions between families).
-      await createChild({ name, age_band: ageBand, reading_level: readingLevel || null })
-      setName(''); setReadingLevel(''); setAgeBand('5-8'); setOpen(false)
+      await createChild({
+        name, age_band: ageBand, reading_level: readingLevel || null,
+        gender: gender || null, interests,
+      })
+      setName(''); setReadingLevel(''); setAgeBand('5-8'); setGender(''); setInterests([]); setOpen(false)
       onAdded()
     } catch (err) {
       setError(err.message)
@@ -963,7 +1053,7 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   }
 
   return (
-    <form onSubmit={submit} className="card" noValidate>
+    <form onSubmit={submit} className="card child-form" noValidate>
       <h3>New child profile</h3>
       <label>Child's name
         <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -974,9 +1064,24 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
           <option value="9-12">9–12</option>
         </Select>
       </label>
+      <label>Gender (optional)
+        <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+          <option value="">Prefer not to say</option>
+          <option value="girl">Girl</option>
+          <option value="boy">Boy</option>
+        </Select>
+      </label>
       <label>Reading level (optional)
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
       </label>
+      {/* Not just profile detail — brain.py folds these straight into what
+          Pip retrieves and how it talks, so a returning child gets a
+          recommendation shaped by a real signal from turn one, instead of
+          Pip only learning their taste from what gets liked/saved later. */}
+      <div className="field-group">
+        <span className="field-group-label">What do they love? (optional)</span>
+        <InterestPicker value={interests} onChange={setInterests} />
+      </div>
       <p className="muted">A 6-digit linking code/PIN will be generated automatically — you'll see it on the child's card right after creating the profile, ready to give to your child.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
@@ -1149,7 +1254,16 @@ function ChildCard({ child, account, onChanged }) {
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {child.name} {child.locked && <span className="badge badge-rejected"><LockIcon width={10} height={10} /> locked</span>}
           </h3>
-          <p className="muted">Age {child.age_band}{child.reading_level ? ` · ${child.reading_level}` : ''}</p>
+          <p className="muted">
+            Age {child.age_band}
+            {child.gender === 'girl' ? ' · Girl' : child.gender === 'boy' ? ' · Boy' : ''}
+            {child.reading_level ? ` · ${child.reading_level}` : ''}
+          </p>
+          {child.interests?.length > 0 && (
+            <div className="chip-row" style={{ marginTop: 'var(--space-1)' }}>
+              {child.interests.map((i) => <span className="chip chip-muted" key={i}>{i}</span>)}
+            </div>
+          )}
         </div>
         {!confirmingDelete && <button className="ghost small" onClick={() => setConfirmingDelete(true)}>Delete</button>}
       </div>
@@ -1411,6 +1525,8 @@ function ChildCard({ child, account, onChanged }) {
 function EditChild({ child, onDone }) {
   const [name, setName] = useState(child.name)
   const [ageBand, setAgeBand] = useState(child.age_band)
+  const [gender, setGender] = useState(child.gender || '')
+  const [interests, setInterests] = useState(child.interests || [])
   const [readingLevel, setReadingLevel] = useState(child.reading_level || '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -1420,7 +1536,10 @@ function EditChild({ child, onDone }) {
     const missing = firstMissingField([[name, "Child's name"]])
     if (missing) { setError(missing); return }
     setError(''); setBusy(true)
-    const payload = { name, age_band: ageBand, reading_level: readingLevel || null }
+    const payload = {
+      name, age_band: ageBand, reading_level: readingLevel || null,
+      gender: gender || null, interests,
+    }
     try {
       await updateChild(child.id, payload)
       onDone()
@@ -1437,7 +1556,7 @@ function EditChild({ child, onDone }) {
     // own, so this form's fields fell back to bare block stacking, same
     // gap-less look the "My account" edit form had before. Reusing that
     // same fix's class here instead of inventing a near-duplicate one.
-    <form className="panel panel--flat account-edit-form" onSubmit={save} noValidate>
+    <form className="panel panel--flat account-edit-form child-form" onSubmit={save} noValidate>
       <label>Name
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
@@ -1447,9 +1566,20 @@ function EditChild({ child, onDone }) {
           <option value="9-12">9–12</option>
         </Select>
       </label>
+      <label>Gender
+        <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+          <option value="">Prefer not to say</option>
+          <option value="girl">Girl</option>
+          <option value="boy">Boy</option>
+        </Select>
+      </label>
       <label>Reading level
         <input value={readingLevel} onChange={(e) => setReadingLevel(e.target.value)} placeholder="e.g. early, middle" />
       </label>
+      <div className="field-group">
+        <span className="field-group-label">What do they love?</span>
+        <InterestPicker value={interests} onChange={setInterests} />
+      </div>
       <p className="muted">To change {child.name}'s code/PIN, use "Generate new code" on their card instead — it's system-generated, not typed in.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
