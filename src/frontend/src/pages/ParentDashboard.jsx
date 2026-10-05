@@ -9,13 +9,16 @@ import {
   requestPasswordReset, confirmPasswordReset,
   giveConsent, getPrivacySettings, updatePrivacySettings,
   requestChildDataDeletion, listChildDataDeletions, cancelChildDataDeletion,
+  listNotifications, markNotificationRead, getNotificationPreferences, updateNotificationPreferences,
   getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
   getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
   childReports, childTrends, compareChildren,
+  getMyReview, submitReview,
+  childArticulation, childExplanations, confirmExplanation, declineExplanation, articulationTrends,
 } from '../api'
 import {
-  AlertIcon, BookIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, FlagIcon, LockIcon,
+  AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ChevronIcon, ClockIcon, CompassIcon, FlagIcon, FlameIcon, LockIcon, MicIcon,
   PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
@@ -35,76 +38,32 @@ const INTEREST_OPTIONS = [
   'art', 'history', 'sports', 'music', 'dinosaur',
 ]
 
-const MAX_INTEREST_LENGTH = 30
-
-// Every interest picker on this page shares this one control — a row of
-// toggle chips rather than a <select multiple>, whose native UI is both
-// unstylable and a poor fit for "pick a few from a dozen" on a touch
-// device.
+// Every interest picker on this page shares this one control: a row of toggle
+// chips rather than a <select multiple>, whose native UI is both unstylable
+// and a poor fit for "pick a few from a dozen" on a touch device.
 //
-// Preset chips only guarantee a match against something the catalogue is
-// actually tagged with (CM09/CM10) — real, but capped at whatever genres
-// happen to exist. A parent's own words ("loves Wild Kratts", "obsessed
-// with dragons") can be far more specific than any fixed list, and
-// brain.py's retrieval is embedding-based (semantic similarity, not exact
-// tag matching), so a free-typed interest still meaningfully nudges what
-// Pip retrieves even with no catalogue item tagged that exact word.
+// A fixed list on purpose (no free-text box). Interests drive the child's
+// "For You" row and are handed to Pip as background context, and both only
+// work for words the catalogue is actually tagged with. Free text would also
+// put unvetted parent-typed text straight into an LLM prompt, and collects
+// more personal data than the feature needs.
 function InterestPicker({ value, onChange }) {
-  const [draft, setDraft] = useState('')
-
   function toggle(v) {
     onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v])
   }
 
-  function addCustom(e) {
-    e.preventDefault()
-    const v = draft.trim().toLowerCase().slice(0, MAX_INTEREST_LENGTH)
-    if (v && !value.includes(v)) onChange([...value, v])
-    setDraft('')
-  }
-
-  // Anything already in `value` that isn't one of the preset options — a
-  // custom word this child's parent typed in (here or on an earlier edit)
-  // — still needs to render as a real, removable chip, not silently
-  // disappear because it's not in INTEREST_OPTIONS.
-  const custom = value.filter((v) => !INTEREST_OPTIONS.includes(v))
-
   return (
-    <div>
-      <div className="chip-row">
-        {INTEREST_OPTIONS.map((v) => (
-          <button
-            type="button" key={v}
-            className={`chip-toggle ${value.includes(v) ? 'chip-toggle--active' : ''}`}
-            aria-pressed={value.includes(v)}
-            onClick={() => toggle(v)}
-          >
-            {v}
-          </button>
-        ))}
-        {custom.map((v) => (
-          <button
-            type="button" key={v}
-            className="chip-toggle chip-toggle--active chip-toggle--custom"
-            onClick={() => toggle(v)}
-            title={`Remove "${v}"`}
-          >
-            {v} <CloseIcon width={11} height={11} />
-          </button>
-        ))}
-      </div>
-      <div className="row" style={{ marginTop: 'var(--space-2)', gap: 'var(--space-2)' }}>
-        <input
-          value={draft} maxLength={MAX_INTEREST_LENGTH}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') addCustom(e) }}
-          placeholder="Something else? Type it here…"
-          style={{ flex: 1 }}
-        />
-        <button type="button" className="ghost small" onClick={addCustom} disabled={!draft.trim()}>
-          <PlusIcon width={14} height={14} /> Add
+    <div className="chip-row">
+      {INTEREST_OPTIONS.map((v) => (
+        <button
+          type="button" key={v}
+          className={`chip-toggle ${value.includes(v) ? 'chip-toggle--active' : ''}`}
+          aria-pressed={value.includes(v)}
+          onClick={() => toggle(v)}
+        >
+          {v}
         </button>
-      </div>
+      ))}
     </div>
   )
 }
@@ -407,6 +366,7 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
           </div>
         </div>
         <div className="row">
+          <NotificationsBell />
           <button className="ghost" onClick={onLogout}>Log out</button>
         </div>
       </header>
@@ -446,7 +406,11 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
         ))}
       </div>
 
+      <NotificationSettings />
+
       <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
+
+      <ReviewPanel />
 
       <PrivacyPanel account={account} />
     </div>
@@ -454,6 +418,101 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
 }
 
 // ---------- UV04: submit a review for the public landing page ----------
+// Real gap, not a restyle: there was no way for a parent to actually leave
+// one — the landing page's "Why families trust Pip" section deliberately
+// used verifiable product claims instead of invented quotes (see Home.jsx's
+// TRUST_POINTS comment), which is honest but isn't the same thing as a real
+// parent's own words. This is that real path: written here, screened for
+// safety, then only public once an admin explicitly approves it.
+function ReviewPanel() {
+  const [review, setReview] = useState(undefined) // undefined = loading, null = none yet
+  const [rating, setRating] = useState(0) // 0 = nothing picked yet — a parent should choose, not inherit a default
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  // Shown briefly right after a successful submit, then the panel reverts
+  // to the (blank) form on its own — a parent can always send another
+  // review later, so this is a passing confirmation, not a dead end.
+  const [justSubmitted, setJustSubmitted] = useState(false)
+
+  useEffect(() => {
+    getMyReview().then(setReview).catch(() => setReview(null))
+  }, [])
+
+  useEffect(() => {
+    if (!justSubmitted) return
+    const timer = setTimeout(() => setJustSubmitted(false), 3000)
+    return () => clearTimeout(timer)
+  }, [justSubmitted])
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!rating) { setError('Pick a star rating first.'); return }
+    if (!text.trim()) { setError('Write a few words first.'); return }
+    setBusy(true); setError('')
+    try {
+      const saved = await submitReview(rating, text.trim())
+      setReview(saved)
+      setText('')
+      setRating(0)
+      setJustSubmitted(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (review === undefined) return null // avoid a flash of the form before we know
+
+  return (
+    <div className="card">
+      <h3><StarIcon width={18} height={18} filled /> Your review</h3>
+      {justSubmitted ? (
+        <div className="review-submitted review-submitted-thanks">
+          <CheckIcon width={20} height={20} />
+          <p className="review-submitted-text">Thank you for your feedback!</p>
+        </div>
+      ) : (
+        <form className="review-form" onSubmit={submit}>
+          <p className="muted">Share your experience with Pip — your feedback helps us make it better for every family.</p>
+          <div className="review-field">
+            <span className="review-field-label">Rating</span>
+            <StarPicker value={rating} onChange={setRating} />
+          </div>
+          <div className="review-field">
+            <label htmlFor="review-text" className="review-field-label">Your review</label>
+            <textarea
+              id="review-text"
+              value={text} onChange={(e) => setText(e.target.value)} maxLength={600} rows={3}
+              placeholder="What's it actually like using Pip with your child?"
+            />
+          </div>
+          {error && <p className="error">{error}</p>}
+          <button type="submit" disabled={busy} className="review-submit">{busy ? 'Submitting…' : 'Submit review'}</button>
+        </form>
+      )}
+    </div>
+  )
+}
+
+function StarPicker({ value, onChange, readOnly }) {
+  return (
+    <div className="star-picker" role={readOnly ? undefined : 'radiogroup'} aria-label="Rating">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n} type="button" className="star-btn" disabled={readOnly}
+          onClick={() => onChange?.(n)}
+          aria-label={`${n} star${n > 1 ? 's' : ''}`}
+          aria-pressed={n <= value}
+        >
+          <StarIcon width={22} height={22} filled={n <= value} />
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ---------- UV06 email verification ----------
 
 function VerifyBanner({ account, onAccountUpdated }) {
@@ -517,6 +576,129 @@ function VerifyBanner({ account, onAccountUpdated }) {
         )}
       </form>
     </div>
+  )
+}
+
+// ---------- PA20/22 notifications ----------
+
+function NotificationsBell() {
+  const [open, setOpen] = useState(false)
+  const [items, setItems] = useState([])
+  const [loaded, setLoaded] = useState(false)
+
+  // Fetch on mount, not just lazily when the bell is first clicked — a
+  // badge that only appears after you've already opened the panel once
+  // defeats the point of having one. Real found gap, not just a restyle:
+  // a parent had no way to *notice* something new happened (e.g. their
+  // child just activated their device) without already checking.
+  useEffect(() => {
+    listNotifications().then((n) => { setItems(n); setLoaded(true) }).catch(() => {})
+  }, [])
+
+  async function toggle() {
+    if (!open) {
+      // Refresh on every open too, so marking something read elsewhere
+      // (or a new notification landing while this was closed) isn't stale.
+      try { setItems(await listNotifications()); setLoaded(true) } catch { /* ignore */ }
+    }
+    setOpen(!open)
+  }
+
+  async function read(n) {
+    if (n.read) return
+    await markNotificationRead(n.id)
+    setItems(items.map((x) => (x.id === n.id ? { ...x, read: true } : x)))
+  }
+
+  const unread = items.filter((n) => !n.read).length
+
+  return (
+    <div className="notif-bell">
+      <button className="notif-trigger" onClick={toggle} aria-label="Notifications" aria-expanded={open}>
+        <BellIcon width={18} height={18} />
+        {loaded && unread > 0 && <span className="notif-badge">{unread > 9 ? '9+' : unread}</span>}
+      </button>
+      {open && (
+        <div className="notif-panel">
+          <div className="notif-panel-header">
+            <h3>Notifications</h3>
+            {loaded && unread > 0 && <span className="notif-unread-label">{unread} new</span>}
+          </div>
+          {items.length === 0 && <p className="muted notif-empty">Nothing yet — you'll see updates here as they happen.</p>}
+          {items.map((n) => (
+            <button key={n.id} className={`notif-item${n.read ? ' notif-item--read' : ''}`} onClick={() => read(n)}>
+              <span className="notif-dot" />
+              <span className="notif-text">
+                <span className="notif-title">{n.title}</span>
+                <span className="notif-body">{n.body}</span>
+                <span className="notif-ts">{new Date(n.created_at * 1000).toLocaleString()}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------- PA22: notification preferences ----------
+// The backend already had a real, working endpoint and even correctly
+// respected the in_app toggle server-side (storage.py's add_notification
+// checks it before ever creating a notification) — nothing here was ever
+// exposed in the UI, so a parent had no way to actually turn it off.
+// Honest about scope: only in_app is real right now (no email/SMS service
+// or push subscription infra exists in this backend) — email/push persist
+// as a preference like every real channel does, but don't deliver
+// anything yet, same "flag it, don't fake it" rule the rest of this
+// project follows for anything simulated.
+function NotificationSettings() {
+  const [prefs, setPrefs] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { getNotificationPreferences().then(setPrefs).catch(() => {}) }, [])
+
+  async function toggle(channel) {
+    if (!prefs) return
+    const channels = { ...prefs.channels, [channel]: !prefs.channels[channel] }
+    setPrefs({ channels }) // optimistic — a preference toggle is low-stakes to revert if the save fails
+    setSaving(true); setError('')
+    try {
+      await updateNotificationPreferences(channels)
+    } catch (err) {
+      setError(err.message)
+      setPrefs(prefs) // revert on a genuine failure
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!prefs) return null
+
+  return (
+    <section className="card">
+      <h3><BellIcon width={18} height={18} /> Notifications</h3>
+      <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
+        <span>In-app <span className="muted">— shows in the bell icon above</span></span>
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
+        <span>Email <span className="muted">— sent to your account email</span></span>
+      </label>
+      <label className="toggle">
+        <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
+        <span>Push <span className="muted">— a notification on this device, even with the tab closed</span></span>
+      </label>
+      {/* Was framed as a "prototype" caveat ("aren't wired to a real
+          delivery service yet") — honest to the code, but reads oddly to
+          a parent, who isn't the audience for implementation status.
+          Same underlying honesty (nothing here is silently overpromised),
+          phrased as a normal product roadmap note instead. */}
+      <p className="muted">Email and push are coming soon — everything shows up in-app for now.</p>
+      {error && <p className="error">{error}</p>}
+    </section>
   )
 }
 
@@ -619,13 +801,6 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
 
 // ---------- PA23-27: subscription / billing (simulated) ----------
 
-// Ultra tier existed briefly (2026-09-07) — same Premium features plus
-// unlimited child profiles — but is deliberately held back out of this
-// prototype (Kiefer's call, 2026-09-23): it's meant for the final product,
-// not the prototype build. Backend/models.py's AccountTier and
-// SubscribeRequest.tier were narrowed back to "free"/"premium" alongside
-// this, so re-adding it later is mostly reversing that one commit, not
-// rebuilding from scratch.
 const TIER_INFO = {
   premium: { label: 'Premium', desc: 'Up to 4 child profiles, unlimited favourites, full activity trends, multi-child comparison.' },
 }
@@ -735,6 +910,12 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   // give it a fresh identity every render, so React would remount its
   // whole subtree (and drop input focus mid-keystroke in the card-update
   // form below) every time any of this panel's own state changes.
+  // Sits right beside Cancel / Resume on a paid plan; on the Free plan it
+  // stays next to "Upgrade to Premium" (see the row at the bottom).
+  const historyBtn = (
+    <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
+  )
+
   function paidTierBody(tier) {
     // Was just two lines of plain .muted text under the PREMIUM badge —
     // "keliatan polos banget" right after actually buying it. A tinted
@@ -801,7 +982,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
                   <p className="cancel-status-sub">You'll drop to Free after that — resume anytime before then to keep Premium.</p>
                 </div>
               </div>
-              <div className="row"><button onClick={resume}>Resume subscription</button></div>
+              <div className="row"><button onClick={resume}>Resume subscription</button>{historyBtn}</div>
             </>
           )
           : confirmingCancel ? (
@@ -811,7 +992,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
               <button className="ghost small" onClick={() => setConfirmingCancel(false)}>Never mind</button>
             </div>
           ) : (
-            <div className="row"><button className="danger" onClick={() => setConfirmingCancel(true)}>Cancel subscription</button></div>
+            <div className="row"><button className="danger" onClick={() => setConfirmingCancel(true)}>Cancel subscription</button>{historyBtn}</div>
           )}
       </>
     )
@@ -892,12 +1073,14 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
           though it no longer applied to that fresh attempt ("harusnya pas
           di certain session aja" — flagged directly). Cancel below clears
           it too, for the same reason on the way out. */}
-      <div className="row">
-        {status.tier === 'free' && !showUpgrade && (
-          <button className="btn-grow" onClick={() => { setShowUpgrade(true); setError('') }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
-        )}
-        <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
-      </div>
+      {status.tier === 'free' && (
+        <div className="row">
+          {!showUpgrade && (
+            <button className="btn-grow" onClick={() => { setShowUpgrade(true); setError('') }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
+          )}
+          {historyBtn}
+        </div>
+      )}
       {showHistory && (
         <div className="panel">
           {history.length === 0 && <p className="muted">No transaction history.</p>}
@@ -1005,10 +1188,102 @@ function ConsentStep({ account, onAccountUpdated, onDone, onBack }) {
   )
 }
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+// Date of birth as three of the app's own dropdowns instead of the browser's
+// native date input, whose look (and pop-up calendar) can't be styled and
+// read as unfinished next to everything else on the page. Emits a
+// YYYY-MM-DD string once all three parts are chosen, '' otherwise.
+function DobPicker({ value, onChange }) {
+  // Every plausible year is listed (not just the 5-12 range), so a parent
+  // with a 4- or 14-year-old can still find their year and is told why it
+  // doesn't work instead of the year silently being missing.
+  const maxYear = new Date().getFullYear()
+  const minYear = maxYear - 20
+  const split = (v) => (v ? v.split('-') : ['', '', ''])
+  const [y0, m0, d0] = split(value)
+  const [parts, setParts] = useState({ y: y0, m: m0, d: d0 })
+
+  useEffect(() => {
+    if (value) {
+      const [y, m, d] = split(value)
+      setParts({ y, m, d })
+    } else if (parts.y && parts.m && parts.d) {
+      setParts({ y: '', m: '', d: '' }) // the form was reset from outside
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
+  function update(next) {
+    setParts(next)
+    if (next.y && next.m && next.d) {
+      const daysInMonth = new Date(Number(next.y), Number(next.m), 0).getDate()
+      const day = Math.min(Number(next.d), daysInMonth)
+      onChange(`${next.y}-${next.m}-${String(day).padStart(2, '0')}`)
+    } else {
+      onChange('')
+    }
+  }
+
+  const days = [<option key="d" value="">Day</option>, ...Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={String(i + 1).padStart(2, '0')}>{i + 1}</option>)]
+  const months = [<option key="m" value="">Month</option>, ...MONTHS.map((name, i) => <option key={name} value={String(i + 1).padStart(2, '0')}>{name}</option>)]
+  const years = [<option key="y" value="">Year</option>, ...Array.from({ length: maxYear - minYear + 1 }, (_, i) => <option key={maxYear - i} value={String(maxYear - i)}>{maxYear - i}</option>)]
+
+  const outOfRange = dobRangeProblem(value)
+
+  return (
+    <div className="dob-wrap">
+    <div className="dob-picker">
+      <div className="dob-part dob-part--day"><Select aria-label="Day of birth" value={parts.d} onChange={(e) => update({ ...parts, d: e.target.value })}>{days}</Select></div>
+      <div className="dob-part dob-part--month"><Select aria-label="Month of birth" value={parts.m} onChange={(e) => update({ ...parts, m: e.target.value })}>{months}</Select></div>
+      <div className="dob-part dob-part--year"><Select aria-label="Year of birth" value={parts.y} onChange={(e) => update({ ...parts, y: e.target.value })}>{years}</Select></div>
+    </div>
+    {outOfRange && <p className="dob-warn p-wide" role="alert">{outOfRange}</p>}
+    </div>
+  )
+}
+
+// Articulation level as a themed badge: each level has its own colour (see
+// [data-level] in parent.css), and the dots show how many of the three
+// confirmations toward the next level are in.
+const LEVEL_ICONS = { explorer: CompassIcon, adventurer: FlameIcon, storyteller: StarIcon }
+function LevelPill({ level, progress }) {
+  const Icon = LEVEL_ICONS[level] || CompassIcon
+  const top = level === 'storyteller'
+  return (
+    <span className="level-pill" data-level={level} title={top ? 'Top level reached' : `${progress} of 3 confirmations toward the next level`}>
+      <Icon width={13} height={13} />
+      <span>{level[0].toUpperCase() + level.slice(1)}</span>
+      {!top && (
+        <span className="level-pill-pips" aria-hidden="true">
+          {[0, 1, 2].map((i) => <span key={i} className={i < progress ? 'level-pill-pip level-pill-pip--on' : 'level-pill-pip'} />)}
+        </span>
+      )}
+    </span>
+  )
+}
+
+// Pip is made for ages 5 to 12. null when the date is fine (or not complete yet).
+function dobRangeProblem(dob) {
+  if (!dob) return null
+  const born = new Date(`${dob}T00:00:00`)
+  if (born > new Date()) return "That date is in the future."
+  const age = ageFromDob(dob)
+  return age < 5 || age > 12 ? `That makes ${age === 1 ? '1 year' : `${age} years`} old. Pip is made for ages 5 to 12.` : null
+}
+
+function ageFromDob(dob) {
+  const born = new Date(`${dob}T00:00:00`)
+  const now = new Date()
+  let age = now.getFullYear() - born.getFullYear()
+  if (now.getMonth() < born.getMonth() || (now.getMonth() === born.getMonth() && now.getDate() < born.getDate())) age--
+  return age
+}
+
 function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
-  const [ageBand, setAgeBand] = useState('5-8')
+  const [dob, setDob] = useState('')
   const [gender, setGender] = useState('')
   const [interests, setInterests] = useState([])
   const [readingLevel, setReadingLevel] = useState('')
@@ -1017,18 +1292,19 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
 
   async function submit(e) {
     e.preventDefault()
-    const missing = firstMissingField([[name, "Child's name"]])
+    const missing = firstMissingField([[name, "Child's name"], [dob, 'Date of birth']])
     if (missing) { setError(missing); return }
+    if (dobRangeProblem(dob)) { setError(dobRangeProblem(dob)); return }
     setError(''); setBusy(true)
     try {
       // No pin field — the server generates a unique 6-digit linking
       // code/PIN itself (see models.ChildCreate's docstring for why letting
       // a parent type one caused real collisions between families).
       await createChild({
-        name, age_band: ageBand, reading_level: readingLevel || null,
+        name, dob, reading_level: readingLevel || null,
         gender: gender || null, interests,
       })
-      setName(''); setReadingLevel(''); setAgeBand('5-8'); setGender(''); setInterests([]); setOpen(false)
+      setName(''); setReadingLevel(''); setDob(''); setGender(''); setInterests([]); setOpen(false)
       onAdded()
     } catch (err) {
       setError(err.message)
@@ -1058,12 +1334,11 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
       <label>Child's name
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
-      <label>Age band
-        <Select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
-          <option value="5-8">5–8</option>
-          <option value="9-12">9–12</option>
-        </Select>
-      </label>
+      <div className="field-group">
+        <span className="field-group-label">Date of birth</span>
+        <DobPicker value={dob} onChange={setDob} />
+        <span className="field-hint">Pip is for ages 5 to 12. It picks the right books and videos from this.</span>
+      </div>
       <label>Gender (optional)
         <Select value={gender} onChange={(e) => setGender(e.target.value)}>
           <option value="">Prefer not to say</option>
@@ -1082,7 +1357,7 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
         <span className="field-group-label">What do they love? (optional)</span>
         <InterestPicker value={interests} onChange={setInterests} />
       </div>
-      <p className="muted">A 6-digit linking code/PIN will be generated automatically — you'll see it on the child's card right after creating the profile, ready to give to your child.</p>
+      <p className="muted p-wide">A Login ID and PIN are generated automatically and shown on the child's card.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Create profile'}</button>
@@ -1149,8 +1424,430 @@ function groupBySession(entries) {
   return sessions.sort((a, b) => b.lastTs - a.lastTs)
 }
 
+// PA31 — what a parent actually wants from "trends": is my child using this,
+// what do they gravitate towards, and does it match what I told Pip they like.
+// Days are bucketed here (from raw timestamps) so "today" means the parent's
+// own today, not the server's.
+const INSIGHT_DAYS = 14
+
+function lastDays(timestamps) {
+  const days = []
+  for (let i = INSIGHT_DAYS - 1; i >= 0; i--) {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() - i)
+    days.push({ start: d.getTime(), label: String(d.getDate()), full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }), today: i === 0, count: 0 })
+  }
+  for (const ts of timestamps) {
+    const ms = ts * 1000
+    for (let i = days.length - 1; i >= 0; i--) {
+      if (ms >= days[i].start) { days[i].count++; break }
+    }
+  }
+  return days
+}
+
+// Boxes, but flat: solid fills, no gradients, no icon chips, no per-row
+// rainbow. Two hues only, both from the app's own palette: purple for the
+// history itself, amber for whatever deserves a second look (the top genre,
+// today, what the child saved).
+function InsightsPanel({ trends: t, childName }) {
+  const genres = t.genre_counts || []
+  const maxGenre = Math.max(1, ...genres.map((g) => g.count))
+  const days = lastDays(t.message_timestamps || [])
+  const maxDay = Math.max(1, ...days.map((d) => d.count))
+  const kinds = t.books_recommended + t.videos_recommended
+  const booksPct = kinds ? Math.round((t.books_recommended / kinds) * 100) : 0
+  const interests = t.interests || []
+  const enough = t.total_messages >= 3
+
+  return (
+    <div className="insights">
+      {enough && (
+        <p className="insights-lead">
+          {genres.length > 0
+            ? <>{childName} mostly asks for <b>{genres[0].genre}</b>{genres[1] && <> and <b>{genres[1].genre}</b></>}.</>
+            : <>Here is how {childName} has been using Pip.</>}
+        </p>
+      )}
+
+      <div className="insights-tiles">
+        <div className="insights-tile"><span className="insights-num">{t.total_messages}</span><span className="insights-label">messages</span></div>
+        <div className="insights-tile"><span className="insights-num">{t.total_recommendations}</span><span className="insights-label">titles shown</span></div>
+        <div className="insights-tile insights-tile--warm"><span className="insights-num">{t.favourites_count}</span><span className="insights-label">saved by {childName}</span></div>
+      </div>
+
+      {!enough ? (
+        <p className="muted insights-empty">Not enough activity yet to show trends. Check back after {childName} has had a few more chats with Pip.</p>
+      ) : (
+        <>
+          <div className="insights-grid">
+            <section className="insights-box">
+              <h4>Most asked for</h4>
+              {genres.length === 0 ? <p className="muted">No genres yet.</p> : (
+                <ul className="rank-list">
+                  {genres.map((g, i) => (
+                    <li key={g.genre} className={i === 0 ? 'rank-top' : ''}>
+                      <div className="rank-head">
+                        <span className="rank-name">
+                          {g.genre}
+                          {interests.includes(g.genre) && <span className="rank-note">on {childName}'s list</span>}
+                        </span>
+                        <span className="rank-count">{g.count}</span>
+                      </div>
+                      <div className="rank-track"><div className="rank-bar" style={{ width: `${(g.count / maxGenre) * 100}%` }} /></div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="insights-box">
+              <h4>Last {INSIGHT_DAYS} days</h4>
+              <div className="day-chart" role="img" aria-label={`Messages per day over the last ${INSIGHT_DAYS} days: ${days.map((d) => `${d.full} ${d.count}`).join(', ')}`}>
+                {days.map((d, i) => (
+                  <div className={`day-col ${d.today ? 'day-col--today' : ''}`} key={d.start} title={`${d.full}: ${d.count}`}>
+                    <span className="day-val">{d.count || ''}</span>
+                    <div className="day-bar-wrap"><div className="day-bar" style={{ height: d.count ? `${Math.max(6, (d.count / maxDay) * 100)}%` : '2px' }} /></div>
+                    <span className="day-label">{d.count || d.today || i === 0 ? d.label : ''}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          {kinds > 0 && (
+            <section className="insights-box insights-split">
+              <p>
+                <b>{t.books_recommended}</b> {t.books_recommended === 1 ? 'book' : 'books'} and <b>{t.videos_recommended}</b> {t.videos_recommended === 1 ? 'video' : 'videos'} so far.
+              </p>
+              <div className="split-line" role="img" aria-label={`${t.books_recommended} books and ${t.videos_recommended} videos recommended`}>
+                {t.books_recommended > 0 && <span className="split-books" style={{ width: `${booksPct}%` }} />}
+                {t.videos_recommended > 0 && <span className="split-videos" style={{ width: `${100 - booksPct}%` }} />}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// PA34-PA37 — articulation levels. A child explains a saved book or video to
+// Pip in their own words; the parent reads what they actually said, judged
+// against the level the child is at NOW (not the next one), and confirms or
+// declines. Three confirmations promote the child a level. A decline is
+// never shown to the child, and the item stays free to try again.
+// One of the child's explanations: cover, what it was about, how it was said,
+// and the child's own words as a speech bubble tinted with the colour of the
+// level it was written at. `actions` is the Confirm/Decline row for a waiting
+// one; a reviewed one shows its verdict instead.
+function ExplanationCard({ r, childName, fmt, actions }) {
+  const reviewed = r.status !== 'pending'
+  return (
+    <li className={`expl-item ${reviewed ? 'expl-item--reviewed' : ''}`} data-level={r.level_at}>
+      {r.thumbnail
+        ? <img className="expl-cover" src={r.thumbnail} alt="" />
+        : <span className="expl-cover expl-cover--empty">{r.type === 'book' ? <BookIcon width={22} height={22} /> : <VideoIcon width={22} height={22} />}</span>}
+      <div className="expl-item-body">
+        <div className="expl-item-head">
+          <div className="expl-item-titlewrap">
+            <span className="expl-title">{r.title}</span>
+            <span className="expl-tags">
+              <span className="expl-tag">{r.type === 'book' ? <BookIcon width={12} height={12} /> : <VideoIcon width={12} height={12} />} {r.type === 'book' ? 'Book' : 'Video'}</span>
+              <span className="expl-tag">{r.input_mode === 'voice' ? <><MicIcon width={12} height={12} /> Spoken</> : 'Typed'}</span>
+              <span className="expl-tag expl-tag--level">{r.level_label} level</span>
+            </span>
+          </div>
+          <span className="expl-meta">{fmt(r.created_at)}</span>
+        </div>
+        <p className="expl-said">{childName} said</p>
+        <blockquote className="expl-quote">{r.text}</blockquote>
+        {reviewed
+          ? <span className={`expl-status expl-status--${r.status}`}>{r.status === 'confirmed' ? 'Confirmed' : 'Declined'}</span>
+          : actions}
+      </div>
+    </li>
+  )
+}
+
+// A reviewed explanation as a collapsible row, so a long history doesn't turn
+// into a wall of cards. Closed: cover, title, type and level, a one-line
+// preview of what the child said, the verdict and the date. Open: the full
+// quote. Several can be open at once.
+function HistoryRow({ r, childName, fmt, open, onToggle }) {
+  return (
+    <li className={`expl-hist ${open ? 'expl-hist--open' : ''}`} data-level={r.level_at}>
+      <button type="button" className="expl-hist-head" aria-expanded={open} onClick={onToggle}>
+        {r.thumbnail
+          ? <img className="expl-hist-cover" src={r.thumbnail} alt="" />
+          : <span className="expl-hist-cover expl-hist-cover--empty">{r.type === 'book' ? <BookIcon width={16} height={16} /> : <VideoIcon width={16} height={16} />}</span>}
+        <span className="expl-hist-main">
+          <span className="expl-title">{r.title}</span>
+          <span className="expl-tags">
+            <span className="expl-tag">{r.type === 'book' ? 'Book' : 'Video'}</span>
+            <span className="expl-tag expl-tag--level">{r.level_label} level</span>
+          </span>
+          {!open && <span className="expl-hist-peek">&ldquo;{r.text}&rdquo;</span>}
+        </span>
+        <span className="expl-hist-side">
+          <span className={`expl-status expl-status--${r.status}`}>{r.status === 'confirmed' ? 'Confirmed' : 'Declined'}</span>
+          <span className="expl-meta">{fmt(r.created_at)}</span>
+        </span>
+        <ChevronIcon className="expl-hist-chev" width={18} height={18} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="expl-hist-body">
+          <p className="expl-said">{childName} said{r.input_mode === 'voice' ? ' (spoken)' : ''}</p>
+          <blockquote className="expl-quote">{r.text}</blockquote>
+        </div>
+      )}
+    </li>
+  )
+}
+
+const HISTORY_PAGE = 5
+
+// Page numbers to show: always the first and last, and the pages around the
+// current one; gaps become an ellipsis (null).
+function pageList(current, total) {
+  const keep = new Set([1, total, current - 1, current, current + 1])
+  const out = []
+  for (let n = 1; n <= total; n++) {
+    if (!keep.has(n)) continue
+    if (out.length && n - out[out.length - 1] > 1) out.push(null)
+    out.push(n)
+  }
+  return out
+}
+
+// Five reviewed explanations per page, so a long history never runs far down
+// the screen. A row can still be opened to read what the child said.
+function ExplanationHistory({ items, childName, fmt }) {
+  const [openIds, setOpenIds] = useState(() => new Set())
+  const [page, setPage] = useState(1)
+  const pages = Math.max(1, Math.ceil(items.length / HISTORY_PAGE))
+  const current = Math.min(page, pages)
+  const start = (current - 1) * HISTORY_PAGE
+  const toggle = (id) => setOpenIds((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  return (
+    <>
+      <ul className="expl-list expl-list--history">
+        {items.slice(start, start + HISTORY_PAGE).map((r) => (
+          <HistoryRow key={r.id} r={r} childName={childName} fmt={fmt} open={openIds.has(r.id)} onToggle={() => toggle(r.id)} />
+        ))}
+      </ul>
+      {pages > 1 && (
+        <nav className="expl-pager" aria-label="History pages">
+          <span className="expl-pager-range">Showing <b>{start + 1}&ndash;{Math.min(start + HISTORY_PAGE, items.length)}</b> of <b>{items.length}</b></span>
+          <div className="expl-pager-pages">
+            <button type="button" className="expl-pager-btn expl-pager-step" onClick={() => setPage(current - 1)} disabled={current === 1} aria-label="Previous page">
+              <ChevronIcon direction="left" width={16} height={16} /> <span className="expl-pager-label">Prev</span>
+            </button>
+            {pageList(current, pages).map((n, i) => (n === null
+              ? <span key={`gap${i}`} className="expl-pager-gap" aria-hidden="true">…</span>
+              : (
+                <button
+                  key={n} type="button" className={`expl-pager-btn expl-pager-num ${n === current ? 'expl-pager-btn--on' : ''}`}
+                  onClick={() => setPage(n)} aria-label={`Page ${n}`} aria-current={n === current ? 'page' : undefined}
+                >{n}</button>
+              )))}
+            <button type="button" className="expl-pager-btn expl-pager-step" onClick={() => setPage(current + 1)} disabled={current === pages} aria-label="Next page">
+              <span className="expl-pager-label">Next</span> <ChevronIcon width={16} height={16} />
+            </button>
+          </div>
+        </nav>
+      )}
+    </>
+  )
+}
+
+const LEVEL_ORDER = ['explorer', 'adventurer', 'storyteller']
+
+function ExplanationsPanel({ child, account, onChanged }) {
+  const premium = account.tier !== 'free'
+  const [level, setLevel] = useState(null)
+  const [rows, setRows] = useState(null)
+  const [trends, setTrends] = useState(null)
+  const [busyId, setBusyId] = useState(null)
+  const [leveledTo, setLeveledTo] = useState(null)
+  const [error, setError] = useState('')
+
+  async function load() {
+    try {
+      const [lv, ex] = await Promise.all([childArticulation(child.id), childExplanations(child.id)])
+      setLevel(lv)
+      setRows(ex)
+      if (premium) articulationTrends(child.id).then(setTrends).catch(() => {})
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+  useEffect(() => { load() }, [child.id])
+
+  async function decide(row, confirm) {
+    setBusyId(row.id)
+    setError('')
+    try {
+      const res = confirm ? await confirmExplanation(row.id) : await declineExplanation(row.id)
+      if (res.leveled_up) setLeveledTo(res.level.label)
+      await load()
+      onChanged()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const fmt = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  const pending = (rows || []).filter((r) => r.status === 'pending')
+  const reviewed = (rows || []).filter((r) => r.status !== 'pending')
+  const maxWeek = Math.max(1, ...(trends?.explained_per_week || [0]))
+  const article = level && /^[aeiou]/i.test(level.label) ? 'an' : 'a'
+
+  return (
+    <div className="panel panel--flat">
+      <div className="expl">
+        {error && <p className="error">{error}</p>}
+
+        {leveledTo && (
+          <div className="expl-banner">
+            {child.name} just became {/^[aeiou]/i.test(leveledTo) ? 'an' : 'a'} <b>{leveledTo}</b>. Pip will tell them next time they chat.
+          </div>
+        )}
+
+        {level && (
+          <section className="expl-level" data-level={level.level}>
+            <div className="expl-level-main">
+              <p className="expl-kicker">Articulation level</p>
+              <p className="expl-level-name">{child.name} is {article} <b>{level.label}</b></p>
+              <p className="expl-descriptor">At this level, a good explanation <i>{level.descriptor.charAt(0).toLowerCase() + level.descriptor.slice(1)}</i></p>
+              {level.next_level ? (
+                <div className="expl-progress">
+                  <span className="expl-pips" aria-hidden="true">
+                    {Array.from({ length: level.needed }).map((_, i) => <span key={i} className={i < level.progress ? 'expl-pip expl-pip--on' : 'expl-pip'} />)}
+                  </span>
+                  <span>{level.progress} of {level.needed} confirmed to become {/^[aeiou]/i.test(level.next_label) ? 'an' : 'a'} {level.next_label}</span>
+                </div>
+              ) : (
+                <p className="expl-progress">Top level reached. Explanations still show up here, they just no longer count toward anything.</p>
+              )}
+              <p className="expl-note">Separate from the reading level you set, which still decides how hard the books are.</p>
+            </div>
+            <ol className="expl-steps" aria-label="Levels">
+              {LEVEL_ORDER.map((key, i) => {
+                const cur = LEVEL_ORDER.indexOf(level.level)
+                return (
+                  <li key={key} data-level={key} className={`expl-step ${i < cur ? 'expl-step--done' : ''} ${i === cur ? 'expl-step--now' : ''} ${i > 0 && i <= cur ? 'expl-step--reached' : ''}`}>
+                    <span className="expl-step-dot">{i < cur ? <CheckIcon width={16} height={16} /> : i + 1}</span>
+                    <span className="expl-step-name">{key[0].toUpperCase() + key.slice(1)}</span>
+                  </li>
+                )
+              })}
+            </ol>
+          </section>
+        )}
+
+        <section>
+          <h4 className="expl-h">Waiting for you {pending.length > 0 && <span className="expl-count">{pending.length}</span>}</h4>
+          {rows === null ? <p className="muted">Loading…</p> : pending.length === 0 ? (
+            <div className="expl-empty">
+              <span className="expl-empty-icon"><CheckIcon width={18} height={18} /></span>
+              <div>
+                <b>All caught up</b>
+                <span>When {child.name} tells Pip about something in their library, it shows up here.</span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="expl-note expl-note--lead">Judge each one against what {article} {level ? level.label : ''} would say. Declining isn't shown to {child.name}, and they can try that one again later.</p>
+              <ul className="expl-list">
+                {pending.map((r) => (
+                  <ExplanationCard
+                    key={r.id} r={r} childName={child.name} fmt={fmt}
+                    actions={(
+                      <div className="expl-actions">
+                        <button onClick={() => decide(r, true)} disabled={busyId === r.id}><CheckIcon width={15} height={15} /> Confirm</button>
+                        <button className="ghost" onClick={() => decide(r, false)} disabled={busyId === r.id}>Decline</button>
+                      </div>
+                    )}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+
+        {premium ? (
+          <>
+            {trends && trends.total > 0 && (
+              <>
+                <div className="insights-tiles expl-tiles" data-level={level?.level}>
+                  <div className="insights-tile expl-tile--lv"><span className="insights-num">{trends.total}</span><span className="insights-label">explained so far</span></div>
+                  <div className="insights-tile expl-tile--ok"><span className="insights-num">{trends.confirmed}</span><span className="insights-label">confirmed</span></div>
+                  <div className="insights-tile insights-tile--warm"><span className="insights-num">{trends.pending}</span><span className="insights-label">waiting for you</span></div>
+                </div>
+                <section className="insights-grid" data-level={level?.level}>
+                  <div className="insights-box">
+                    <h4>Level journey</h4>
+                    <ol className="expl-path">
+                      {LEVEL_ORDER.map((key) => {
+                        const step = trends.level_history.find((s) => s.level === key)
+                        return (
+                          <li key={key} data-level={key} className={step ? 'expl-path-step expl-path-step--reached' : 'expl-path-step'}>
+                            <span className="expl-path-dot">{step ? <CheckIcon width={13} height={13} /> : ''}</span>
+                            <div>
+                              <b>{key[0].toUpperCase() + key.slice(1)}</b>
+                              <span>{step ? `Reached ${fmt(step.at)}` : 'Not yet'}</span>
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  </div>
+                  <div className="insights-box">
+                    <h4>Explained, last 8 weeks</h4>
+                    <div className="expl-weeks" role="img" aria-label={`Explanations per week: ${trends.explained_per_week.join(', ')}`}>
+                      {trends.explained_per_week.map((n, i) => (
+                        <div className="expl-week" key={i}>
+                          <span className="expl-week-val">{n || ''}</span>
+                          <div className="expl-week-bar" style={{ height: n ? `${Math.max(8, (n / maxWeek) * 100)}%` : '2px' }} />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="expl-weeks-axis"><span>8 weeks ago</span><span>This week</span></div>
+                    {trends.top_genres.length > 0 && (
+                      <div className="expl-genres">
+                        <span className="expl-genres-label">Most explained</span>
+                        {trends.top_genres.slice(0, 4).map((g) => <span className="expl-genre" key={g.genre}>{g.genre} <b>{g.count}</b></span>)}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </>
+            )}
+            {reviewed.length > 0 && (
+              <section>
+                <h4 className="expl-h">History</h4>
+                <ExplanationHistory items={reviewed} childName={child.name} fmt={fmt} />
+              </section>
+            )}
+          </>
+        ) : (
+          <p className="expl-note">Premium keeps the full history and a level journey over time.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ChildCard({ child, account, onChanged }) {
-  const [view, setView] = useState(null) // 'activity' | 'favourites' | 'edit' | 'safety' | 'reports' | 'insights' | 'privacy' | null
+  const [view, setView] = useState(null) // 'activity' | 'favourites' | 'edit' | 'safety' | 'reports' | 'insights' | 'explanations' | 'privacy' | null
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [overrides, setOverrides] = useState({})
@@ -1253,15 +1950,16 @@ function ChildCard({ child, account, onChanged }) {
         <div>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {child.name} {child.locked && <span className="badge badge-rejected"><LockIcon width={10} height={10} /> locked</span>}
+            <LevelPill level={child.articulation_level} progress={child.articulation_progress} />
           </h3>
           <p className="muted">
-            Age {child.age_band}
+            {child.dob ? `${ageFromDob(child.dob)} years old` : `Age ${child.age_band}`}
             {child.gender === 'girl' ? ' · Girl' : child.gender === 'boy' ? ' · Boy' : ''}
             {child.reading_level ? ` · ${child.reading_level}` : ''}
           </p>
           {child.interests?.length > 0 && (
             <div className="chip-row" style={{ marginTop: 'var(--space-1)' }}>
-              {child.interests.map((i) => <span className="chip chip-muted" key={i}>{i}</span>)}
+              {child.interests.map((i) => <span className="chip chip-muted chip-interest" key={i}>{i}</span>)}
             </div>
           )}
         </div>
@@ -1323,6 +2021,9 @@ function ChildCard({ child, account, onChanged }) {
       <div className="tabs">
         <button className={view === 'activity' ? 'tab active' : 'tab'} onClick={() => toggle('activity')}>Activity</button>
         <button className={view === 'favourites' ? 'tab active' : 'tab'} onClick={() => toggle('favourites')}>Favourites</button>
+        <button className={view === 'explanations' ? 'tab active' : 'tab'} onClick={() => toggle('explanations')}>
+          Explanations{child.pending_explanations > 0 && <span className="tab-count">{child.pending_explanations}</span>}
+        </button>
         <button className={view === 'reports' ? 'tab active' : 'tab'} onClick={() => toggle('reports')}>Reports</button>
         {account.tier === 'premium' && <button className={view === 'insights' ? 'tab active' : 'tab'} onClick={() => toggle('insights')}>Insights</button>}
         <button className={view === 'edit' ? 'tab active' : 'tab'} onClick={() => toggle('edit')}>Edit</button>
@@ -1333,6 +2034,7 @@ function ChildCard({ child, account, onChanged }) {
       {view === 'edit' && <EditChild child={child} onDone={() => { setView(null); onChanged() }} />}
       {view === 'safety' && <SafetySettings child={child} onDone={() => { setView(null); onChanged() }} />}
       {view === 'privacy' && <ChildDataPrivacy child={child} />}
+      {view === 'explanations' && <ExplanationsPanel child={child} account={account} onChanged={onChanged} />}
 
       {(view === 'activity' || view === 'favourites' || view === 'reports' || view === 'insights') && (
         <div className="panel">
@@ -1414,7 +2116,7 @@ function ChildCard({ child, account, onChanged }) {
                   ) : sessions.length > 0 && (
                     <div className="session-transcript session-transcript--empty">
                       <ChatIcon width={28} height={28} />
-                      <p className="muted">Pick a conversation on the left to see what was actually said.</p>
+                      <p className="muted p-wide">Pick a conversation on the left to see what was actually said.</p>
                     </div>
                   )}
                 </div>
@@ -1427,7 +2129,7 @@ function ChildCard({ child, account, onChanged }) {
               <span className="fav-info">
                 <TypeIcon type={f.type} />
                 <span className="fav-text">
-                  <span className="fav-title">{f.title}</span>
+                  <span className="fav-title fav-title--wrap">{f.title}</span>
                   <span className="fav-type">{f.type === 'book' ? 'Book' : 'Video'}</span>
                 </span>
               </span>
@@ -1478,41 +2180,59 @@ function ChildCard({ child, account, onChanged }) {
               title + subtitle), so a report reads as a real record —
               what was flagged, why, when, and its current status — instead
               of one plain sentence. */}
-          {!loading && view === 'reports' && data.map((r) => (
-            <div key={r.id} className="fav-item">
-              <span className="fav-info">
-                <span className="fav-icon fav-icon--flag"><FlagIcon width={16} height={16} /></span>
-                <span className="fav-text">
-                  <span className="fav-title">{r.content_title}</span>
-                  <span className="report-reason">{r.reason}</span>
-                </span>
-              </span>
-              <span className="report-meta">
-                <span className={`badge ${r.status === 'open' ? 'badge-pending' : 'badge-approved'}`}>{r.status}</span>
-                <span className="report-date">{new Date(r.ts * 1000).toLocaleDateString()}</span>
-              </span>
-            </div>
-          ))}
+          {!loading && view === 'reports' && (() => {
+            // Reports still waiting come first, then the ones already reviewed
+            // (most recently reviewed first), so the two never mix.
+            const waitingList = data.filter((r) => r.status === 'open')
+            const reviewedList = data
+              .filter((r) => r.status !== 'open')
+              .sort((x, y) => (y.resolved_at || y.ts) - (x.resolved_at || x.ts))
+            const day = (ts) => new Date(ts * 1000).toLocaleDateString()
+            const row = (r) => {
+              const waiting = r.status === 'open'
+              const verdict = waiting ? 'Waiting for review'
+                : r.outcome === 'removed' ? 'Content removed'
+                : r.outcome === 'no_change' ? 'Reviewed, no change'
+                : 'Reviewed'
+              return (
+                <div key={r.id} className="fav-item report-item">
+                  <span className="fav-info">
+                    <span className="fav-icon fav-icon--flag"><FlagIcon width={16} height={16} /></span>
+                    <span className="fav-text">
+                      <span className="fav-title fav-title--wrap">{r.content_title}</span>
+                      <span className="report-reason report-reason--wrap">{r.reason}</span>
+                      {r.note && <span className="report-reply"><b>Note from our team:</b> {r.note}</span>}
+                    </span>
+                  </span>
+                  <span className="report-meta">
+                    <span className={`badge ${waiting ? 'badge-pending' : r.outcome === 'removed' ? 'badge-approved' : 'badge-neutral'}`}>{verdict}</span>
+                    <span className="report-date">Reported {day(r.ts)}</span>
+                    {!waiting && r.resolved_at && <span className="report-date">Reviewed {day(r.resolved_at)}</span>}
+                  </span>
+                </div>
+              )
+            }
+            const both = waitingList.length > 0 && reviewedList.length > 0
+            return (
+              <>
+                {waitingList.length > 0 && (
+                  <section className="report-group">
+                    {both && <h4 className="report-group-label">Waiting for review ({waitingList.length})</h4>}
+                    {waitingList.map(row)}
+                  </section>
+                )}
+                {reviewedList.length > 0 && (
+                  <section className="report-group">
+                    {both && <h4 className="report-group-label">Reviewed ({reviewedList.length})</h4>}
+                    {reviewedList.map(row)}
+                  </section>
+                )}
+              </>
+            )
+          })()}
 
           {!loading && view === 'insights' && data.map((t, i) => (
-            <div key={i}>
-              {/* A glance, not a paragraph — same stat-tile pattern the
-                  Admin console's System Health uses, so a parent scanning
-                  for "is everything okay" doesn't have to read a sentence
-                  to get three numbers. */}
-              <div className="stat-grid">
-                <div className="stat"><div className="stat-num">{t.total_messages}</div><div className="stat-label">Messages</div></div>
-                <div className="stat"><div className="stat-num">{t.total_recommendations}</div><div className="stat-label">Recommendations</div></div>
-                <div className="stat"><div className="stat-num">{t.favourites_count}</div><div className="stat-label">Favourites</div></div>
-              </div>
-              {t.total_messages < 3
-                ? <p className="muted" style={{ marginTop: 10 }}>Not enough activity yet to show trends — check back after a few more chats.</p>
-                : (
-                  <p className="muted" style={{ marginTop: 10 }}>
-                    Top genres: <b style={{ color: 'var(--ink)' }}>{t.top_genres.join(', ') || '—'}</b>
-                  </p>
-                )}
-            </div>
+            <InsightsPanel key={i} trends={t} childName={child.name} />
           ))}
         </div>
       )}
@@ -1524,9 +2244,9 @@ function ChildCard({ child, account, onChanged }) {
 // PA08 — Edit Child Profile
 function EditChild({ child, onDone }) {
   const [name, setName] = useState(child.name)
-  const [ageBand, setAgeBand] = useState(child.age_band)
+  const [dob, setDob] = useState(child.dob || '')
   const [gender, setGender] = useState(child.gender || '')
-  const [interests, setInterests] = useState(child.interests || [])
+  const [interests, setInterests] = useState((child.interests || []).filter((i) => INTEREST_OPTIONS.includes(i)))
   const [readingLevel, setReadingLevel] = useState(child.reading_level || '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -1535,10 +2255,14 @@ function EditChild({ child, onDone }) {
     e.preventDefault()
     const missing = firstMissingField([[name, "Child's name"]])
     if (missing) { setError(missing); return }
+    if (dobRangeProblem(dob)) { setError(dobRangeProblem(dob)); return }
     setError(''); setBusy(true)
+    // A profile made before dates of birth existed keeps its stored age band
+    // until a date is entered; once there is one, the band follows it.
     const payload = {
-      name, age_band: ageBand, reading_level: readingLevel || null,
+      name, reading_level: readingLevel || null,
       gender: gender || null, interests,
+      ...(dob ? { dob } : {}),
     }
     try {
       await updateChild(child.id, payload)
@@ -1560,12 +2284,15 @@ function EditChild({ child, onDone }) {
       <label>Name
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
-      <label>Age band
-        <Select value={ageBand} onChange={(e) => setAgeBand(e.target.value)}>
-          <option value="5-8">5–8</option>
-          <option value="9-12">9–12</option>
-        </Select>
-      </label>
+      <div className="field-group">
+        <span className="field-group-label">Date of birth</span>
+        <DobPicker value={dob} onChange={setDob} />
+        <span className="field-hint">
+          {child.dob
+            ? 'The age band Pip uses updates automatically as they grow.'
+            : `Currently set to ages ${child.age_band}. Add a date of birth to keep it up to date automatically.`}
+        </span>
+      </div>
       <label>Gender
         <Select value={gender} onChange={(e) => setGender(e.target.value)}>
           <option value="">Prefer not to say</option>
@@ -1639,13 +2366,19 @@ function SafetySettings({ child, onDone }) {
 // list is the natural "done" signal.
 function ChildDataPrivacy({ child }) {
   const [requests, setRequests] = useState([])
+  const [counts, setCounts] = useState(null)
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
 
   async function load() {
     try { setRequests(await listChildDataDeletions(child.id)) } catch { /* ignore */ }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    Promise.all([childActivity(child.id), childFavourites(child.id)])
+      .then(([activity, favs]) => setCounts({ messages: activity.length, favourites: favs.length }))
+      .catch(() => {})
+  }, [])
 
   async function request() {
     setBusy(true)
@@ -1657,33 +2390,61 @@ function ChildDataPrivacy({ child }) {
     await load()
   }
 
+  const fmt = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
   const pending = requests.find((r) => r.status === 'pending')
+  const past = requests.filter((r) => r.status !== 'pending')
+  const daysLeft = pending ? Math.max(0, Math.ceil((pending.scheduled_for * 1000 - Date.now()) / 86400000)) : 0
 
   return (
     <div className="panel panel--flat">
-      <p className="muted">Request deletion of {child.name}'s stored chat history and favourites (separate from deleting the whole profile).</p>
-      {pending ? (
-        <>
-          <p className="muted"><ClockIcon width={14} height={14} /> Deletion scheduled for {new Date(pending.scheduled_for * 1000).toLocaleDateString()}.</p>
-          <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
-        </>
-      ) : confirming ? (
-        <div className="row inline-confirm">
-          <span>Delete {child.name}'s chat history and favourites? Scheduled for 7 days out — cancellable any time before then.</span>
-          <button className="danger small" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Yes, request deletion'}</button>
-          <button className="ghost small" onClick={() => setConfirming(false)}>Cancel</button>
-        </div>
-      ) : (
-        <div className="row"><button className="danger" onClick={() => setConfirming(true)}>Delete child data</button></div>
-      )}
-      {requests.filter((r) => r.status !== 'pending').length > 0 && (
-        <>
-          <p className="muted" style={{ marginTop: 10 }}>History:</p>
-          {requests.filter((r) => r.status !== 'pending').map((r) => (
-            <p key={r.id} className="muted">{r.status} — requested {new Date(r.requested_at * 1000).toLocaleDateString()}</p>
-          ))}
-        </>
-      )}
+      <div className="data-panel">
+        <p className="insights-lead">What Pip keeps about {child.name}</p>
+        <p className="data-intro">Chat history and saved favourites, so you can look back on them. You can ask for these to be deleted without removing the profile itself.</p>
+
+        {counts && (
+          <div className="insights-tiles">
+            <div className="insights-tile"><span className="insights-num">{counts.messages}</span><span className="insights-label">chat messages</span></div>
+            <div className="insights-tile insights-tile--warm"><span className="insights-num">{counts.favourites}</span><span className="insights-label">saved favourites</span></div>
+          </div>
+        )}
+
+        {pending ? (
+          <section className="data-box data-box--pending">
+            <h4><ClockIcon width={16} height={16} /> Deletion scheduled for {fmt(pending.scheduled_for)}</h4>
+            <p>{daysLeft > 1 ? `${daysLeft} days to go.` : daysLeft === 1 ? 'Tomorrow.' : 'Due today.'} Changed your mind? Cancel any time before then and nothing is removed.</p>
+            <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
+          </section>
+        ) : (
+          <section className="data-box data-box--danger">
+            <h4>Delete {child.name}'s data</h4>
+            {confirming ? (
+              <>
+                <p>This removes {child.name}'s chat history and favourites. It runs in 7 days, and you can cancel before then.</p>
+                <div className="row">
+                  <button className="danger solid" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Yes, request deletion'}</button>
+                  <button className="ghost" onClick={() => setConfirming(false)}>Not now</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>Deletion is scheduled 7 days out, so there is time to change your mind.</p>
+                <div className="row"><button className="danger" onClick={() => setConfirming(true)}>Delete child data</button></div>
+              </>
+            )}
+          </section>
+        )}
+
+        {past.length > 0 && (
+          <section className="insights-box">
+            <h4>Earlier requests</h4>
+            <ul className="data-history">
+              {past.map((r) => (
+                <li key={r.id}><span className="data-history-status">{r.status}</span><span>requested {fmt(r.requested_at)}</span></li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
     </div>
   )
 }

@@ -4,16 +4,18 @@ import {
   getToken, getMe, login, logout,
   adminStats, adminSearchUsers, adminUserDetails, adminResetPassword, adminSuspend, adminUnsuspend,
   adminGetConfig, adminSetConfig, adminTickets, adminResolveTicket,
-  adminListReviews,
+  adminListReviews, adminApproveReview, adminRejectReview, adminDeleteReview,
 } from '../api'
 import {
   AlertIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, FlagIcon, GridIcon, HeartIcon,
-  LifeBuoyIcon, LockIcon, RefreshIcon, SettingsIcon, StarIcon, UserIcon, UsersIcon,
+  LifeBuoyIcon, LockIcon, RefreshIcon, SettingsIcon, SparkleIcon, StarIcon, TrashIcon, UserIcon, UsersIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
+import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
+import ConfirmDialog from '../components/ConfirmDialog'
 import PromptDialog from '../components/PromptDialog'
 import { firstMissingField } from '../formValidation'
 import { timeAgo, logTime } from '../timeFormat'
@@ -131,6 +133,7 @@ function AdminLogin({ onAuthed }) {
 const ADMIN_TABS = [
   { key: 'overview', label: 'Overview', icon: ChartIcon },
   { key: 'users', label: 'Users', icon: UsersIcon },
+  { key: 'reviews', label: 'Reviews', icon: StarIcon, countKey: 'reviewsPending' },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
   { key: 'support', label: 'Support', icon: LifeBuoyIcon, countKey: 'ticketsOpen' },
 ]
@@ -139,15 +142,15 @@ function Tools({ account, onLogout }) {
   const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
   const [toast, notify] = useToast()
-  // Same idea as the moderator console's tab badges — an open-ticket count
-  // on the Support tab, so an admin sees what's waiting without opening
-  // every tab in turn.
-  const [counts, setCounts] = useState({ ticketsOpen: 0 })
+  // Same idea as the moderator console's tab badges — a pending-review
+  // count and an open-ticket count on the Reviews/Support tabs, so an
+  // admin sees what's waiting without opening every tab in turn.
+  const [counts, setCounts] = useState({ reviewsPending: 0, ticketsOpen: 0 })
 
   async function refreshCounts() {
     try {
-      const s = await adminStats()
-      setCounts({ ticketsOpen: s.tickets_open })
+      const [reviews, s] = await Promise.all([adminListReviews('pending'), adminStats()])
+      setCounts({ reviewsPending: reviews.length, ticketsOpen: s.tickets_open })
     } catch {
       // Best-effort — badges just stay at their last known value.
     }
@@ -185,6 +188,7 @@ function Tools({ account, onLogout }) {
       <div className="tab-panel" key={tab}>
         {tab === 'overview' && <Overview onNavigate={setTab} />}
         {tab === 'users' && <Users notify={notify} />}
+        {tab === 'reviews' && <Reviews notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'settings' && <Settings notify={notify} />}
         {tab === 'support' && <Support notify={notify} onCountsChange={refreshCounts} />}
       </div>
@@ -247,7 +251,7 @@ function Overview({ onNavigate }) {
     { label: 'Parents', val: s.parents, icon: UsersIcon, nav: 'users', tone: 'success' },
     { label: 'Children', val: s.children, icon: HeartIcon, tone: 'pink' },
     { label: 'Suspended', val: s.suspended, icon: LockIcon, nav: 'users', tone: 'danger' },
-    { label: 'Reviews pending', val: reviewStats.pending, icon: StarIcon, tone: 'amber' },
+    { label: 'Reviews pending', val: reviewStats.pending, icon: StarIcon, nav: 'reviews', tone: 'amber' },
     { label: 'Open tickets', val: s.tickets_open, icon: LifeBuoyIcon, nav: 'support', tone: 'teal' },
     { label: 'Catalogue', val: s.content_total, icon: GridIcon, tone: 'indigo' },
     { label: 'Open reports', val: s.reports_open, icon: FlagIcon, tone: 'orange' },
@@ -528,10 +532,7 @@ const CONFIG_SECTIONS = [
     { name: 'provider', label: 'Payment provider', type: 'text' },
     { name: 'currency', label: 'Currency', type: 'text' },
     // These are the real prices `subscribe()` charges (see storage.py's
-    // `subscribe()` docstring). A 2nd, "Ultra" price pair existed briefly
-    // (2026-09-07) — held back out of the prototype for now, planned for
-    // the final product instead (Kiefer's call, 2026-09-23; see
-    // ParentDashboard.jsx's TIER_INFO comment).
+    // `subscribe()` docstring).
     { name: 'premium_monthly_price', label: 'Premium — monthly price', type: 'number' },
     { name: 'premium_annual_price', label: 'Premium — annual price', type: 'number' },
     { name: 'billing_enabled', label: 'Billing enabled', type: 'bool' },
@@ -619,6 +620,220 @@ function ConfigCard({ section, notify }) {
 }
 
 // SA14 — escalated support tickets
+// UV04 — the human gate behind account.py's AI safety screen: a review
+// only reaches the public landing page once an admin explicitly approves
+// it here, same "human still decides" shape as the moderator's own
+// catalogue queue (CM06-08), just for review text instead of a book/video.
+const REVIEW_SORTS = {
+  ai_first: { label: 'AI-recommended first', fn: (a, b) => Number(b.ai_recommend === true) - Number(a.ai_recommend === true) || b.rating - a.rating || b.created_at - a.created_at },
+  newest: { label: 'Newest first', fn: (a, b) => b.created_at - a.created_at },
+  rating_desc: { label: 'Highest rated first', fn: (a, b) => b.rating - a.rating || b.created_at - a.created_at },
+  rating_asc: { label: 'Lowest rated first', fn: (a, b) => a.rating - b.rating || b.created_at - a.created_at },
+}
+
+function Reviews({ notify, onCountsChange }) {
+  const [status, setStatus] = useState('pending')
+  const [sort, setSort] = useState('ai_first')
+  // A pending queue with 100+ reviews isn't realistic to read one by one —
+  // this narrows straight to app/ai_assist.py's suggest_review picks
+  // without hiding anything permanently: it's a client-side filter over
+  // the same fetched list, one click away from turning back off, and the
+  // admin still makes every actual approve/reject call themselves.
+  const [aiOnly, setAiOnly] = useState(false)
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [leaving, setLeaving] = useState(null)
+  // Delete and Unpublish are both hard to walk back (delete outright,
+  // unpublish pulls something off the live landing page right away) —
+  // one shared confirm step for both instead of acting straight from the
+  // click, and a themed dialog instead of the browser's own bare
+  // window.confirm() popup.
+  const [confirming, setConfirming] = useState(null) // { type: 'delete'|'unpublish', review }
+
+  async function reload() {
+    setLoading(true)
+    try { setItems(await adminListReviews(status)) } finally { setLoading(false) }
+  }
+  useEffect(() => { reload() }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function act(r, fn, message, tone) {
+    setLeaving(r.id)
+    try {
+      await fn(r.id)
+      notify?.(message, tone)
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+      setLeaving(null)
+      return
+    }
+    // Same fix as Support's resolve() below (and Moderator's Reports tab
+    // originally) — clear `leaving` only once the post-fade reload has
+    // actually landed, not on a bare timer, so a row that's still on
+    // screen after reload (e.g. this list's own current status filter no
+    // longer excluding it for some reason) can't get stuck invisible.
+    setTimeout(async () => {
+      await reload()
+      setLeaving(null)
+    }, 220)
+  }
+
+  async function del(r) {
+    setLeaving(r.id)
+    try {
+      await adminDeleteReview(r.id)
+      notify?.(`${r.parent_name}’s review deleted.`, 'danger')
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+      setLeaving(null)
+      return
+    }
+    setTimeout(async () => {
+      await reload()
+      setLeaving(null)
+    }, 220)
+  }
+
+  function confirmPending() {
+    const pending = confirming
+    setConfirming(null)
+    if (!pending) return
+    if (pending.type === 'delete') del(pending.review)
+    else act(pending.review, adminRejectReview, `${pending.review.parent_name}’s review unpublished.`, 'danger')
+  }
+
+  const aiRecommendedCount = items.filter((r) => r.ai_recommend === true).length
+  const filtered = aiOnly ? items.filter((r) => r.ai_recommend === true) : items
+  const sorted = [...filtered].sort(REVIEW_SORTS[sort].fn)
+
+  return (
+    <section>
+      <h2><StarIcon width={20} height={20} /> Parent reviews</h2>
+      <p className="muted">Approved reviews show on the public landing page, best-rated first — up to 10 at a time.</p>
+      <div className="row" style={{ marginBottom: 12, justifyContent: 'space-between' }}>
+        <div className="tabs" style={{ margin: 0 }}>
+          {['pending', 'approved', 'rejected'].map((s) => (
+            <button key={s} className={status === s ? 'tab active' : 'tab'} onClick={() => setStatus(s)}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="row" style={{ gap: 'var(--space-4)' }}>
+          {aiRecommendedCount > 0 && (
+            <label className="toggle" style={{ padding: 0 }}>
+              <input type="checkbox" checked={aiOnly} onChange={(e) => setAiOnly(e.target.checked)} />
+              <SparkleIcon width={14} height={14} /> AI-recommended only ({aiRecommendedCount})
+            </label>
+          )}
+          <label style={{ flexDirection: 'row', alignItems: 'center', gap: 'var(--space-2)' }}>
+            Sort by
+            <Select value={sort} onChange={(e) => setSort(e.target.value)}>
+              {Object.entries(REVIEW_SORTS).map(([key, { label }]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </Select>
+          </label>
+        </div>
+      </div>
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && sorted.length === 0 && (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> {aiOnly ? 'No AI-recommended reviews in this filter.' : `No ${status} reviews.`}</p>
+      )}
+      {sorted.map((r) => (
+        <div className={`card ${leaving === r.id ? 'card-leaving' : ''}`} key={r.id}>
+          <div className="child-top">
+            <div>
+              <h3 className="item-title">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <StarIcon key={i} width={14} height={14} filled={i < r.rating} />
+                ))}
+              </h3>
+              <p className="muted">by {r.parent_name}</p>
+              <p className="muted">
+                {r.reviewed_at ? (
+                  <>{r.status === 'approved' ? 'Approved' : 'Rejected'} {timeAgo(r.reviewed_at)}{r.reviewed_by && ` — ${r.reviewed_by}`}</>
+                ) : (
+                  <>Submitted {timeAgo(r.created_at)}</>
+                )}
+              </p>
+            </div>
+            <span className={`badge badge-${r.status === 'approved' ? 'approved' : r.status === 'rejected' ? 'rejected' : 'pending'}`}>{r.status}</span>
+          </div>
+          {/* Closes a real gap: "approved" only means it passed the human
+              gate — the landing page then caps at the best 10
+              (storage.public_reviews), so an approved review can still be
+              invisible to visitors with no signal of that anywhere. */}
+          {r.status === 'approved' && (
+            r.published
+              ? <p className="muted">Live on the landing page</p>
+              : <div className="ai-note ai-note--skip">
+                  <FlagIcon width={15} height={15} />
+                  <span><b>Approved, but not shown</b> — the landing page only displays the best 10 reviews and this one didn’t make the cut. Unpublish an older one to free a slot, or leave it — it’ll surface on its own if another review is removed.</span>
+                </div>
+          )}
+          <p>{r.text}</p>
+          {r.rejection_reason && <p className="muted">Reason: {r.rejection_reason}</p>}
+          {/* UV04/admin triage aid (app/ai_assist.py) — advisory only, see
+              REVIEW_SORTS/aiOnly above for the filter this backs. */}
+          {r.ai_recommend !== null && r.ai_recommend !== undefined && (
+            <div className={`ai-note ${r.ai_recommend ? 'ai-note--recommend' : 'ai-note--skip'}`}>
+              <SparkleIcon width={15} height={15} />
+              <span>
+                <b>AI suggests: {r.ai_recommend ? 'Feature this' : 'Skip'}</b>
+                {r.ai_reason && <> — {r.ai_reason}</>}
+              </span>
+            </div>
+          )}
+          {r.status !== 'approved' && (
+            <div className="row">
+              <button className="success small" disabled={leaving === r.id}
+                onClick={() => act(r, adminApproveReview, `${r.parent_name}’s review approved — now live on the landing page.`)}>
+                <CheckIcon width={14} height={14} /> Approve
+              </button>
+              {r.status !== 'rejected' && (
+                <button className="danger small" disabled={leaving === r.id}
+                  onClick={() => act(r, adminRejectReview, `${r.parent_name}’s review rejected.`, 'danger')}>
+                  <CloseIcon width={14} height={14} /> Reject
+                </button>
+              )}
+              <button className="small" disabled={leaving === r.id}
+                onClick={() => setConfirming({ type: 'delete', review: r })}>
+                <TrashIcon width={14} height={14} /> Delete
+              </button>
+            </div>
+          )}
+          {r.status === 'approved' && (
+            <div className="row">
+              <button className="danger small" disabled={leaving === r.id}
+                onClick={() => setConfirming({ type: 'unpublish', review: r })}>
+                <CloseIcon width={14} height={14} /> Unpublish
+              </button>
+              <button className="small" disabled={leaving === r.id}
+                onClick={() => setConfirming({ type: 'delete', review: r })}>
+                <TrashIcon width={14} height={14} /> Delete
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+      <ConfirmDialog
+        open={!!confirming}
+        icon={confirming?.type === 'delete' ? <TrashIcon width={20} height={20} /> : <AlertIcon width={20} height={20} />}
+        title={confirming?.type === 'delete' ? 'Delete this review?' : 'Unpublish this review?'}
+        message={
+          confirming?.type === 'delete'
+            ? `This permanently removes ${confirming?.review.parent_name}’s review. This can’t be undone.`
+            : `${confirming?.review.parent_name}’s review will come off the public landing page right away. You can re-approve it later if you change your mind.`
+        }
+        confirmLabel={confirming?.type === 'delete' ? 'Delete review' : 'Unpublish'}
+        onConfirm={confirmPending}
+        onCancel={() => setConfirming(null)}
+      />
+    </section>
+  )
+}
+
 function Support({ notify, onCountsChange }) {
   const [tix, setTix] = useState([])
   const [loading, setLoading] = useState(true)

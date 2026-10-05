@@ -19,6 +19,7 @@ os.environ["FIREBASE_PROJECT_ID"] = ""
 os.environ["FIREBASE_ADMIN_CREDENTIALS_PATH"] = "/nonexistent/firebase-admin.json"
 os.environ["GOOGLE_BOOKS_API_KEY"] = ""
 os.environ["YOUTUBE_DATA_API_KEY"] = ""
+os.environ["RESEND_API_KEY"] = ""  # never email anyone from the test suite
 os.environ["INPUT_MODERATION_ENABLED"] = "false"  # no key -> no-op anyway, explicit for clarity
 os.environ["EMAIL_DOMAIN_CHECK_ENABLED"] = "false"  # no real DNS lookups from a free, deterministic suite
 

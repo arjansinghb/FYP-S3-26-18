@@ -407,11 +407,8 @@
 .how-list p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-body); color: var(--text); }
 
 /* ---------- plans ---------- */
-/* Sized for exactly 2 cards (Free/Premium). A 3rd "Ultra" tier briefly grew
-   this to 1000px (2026-09-07) — reverted back to 660px alongside Ultra
-   itself being held back out of the prototype (2026-09-23, see
-   ParentDashboard.jsx's TIER_INFO comment). Still wraps to fewer columns on
-   a narrower viewport via auto-fit, same as before. */
+/* Sized for exactly 2 cards (Free/Premium). Wraps to fewer columns on a
+   narrower viewport via auto-fit. */
 .plan-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-5); max-width: 660px; margin: 0 auto;
 }

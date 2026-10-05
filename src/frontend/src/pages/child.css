@@ -386,3 +386,159 @@
    moment a child is already engaged enough to have opened it. Own margin
    so it reads as a distinct next-step, not glued to the description text. */
 .overlay-more-like { margin-top: var(--space-4); }
+
+/* ---------- Ask Pip / Browse: two equal ways in ---------- */
+/* Same full-bleed-bar-with-capped-content trick as .child-bar. Both buttons
+   are the same size on purpose: Browse is a second front door, not a
+   fallback for the chat. */
+.mode-switch {
+  display: flex; gap: var(--space-3); width: 100%;
+  padding: var(--space-2) max(var(--space-5), calc((100% - 1100px) / 2));
+}
+.mode-switch button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  font: inherit; font-size: var(--text-sm); font-weight: 800; padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill); border: 2px solid var(--primary-border);
+  background: var(--surface); color: var(--primary-700); cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.mode-switch button:hover:not(:disabled) { background: var(--primary-100); border-color: var(--primary-500); color: var(--primary-700); }
+.mode-switch button.on, .mode-switch button.on:hover:not(:disabled) { background: var(--primary-700); border-color: var(--primary-700); color: var(--on-primary); }
+
+/* ---------- level chip (top bar) and card (Library) ---------- */
+.level-chip {
+  display: inline-flex; align-items: center; gap: 8px; margin-left: var(--space-2); vertical-align: middle;
+  color: var(--lv-700); background: var(--lv-100); border: 1px solid var(--lv-border);
+  border-radius: var(--radius-pill); padding: 3px 14px 3px 3px; font-weight: 400;
+}
+.level-ring { flex: none; }
+.level-ring-track { fill: var(--surface); stroke: var(--lv-border); stroke-width: 4; }
+.level-ring-fill { fill: none; stroke: var(--lv-700); stroke-width: 4; stroke-linecap: round; }
+.level-ring text { fill: var(--lv-700); font-size: 14px; font-weight: 800; }
+.level-chip-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.1; }
+.level-chip-name { font-size: var(--text-sm); font-weight: 800; }
+.level-chip-sub { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 640px) { .level-chip-next { display: none; } }
+
+.level-card {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); flex-wrap: wrap;
+  background: var(--lv-100); border-radius: var(--radius-lg); padding: var(--space-5) var(--space-6); margin-bottom: var(--space-6);
+}
+.level-card-main { min-width: 0; flex: 1 1 280px; }
+.level-card-kicker { margin: 0; font-size: var(--text-xs); font-weight: 700; color: var(--muted); }
+.level-card-name { margin: 2px 0 var(--space-2); font-size: var(--text-xl); font-weight: 800; color: var(--lv-700); }
+.level-card-text { margin: 0 0 var(--space-2); color: var(--ink); max-width: 46ch; }
+.level-card-next { margin: 0; font-size: var(--text-sm); color: var(--ink); max-width: 46ch; }
+.level-card-next-line { display: block; text-wrap: balance; }
+.level-card-next-line--lead { font-weight: 800; color: var(--lv-700); margin-bottom: 2px; }
+.level-steps { display: flex; gap: var(--space-5); list-style: none; margin: 0; padding: 0; }
+.level-step { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--muted); font-size: var(--text-xs); font-weight: 700; }
+.level-step-dot {
+  width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--surface); border: 2px solid var(--lv-border); color: var(--muted); font-weight: 800;
+}
+.level-step--done .level-step-dot { background: var(--lv-700); border-color: var(--lv-700); color: var(--on-primary); }
+.level-step--now .level-step-dot { background: var(--lv-700); border-color: var(--lv-700); color: var(--on-primary); }
+.level-step--now, .level-step--done { color: var(--lv-700); }
+
+/* ---------- Library: tell Pip about this ---------- */
+.library-card-action--explain { width: 100%; background: var(--amber-100); border-color: transparent; color: var(--amber-700); }
+.library-card-action--explain:hover:not(:disabled) { background: var(--amber-700); color: var(--on-primary); }
+.told-pip { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--text-xs); font-weight: 700; color: var(--success-700); }
+.library-card-action--on, .library-card-action--on:hover:not(:disabled) { background: var(--primary-700); color: var(--on-primary); }
+
+/* ---------- Browse ---------- */
+.browse-view {
+  flex: 1; min-height: 0; overflow-y: auto; max-width: 1240px; width: 100%; margin: 0 auto;
+  padding: var(--space-4) var(--space-5) var(--space-8);
+}
+.browse-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-5); }
+.browse-head h2 { margin: 0; font-size: var(--text-xl); font-weight: 800; color: var(--ink); }
+.type-toggle { display: inline-flex; background: var(--primary-100); border-radius: var(--radius-pill); padding: 4px; gap: 4px; }
+.type-toggle button {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: var(--text-sm); font-weight: 800;
+  padding: var(--space-2) var(--space-4); border-radius: var(--radius-pill); border: 0; background: transparent; color: var(--primary-700); cursor: pointer;
+}
+.type-toggle button:hover:not(:disabled) { background: color-mix(in srgb, var(--primary-700) 12%, transparent); color: var(--primary-700); }
+.type-toggle button.on, .type-toggle button.on:hover:not(:disabled) { background: var(--primary-700); color: var(--on-primary); }
+.browse-section { margin-bottom: var(--space-6); }
+.browse-section h3 { margin: 0 0 var(--space-3); font-size: var(--text-lg); font-weight: 800; color: var(--ink); }
+.browse-row { display: flex; gap: var(--space-4); overflow-x: auto; padding-bottom: var(--space-2); scroll-snap-type: x proximity; }
+.browse-row .library-card { flex: 0 0 200px; scroll-snap-align: start; }
+.browse-actions { flex-wrap: wrap; }
+.browse-actions .library-card-action:first-child { flex: 0 0 auto; }
+.browse-more { display: flex; justify-content: center; margin-top: var(--space-5); }
+
+.category-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
+.category-tile {
+  --tone-700: var(--primary-700); --tone-100: var(--primary-100);
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); text-align: left;
+  font: inherit; padding: var(--space-4); border-radius: var(--radius-lg); border: 2px solid transparent;
+  background: var(--tone-100); color: var(--tone-700); cursor: pointer; transition: transform 0.12s, border-color 0.12s;
+}
+.category-tile--blue { --tone-700: var(--blue-700); --tone-100: var(--blue-100); }
+.category-tile--teal { --tone-700: var(--teal-700); --tone-100: var(--teal-100); }
+.category-tile--orange { --tone-700: var(--orange-700); --tone-100: var(--orange-100); }
+.category-tile--pink { --tone-700: var(--pink-700); --tone-100: var(--pink-100); }
+.category-tile:hover:not(:disabled) { background: var(--tone-100); color: var(--tone-700); transform: translateY(-2px); }
+.category-tile--on, .category-tile--on:hover:not(:disabled) { border-color: var(--tone-700); }
+.category-name { font-size: var(--text-lg); font-weight: 800; line-height: 1.1; }
+.category-count { font-size: var(--text-xs); font-weight: 700; opacity: 0.8; }
+
+/* ---------- Tell Pip about this (overlay) ---------- */
+.explain-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.explain-prompt { margin: 0; color: var(--ink); }
+.explain-box {
+  width: 100%; font: inherit; font-size: var(--text-sm); padding: var(--space-3) var(--space-4); resize: vertical;
+  border: 2px solid var(--primary-border); border-radius: var(--radius-md); background: var(--surface); color: var(--ink);
+}
+.explain-box:focus { outline: none; border-color: var(--primary-700); }
+.explain-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.explain-reply { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); text-align: center; }
+.explain-reply-text { margin: 0; font-size: var(--text-sm); color: var(--ink); max-width: 38ch; line-height: 1.5; }
+
+@media (max-width: 640px) {
+  .mode-switch { padding: var(--space-2) var(--space-4); }
+  .level-card { padding: var(--space-4); }
+  .level-steps { gap: var(--space-4); }
+  .browse-view { padding: var(--space-3) var(--space-4) var(--space-8); }
+}
+@media (prefers-reduced-motion: reduce) { .category-tile { transition: none; } }
+
+/* ---------- header on narrower screens ---------- */
+/* The logo is pinned to the bar's far corner and "Hi, name!" sits inside the
+   centered 1100px column. Below ~1180px those two overlap, and the button
+   row (nudged out with a negative margin) spills past the screen. Under that
+   width the bar becomes a normal flowing row instead. */
+@media (max-width: 1179px) {
+  .child-bar { justify-content: flex-start; flex-wrap: wrap; row-gap: var(--space-2); }
+  .child-brand { position: static; transform: none; }
+  .child-bar .who { margin-left: 0; }
+  .child-bar .bar-btns { margin-left: auto; margin-right: 0; }
+}
+@media (max-width: 640px) {
+  .child-bar { padding: var(--space-3) var(--space-4); }
+  .child-bar .bar-btns { width: 100%; margin-left: 0; gap: 6px; }
+  .child-bar .bar-btns .pill { flex: 1 1 auto; justify-content: center; padding: var(--space-2) var(--space-3); font-size: var(--text-xs); }
+}
+
+/* ---------- short screens (small laptops) ---------- */
+/* A recommendation card is a cover, a title, tags, a reason and four buttons.
+   On a ~640px-tall window that left barely a sliver of it visible. Shorter
+   cover and tighter padding so a whole card fits without scrolling. */
+@media (max-height: 760px) {
+  .rec-card { padding: var(--space-3); }
+  .rec-card--top { padding: calc(var(--space-3) - 1px); }
+  .rec-cover { height: 104px; margin-bottom: var(--space-2); }
+  .rec-cover--book { padding: var(--space-2); }
+  .rec-title { font-size: var(--text-sm); }
+}
+@media (max-height: 760px) {
+  .child-bar { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+  .chat-input-bar { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+}
+@media (max-height: 700px) {
+  .child-screen .chat-presence--compact { padding: var(--space-1) 0; }
+  .child-screen .chat-presence--compact .avatar { width: 40px; height: 40px; }
+  .child-screen .rec-cover { height: 88px; }
+}

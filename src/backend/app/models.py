@@ -1,8 +1,9 @@
 """Request/response shapes (Pydantic). These define the API's contract."""
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 AgeBand = Literal["5-8", "9-12"]
+ArticulationLevel = Literal["explorer", "adventurer", "storyteller"]
 ContentType = Literal["book", "video"]
 # Optional, parent-supplied, never required — a child profile is valid with
 # neither set. "prefer_not_to_say" is a real, first-class choice here (not
@@ -18,13 +19,8 @@ Gender = Literal["girl", "boy", "prefer_not_to_say"]
 # self-consistent with real content without the backend having to enforce
 # it structurally.
 Interests = list[str]
-# PA33/34/35 gating. A 3rd "ultra" tier (added 2026-09-07, same Premium
-# features plus unlimited child profiles) is deliberately held back out of
-# this prototype for now — planned for the final product instead (Kiefer's
-# call, 2026-09-23). Every "!= premium" gate elsewhere in the app was
-# audited to "== free" when ultra existed, precisely so it's still correct
-# with ultra gone: "== free" only ever meant "free vs. anything paid", never
-# hardcoded a specific paid tier's name.
+# PA33/34/35 gating. Gates elsewhere in the app check "== free" ("free vs.
+# anything paid"), never a specific paid tier's name.
 AccountTier = Literal["free", "premium"]
 
 # ----- accounts / auth -----
@@ -212,12 +208,25 @@ class ContentOverrideOut(BaseModel):
 # ----- PA31/32 premium insights -----
 
 
+class GenreCount(BaseModel):
+    genre: str
+    count: int
+
+
 class ChildTrendsOut(BaseModel):
     child_id: str
     total_messages: int
     total_recommendations: int
     favourites_count: int
     top_genres: list[str] = []
+    # Richer breakdown behind the Insights tab's charts. Timestamps (not
+    # pre-bucketed days) so the browser can bucket by the parent's own
+    # timezone instead of the server's.
+    genre_counts: list[GenreCount] = []
+    books_recommended: int = 0
+    videos_recommended: int = 0
+    message_timestamps: list[float] = []
+    interests: list[str] = []  # what the parent declared, to compare against what they actually read
 
 
 class ChildComparisonOut(BaseModel):
@@ -240,7 +249,11 @@ class ChildCreate(BaseModel):
     (nothing about this code needs to be memorable to the parent — it's
     read off the dashboard and handed to the child, not typed from memory)."""
     name: str
-    age_band: AgeBand
+    # Date of birth is what the form asks for now; the age band is derived
+    # from it (profile.band_from_dob). `age_band` alone is still accepted so
+    # older clients and tests keep working, but one of the two is required.
+    dob: Optional[str] = None  # ISO YYYY-MM-DD
+    age_band: Optional[AgeBand] = None
     reading_level: Optional[str] = None
     # Both optional, requested by the assessor so the profile captures more
     # than the bare minimum needed to *gate* content (age_band) — gender and
@@ -250,12 +263,19 @@ class ChildCreate(BaseModel):
     gender: Optional[Gender] = None
     interests: Interests = []
 
+    @model_validator(mode="after")
+    def _needs_dob_or_band(self):
+        if not self.dob and not self.age_band:
+            raise ValueError("Enter your child's date of birth.")
+        return self
+
 
 class ChildUpdate(BaseModel):
     """No `pin` field here either — see ChildCreate's docstring. A parent
     resets the code via POST /children/{id}/regenerate-pin instead of typing
     a replacement value, for the same reason."""
     name: Optional[str] = None
+    dob: Optional[str] = None
     age_band: Optional[AgeBand] = None
     reading_level: Optional[str] = None
     gender: Optional[Gender] = None
@@ -283,6 +303,13 @@ class ChildOut(BaseModel):
     reading_level: Optional[str]
     gender: Optional[Gender] = None
     interests: Interests = []
+    dob: Optional[str] = None
+    # Earned, separate from the parent-set `reading_level` above: reading
+    # level drives how hard the content is, articulation level is how well
+    # the child explains what they read (see routers/articulation.py).
+    articulation_level: ArticulationLevel = "explorer"
+    articulation_progress: int = 0  # confirmations toward the next level (0-2)
+    pending_explanations: int = 0   # waiting for the parent to confirm or decline
     login_id: str
     pin: str
     avatar: str
@@ -346,7 +373,7 @@ class AuditDecision(BaseModel):
 
 class BulkImportRequest(BaseModel):
     topic: str
-    type: ContentType
+    type: Literal["book", "video", "any"]  # "any": no format was asked for, so search both
     limit: int = 10
     auto_approve: bool = True
 
@@ -506,11 +533,110 @@ class ReportOut(BaseModel):
     content_id: str
     content_title: str
     content_type: Optional[Literal["book", "video"]] = None  # None if the content was since removed
+    thumbnail: Optional[str] = None  # cover image, for the moderator's report cards
     reason: str
     status: str
     ts: float
     resolved_at: Optional[float] = None  # set once, in resolve_report() — same "Recent activity" feed as ContentOut
+    outcome: Optional[Literal["removed", "no_change"]] = None  # what the moderator decided; None while the report is open
+    note: Optional[str] = None  # optional message from the moderator to the parent who reported
 
 
 class ResolveReport(BaseModel):
     action: Literal["dismiss", "remove"] = "dismiss"
+
+
+class ReportNote(BaseModel):
+    """A message from a moderator to the parent who made a report. Separate from
+    resolving it: sending one never changes the report's status, and the child
+    never sees it."""
+    note: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def _not_blank(self):
+        self.note = self.note.strip()
+        if not self.note:
+            raise ValueError("Write a note first.")
+        return self
+
+
+# ----- articulation levels (CH21/CH22, PA34-PA37) -----
+
+class ExplainRequest(BaseModel):
+    content_id: str
+    text: str
+    input_mode: Literal["voice", "text"] = "text"
+
+
+class ExplainOut(BaseModel):
+    pip_reply: str
+    # False when the message was turned away by the safety screen: Pip still
+    # answers kindly, but nothing is logged and the item stays free to try.
+    saved: bool = True
+
+
+class LevelOut(BaseModel):
+    level: ArticulationLevel
+    label: str
+    descriptor: str
+    progress: int
+    needed: int
+    next_level: Optional[ArticulationLevel] = None
+    next_label: Optional[str] = None
+    pending: int = 0  # explanations waiting on the parent (parent view only)
+
+
+class LevelUpOut(BaseModel):
+    level_up: Optional[dict] = None  # {"from", "to", "from_label", "to_label"} until acknowledged
+
+
+class ExplanationOut(BaseModel):
+    id: str
+    content_id: str
+    title: str
+    type: ContentType
+    thumbnail: Optional[str] = None
+    genres: list[str] = []
+    text: str
+    input_mode: Literal["voice", "text"]
+    level_at: ArticulationLevel
+    level_label: str
+    level_descriptor: str
+    status: Literal["pending", "confirmed", "declined"]
+    created_at: float
+    decided_at: Optional[float] = None
+
+
+class DecideOut(BaseModel):
+    explanation: ExplanationOut
+    level: LevelOut
+    leveled_up: bool = False
+
+
+class LevelStep(BaseModel):
+    level: ArticulationLevel
+    label: str
+    at: float
+
+
+class ArticulationTrendsOut(BaseModel):
+    level_history: list[LevelStep] = []
+    total: int = 0
+    confirmed: int = 0
+    declined: int = 0
+    pending: int = 0
+    top_genres: list[GenreCount] = []
+    explained_per_week: list[int] = []  # oldest first, last 8 weeks
+
+
+# ----- browse (CH20-style catalogue tiles) -----
+
+class BrowseCategory(BaseModel):
+    genre: str
+    count: int
+
+
+class BrowseItemsOut(BaseModel):
+    items: list[Recommendation]
+    total: int
+    has_more: bool

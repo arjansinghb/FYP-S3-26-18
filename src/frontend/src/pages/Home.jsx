@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import SideNav from '../components/SideNav'
-import { getPublicSite, getPublicPlans, getPublicCatalogueSample, getToken, getMe } from '../api'
+import { getPublicSite, getPublicPlans, getPublicCatalogueSample, getPublicReviews, getToken, getMe } from '../api'
 import { curateTitle } from '../curate'
 import {
-  BookIcon, ChartIcon, ChatIcon, CheckIcon, CompassIcon, HeartIcon, MicIcon,
+  BookIcon, ChartIcon, ChatIcon, CheckIcon, CompassIcon, HeartIcon, LockIcon, MicIcon, QuoteIcon,
   ShieldIcon, SparkleIcon, StarIcon, UsersIcon, VideoIcon,
 } from '../icons'
 import { ClusterBookGlyph, ClusterPlayGlyph, ClusterSparkleGlyph } from '../illustrations'
@@ -33,6 +33,27 @@ const FAQS = [
   { icon: UsersIcon, q: 'What age is this for?', a: 'Ages 5–12, split into two bands (5–8 and 9–12) so the vocabulary, topics, and reading level actually match your child, not a one-size-fits-all list.' },
   { icon: ChatIcon, q: 'Can I see what my child has been chatting about?', a: 'Yes. The parent dashboard shows the full activity log, saved favourites, and lets you flag anything for review or adjust safety settings per child, any time.' },
   { icon: CheckIcon, q: 'Do I have to pay?', a: 'No. The core chat experience is free forever, for one child profile. Premium adds more child profiles, unlimited favourites, and activity insights, but it never gates the chatbot itself.' },
+]
+
+// UV04 — round 3 on this section. Round 1 (specific named people, "Sarah,
+// mum of two") read as real social proof no matter how small the
+// disclaimer was. Round 2 (unnamed "Example parent reaction" quotes under
+// a visible warning badge) was honest but read as an unfinished, still-
+// testing prototype — the opposite of the "feels like a real, established
+// product (Epic!, Duolingo)" impression Kiefer wants here. Neither of
+// those is actually how a real product's own landing page solves this
+// problem: Epic!/Duolingo don't invent individual user quotes either —
+// they lead with confident, verifiable claims about the product itself.
+// This section does the same: every line below is something already true
+// of the real, running app (matches the FAQ/How it works sections'
+// claims), just framed as a trust-badge grid instead of a bullet list —
+// no invented person, no fabricated rating, nothing here that isn't
+// already demonstrably real.
+const TRUST_POINTS = [
+  { icon: ShieldIcon, title: 'Every item is human-reviewed', text: 'Nothing reaches a recommendation until a real moderator has approved it — no exceptions.' },
+  { icon: CompassIcon, title: 'Never an open search', text: "Pip only ever recommends from the curated catalogue — it can't reach into the open internet." },
+  { icon: ChatIcon, title: 'Full activity visibility', text: 'Parents can see exactly what their child asked and read, any time, in the dashboard.' },
+  { icon: LockIcon, title: 'Privacy by design', text: 'No ads, no behavioural profiling of children, built around parental consent from day one.' },
 ]
 
 // "See Pip in action" — used to call the real chat endpoint live, on every
@@ -64,6 +85,7 @@ export default function Home() {
     currency: 'SGD', premium_monthly_price: 9.9, premium_annual_price: 99.0,
   })
   const [catalogue, setCatalogue] = useState([])
+  const [reviews, setReviews] = useState([])
 
   // The 3 pricing-card buttons used to always say "sign up" and send
   // everyone to the same plain login/signup screen — including a parent
@@ -119,6 +141,7 @@ export default function Home() {
     getPublicSite().then(setSite).catch(() => {})
     getPublicPlans().then(setPlans).catch(() => {})
     getPublicCatalogueSample(12).then(setCatalogue).catch(() => {}) // 12 is the endpoint's own cap (public.py)
+    getPublicReviews(10).then(setReviews).catch(() => {})
   }, [])
 
   // "See Pip in action" — plays DEMO_EXCHANGE (a frozen real backend
@@ -212,6 +235,8 @@ export default function Home() {
     { id: 'why', label: 'Why Pip' },
     { id: 'buddy', label: 'Meet Pip' },
     { id: 'plans', label: 'Plans' },
+    { id: 'trust', label: 'Trust' },
+    ...(reviews.length > 0 ? [{ id: 'reviews', label: 'Reviews' }] : []),
     { id: 'faq', label: 'FAQ' },
   ]
 
@@ -462,14 +487,60 @@ export default function Home() {
               </ul>
               <Link className="cta cta-child" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Premium plan</Link>
             </div>
-            {/* A 3rd "Ultra" tier existed briefly (2026-09-07) — held back
-                out of this prototype for now, planned for the final
-                product instead (Kiefer's call, 2026-09-23). See
-                ParentDashboard.jsx's TIER_INFO comment for the reversal
-                note. */}
           </div>
           <p className="plan-note">Free to start, for one child profile, for as long as you like.</p>
         </section>
+
+        {/* UV04 — see TRUST_POINTS above for why this is a trust-badge grid
+            of real product claims, not invented user quotes. */}
+        <section className="section reveal" id="trust" ref={reveal}>
+          <h2>Why families trust Pip</h2>
+          <div className="trust-grid">
+            {TRUST_POINTS.map((t) => (
+              <div className="trust-point" key={t.title}>
+                <div className="trust-icon"><t.icon width={20} height={20} /></div>
+                <h3>{t.title}</h3>
+                <p>{t.text}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* UV04 — the real version of the section above: an actual parent's
+            own words, not a claim about the product. Only ever rendered
+            once at least one review exists (an empty wall would read as
+            broken, not "nothing yet") — same discipline the catalogue-
+            preview section above already applies to itself. Every review
+            here passed an AI safety screen AND an explicit admin approval
+            before reaching this page (see backend/app/models.py's
+            ReviewCreate docstring); nothing here is invented copy.
+
+            Back to the catalogue shelf's own horizontal auto-scroll
+            mechanism (Kiefer's final call) — two rows instead of one,
+            each half the reviews, scrolling opposite directions. Reuses
+            .catalogue-scroller's mask/overflow as-is. */}
+        {reviews.length > 0 && (
+          <section className="section section--tint reveal" id="reviews" ref={reveal}>
+            <h2>What parents are saying</h2>
+            <p className="section-lead">Real reviews from parents using Pip, approved by our team before they're shown here.</p>
+            <div className="review-wall">
+              {[
+                reviews.slice(0, Math.ceil(reviews.length / 2)),
+                reviews.slice(Math.ceil(reviews.length / 2)),
+              ].filter((row) => row.length > 0).map((row, rowIndex) => (
+                <div className="catalogue-scroller" key={rowIndex}>
+                  <div
+                    className={`review-track-h ${rowIndex === 1 ? 'review-track-h--reverse' : ''} ${rowIndex === 0 ? 'review-row-top' : ''}`}
+                    style={{ '--n': row.length }}
+                  >
+                    {row.map((r, i) => <ReviewCard review={r} key={i} />)}
+                    {row.map((r, i) => <ReviewCard review={r} key={`dup-${i}`} />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Answers the objections a parent would actually have before
             signing up — real feature claims, not filler copy. */}
@@ -517,6 +588,21 @@ function CatalogueCard({ item: c, ariaHidden }) {
         <span className="catalogue-type">{c.type === 'book' ? <BookIcon width={14} height={14} /> : <VideoIcon width={14} height={14} />} {c.type}</span>
         <h3>{curateTitle(c.title)}</h3>
       </div>
+    </div>
+  )
+}
+
+function ReviewCard({ review: r }) {
+  return (
+    <div className="review-card">
+      <div className="review-stars">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <StarIcon key={i} width={15} height={15} filled={i < r.rating} />
+        ))}
+      </div>
+      <QuoteIcon className="review-quote" width={22} height={22} />
+      <p className="review-text">{r.text}</p>
+      <p className="review-by">— {r.parent_name}</p>
     </div>
   )
 }

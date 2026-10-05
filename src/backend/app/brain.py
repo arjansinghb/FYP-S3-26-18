@@ -15,7 +15,8 @@ from functools import lru_cache
 from . import embeddings, moderation, pii
 from .config import settings
 
-RETRIEVAL_CANDIDATES = 4  # embedding-matched pool handed to the conversational LLM
+MAX_PICKS = 3  # most cards Pip shows in one reply
+RETRIEVAL_CANDIDATES = 6  # embedding-matched pool handed to the conversational LLM (a bit more than MAX_PICKS, so Pip still has a choice)
 
 # genre keywords the placeholder understands -> catalogue genre tags
 GENRE_KEYWORDS = {
@@ -243,14 +244,15 @@ class PlaceholderBrain:
     Ignores `history` (no API key means no model to feed context to),
     `reading_level` (PA13) — there's no language model here to actually
     tune sentence complexity with —, `interests` (same reason: nothing
-    here reads a system prompt), and `already_shown_note`, which only
+    here reads a system prompt), `liked_genres` (ditto), and `already_shown_note`, which only
     means something to a model that can read prose; the mock brain's whole
     job is deterministic free/test-mode operation, not a faithful stand-in
     for every real-brain behaviour."""
 
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
                 history: list[dict] | None = None, reading_level: str | None = None,
-                already_shown_note: str | None = None, interests: list[str] | None = None) -> BrainResult:
+                already_shown_note: str | None = None, interests: list[str] | None = None,
+                liked_genres: list[str] | None = None) -> BrainResult:
         text = f" {message.lower()} "
         words = set(message.lower().replace("!", " ").replace("?", " ").replace(",", " ").replace(".", " ").split())
 
@@ -303,7 +305,7 @@ class PlaceholderBrain:
             return self._no_match(catalogue, wanted_type, wanted_genres)
 
         random.shuffle(picks)
-        picks = picks[:2]
+        picks = picks[:MAX_PICKS]
 
         if not picks:
             return BrainResult(
@@ -330,6 +332,16 @@ class PlaceholderBrain:
                 "genres": item.get("genres", []),
             })
         return BrainResult(reply=reply, recommendations=recs)
+
+    def explain_reply(self, name: str, age_band: str | None, item: dict, text: str, level: str) -> str:
+        """Pip's answer to a child explaining a saved book/video (CH21).
+        Warm and never judging: no mention of right or wrong, of levels, or of
+        the parent reviewing it."""
+        title = item.get("title", "that")
+        return (
+            f"Thank you for telling me about {title}, {name}! I loved hearing it in your own words. "
+            "Do you want to find something else to read or watch together?"
+        )
 
     @staticmethod
     def _no_match(catalogue: list[dict], wanted_type: str | None, wanted_genres: list[str]) -> BrainResult:
@@ -402,9 +414,49 @@ class OpenAIBrain:
         self._client = OpenAI(api_key=api_key)
         self._model = model
 
+    def explain_reply(self, name: str, age_band: str | None, item: dict, text: str, level: str) -> str:
+        """CH21: Pip answers a child who just explained a saved book/video in
+        their own words. A short, warm reply written by the chat model, with
+        hard rules in the prompt: never judge correctness, never add facts about
+        the story (the model doesn't "know" catalogue items, see this class's
+        docstring), never mention levels or that a parent will read it. Falls
+        back to the placeholder wording if the call fails, so a child is never
+        left without an answer."""
+        fallback = PlaceholderBrain().explain_reply(name, age_band, item, text, level)
+        band = "ages 5 to 8" if age_band == "5-8" else "ages 9 to 12"
+        system = (
+            f"You are Pip, a gentle, cheerful reading buddy talking to a child ({band}) named {name}. "
+            f"The child just told you in their own words about a {item.get('type', 'book')} called "
+            f"\"{item.get('title', '')}\". Reply in 2 or 3 short, warm sentences.\n"
+            "Rules:\n"
+            "- Pick out one specific thing the child said and reflect it back with delight.\n"
+            "- NEVER say whether they were right or wrong, never correct them, never grade or compare.\n"
+            "- Do NOT add any facts about the story that the child did not say.\n"
+            "- Never mention levels, scores, progress, or that a grown-up will read this.\n"
+            "- You may end with ONE simple, friendly question about their favourite part.\n"
+            "- Simple words for the child's age. No emojis."
+        )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._model,
+                temperature=0.6,
+                max_tokens=120,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": text}],
+            )
+            reply = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            return fallback
+        if not reply:
+            return fallback
+        from . import guardrails
+
+        reply, _ = guardrails.check_output(reply)
+        return reply or fallback
+
     def respond(self, message: str, age_band: str | None, catalogue: list[dict],
                 history: list[dict] | None = None, reading_level: str | None = None,
-                already_shown_note: str | None = None, interests: list[str] | None = None) -> BrainResult:
+                already_shown_note: str | None = None, interests: list[str] | None = None,
+                liked_genres: list[str] | None = None) -> BrainResult:
         """`history` — prior turns *in this chat session* (see
         storage.session_history), oldest first, each `{message, reply}`.
         Real conversation memory: passed to the LLM as actual multi-turn
@@ -494,6 +546,10 @@ class OpenAIBrain:
             # accumulates, so it nudges an early/vague turn toward known
             # tastes without overriding a later, specific, different ask.
             retrieval_text = f"{retrieval_text} (likes: {', '.join(interests)})"
+        if liked_genres:
+            # Same idea as `interests`, from what the child has loved or saved
+            # before: appended once so it only tips a vague turn.
+            retrieval_text = f"{retrieval_text} (enjoyed before: {', '.join(liked_genres)})"
         query_embedding = embeddings.embed_text(retrieval_text)
         if query_embedding:
             candidates = embeddings.top_matches(query_embedding, pool, limit=RETRIEVAL_CANDIDATES)
@@ -592,14 +648,22 @@ class OpenAIBrain:
                 f"for right now, though — if they name a different topic or format, that wins; a declared "
                 f"interest is a tiebreaker and a good first guess, never a rule that forces a pick.\n"
             )
+        liked_note = ""
+        if liked_genres:
+            liked_note = (
+                f"## What this child has loved before\n"
+                f"They marked things as loved or saved them in these genres: {', '.join(liked_genres)}. "
+                f"It's a good first guess when their message is vague, but never let it override what "
+                f"they're asking for right now, and never narrow your picks to it.\n"
+            )
         system_prompt = f"""You are Pip, a friendly companion chatting with a child to help them find a book or video to enjoy. Talk like a warm, curious friend having a real back-and-forth — never like a search engine dumping results for every message.
 
 {interests_note}
-
+{liked_note}
 ## Conversation flow
 - This is exchange {turn_number} of this conversation. {pacing_note}
 - Only recommend once you have a reasonable sense of what they're in the mood for (format, topic, or feeling). If their message is vague and you don't genuinely have enough to go on, it's completely fine to just chat and ask ONE short, friendly clarifying question instead — return an empty "picks" list on turns like that.
-- Never force exactly 2 picks just to fill space: pick 1 if only one genuinely fits, or 0 while you're still figuring out what they want.
+- Aim to recommend 3 when three or more items reasonably fit what they asked for (when they named no format, a mix of books and videos works well), 2 when only two fit, and just 1 if only one fits. Recommend 0 while you're still figuring out what they want. Never recommend more than 3, and never add an item that doesn't fit just to reach a number.
 - Use the conversation so far for context: if you already asked a clarifying question and the child is now answering it, combine that with what they said earlier rather than asking again. Never repeat a question you've already asked in this conversation.
 
 ## What's in scope
@@ -633,8 +697,8 @@ If they share personal information anyway — even mixed into ordinary chatter (
 Speak in warm, short, age-appropriate sentences for a child aged {age_band or "5-12"}. {reading_level_note}
 
 ## Output format
-Respond ONLY with JSON of this exact shape:
-{{"reply": "string", "picks": [{{"index": 0, "why": "one short sentence"}}], "missing": null or {{"topic": "string", "format": "book" | "video" | "any"}}}}
+Respond ONLY with JSON of this exact shape (the example lists 3 picks; use 3, 2, 1 or 0 as described above):
+{{"reply": "string", "picks": [{{"index": 0, "why": "one short sentence"}}, {{"index": 2, "why": "one short sentence"}}, {{"index": 3, "why": "one short sentence"}}], "missing": null or {{"topic": "string", "format": "book" | "video" | "any"}}}}
 
 - "reply" is read directly by the child: warm, natural sentences that name each picked item by its real "title" from the list. Never say "index", never a bare number standing in for a book or video, and never mention internal details like "the list" or "the catalogue".
 - "index" numbers (0, 1, 2, ...) exist ONLY to identify your picks — internal bookkeeping the child must never see. The numbered list is given fresh every turn and its numbering can differ from earlier turns — only ever use an index from THIS turn's list, never one mentioned earlier.
@@ -686,7 +750,7 @@ Respond ONLY with JSON of this exact shape:
             )
 
         recs = []
-        for pick in (data.get("picks") or [])[:2]:
+        for pick in (data.get("picks") or [])[:MAX_PICKS]:
             index = pick.get("index")
             # bool is an int subclass in Python — exclude explicitly so a
             # stray `true`/`false` can't be misread as index 1/0.

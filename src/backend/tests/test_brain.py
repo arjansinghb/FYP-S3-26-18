@@ -196,3 +196,65 @@ def test_system_prompt_tells_the_model_privacy_overrides_small_talk(monkeypatch)
     system_prompt = completions.calls[0]["messages"][0]["content"]
     assert "do NOT repeat the specific identifying detail back" in system_prompt
     assert "This overrides the small-talk guidance above" in system_prompt
+
+
+# ---- liked_genres: what the child has loved/saved before is a soft hint ----
+
+def test_liked_genres_reach_the_prompt_and_retrieval_text(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: seen.setdefault("q", text) and None)
+    brain, completions = _openai_brain({"reply": "Here!", "picks": []})
+
+    brain.respond("surprise me", "5-8", CATALOGUE, liked_genres=["dinosaur", "space"])
+
+    assert "enjoyed before: dinosaur, space" in seen["q"]
+    system_prompt = completions.calls[0]["messages"][0]["content"]
+    assert "dinosaur, space" in system_prompt
+    assert "never narrow your picks" in system_prompt
+
+
+def test_no_liked_genres_adds_nothing(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: seen.setdefault("q", text) and None)
+    brain, completions = _openai_brain({"reply": "Here!", "picks": []})
+
+    brain.respond("surprise me", "5-8", CATALOGUE)
+
+    assert "enjoyed before" not in seen["q"]
+    assert "loved before" not in completions.calls[0]["messages"][0]["content"]
+
+
+# ---- up to three picks per reply ----
+
+def _many(n):
+    return [{"id": f"m{i}", "type": "book", "title": f"Funny Book {i}", "description": "Giggles.", "genres": ["funny"]} for i in range(n)]
+
+
+def test_openai_brain_shows_at_most_three_cards(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    brain, _ = _openai_brain({"reply": "Here!", "picks": [{"index": i, "why": "fun"} for i in range(5)]})
+
+    result = brain.respond("something funny", "5-8", _many(8))
+
+    assert len(result.recommendations) == 3
+
+
+def test_openai_brain_still_allows_one_or_two(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    for n in (1, 2):
+        brain, _ = _openai_brain({"reply": "Here!", "picks": [{"index": i, "why": "fun"} for i in range(n)]})
+        assert len(brain.respond("something funny", "5-8", _many(8)).recommendations) == n
+
+
+def test_openai_brain_prompt_asks_for_up_to_three(monkeypatch):
+    monkeypatch.setattr(brain_module.embeddings, "embed_text", lambda text: None)
+    brain, completions = _openai_brain({"reply": "Here!", "picks": []})
+
+    brain.respond("something funny", "5-8", _many(8))
+
+    assert "Never recommend more than 3" in completions.calls[0]["messages"][0]["content"]
+
+
+def test_mock_brain_shows_at_most_three_cards():
+    result = PlaceholderBrain().respond("a funny book please", "5-8", _many(8))
+    assert len(result.recommendations) == 3

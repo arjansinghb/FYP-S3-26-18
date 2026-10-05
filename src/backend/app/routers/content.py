@@ -105,6 +105,16 @@ def add_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))):
 _AUTO_IMPORT_THRESHOLD = 3
 
 
+def _search_format(open_formats: dict) -> str:
+    """Which format(s) to look for a requested topic in. When a child named a
+    format, the most-asked named one. When nobody did ("any"), the child could
+    be happy with a book or a video, so look in both."""
+    if open_formats.get("any"):
+        return "any"
+    explicit = {f: n for f, n in open_formats.items() if f in ("book", "video") and n}
+    return max(explicit, key=explicit.get) if explicit else "any"
+
+
 @router.post("/topic-requests/auto-import")
 def auto_import_one_topic(mod: dict = Depends(require_role("moderator"))):
     """Called by the moderator dashboard right after it loads the list
@@ -138,12 +148,9 @@ def auto_import_one_topic(mod: dict = Depends(require_role("moderator"))):
     for r in db.topic_misses:
         if r.get("auto_imported") or r["count"] < _AUTO_IMPORT_THRESHOLD:
             continue
-        searchable = {
-            f: n for f, n in r["formats"].items()
-            if f in ("book", "video") and n and not topic_is_covered(r["topic"], approved, f)
-        }
-        if searchable:
-            candidates.append((r, max(searchable, key=searchable.get)))
+        open_formats = {f: n for f, n in r["formats"].items() if n and not topic_is_covered(r["topic"], approved, f)}
+        if open_formats:
+            candidates.append((r, _search_format(open_formats)))
     if not candidates:
         return {"imported_topic": None}
     row, fmt = max(candidates, key=lambda c: c[0]["count"])
@@ -193,10 +200,9 @@ def topic_requests(mod: dict = Depends(require_role("moderator")), limit: int = 
         }
         if not open_formats:
             continue
-        searchable = {f: n for f, n in open_formats.items() if f in ("book", "video")}
         out.append({
             "topic": r["topic"], "key": r["key"], "count": r["count"], "formats": r["formats"],
-            "format": max(searchable, key=searchable.get) if searchable else "book",  # what to search first
+            "format": _search_format(open_formats),  # "book", "video", or "any" = look in both
             "last_requested_at": r["last_at"],
             "auto_imported": bool(r.get("auto_imported")),
         })

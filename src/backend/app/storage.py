@@ -12,7 +12,7 @@ import secrets
 import time
 import uuid
 
-from . import firestore_store
+from . import firestore_store, profile
 
 
 def _new_id() -> str:
@@ -64,6 +64,11 @@ class Database:
         # rejection_reason}. See models.ReviewCreate's docstring for the
         # two-layer moderation this goes through before ever going public.
         self.reviews: dict[str, dict] = {}
+        # CH21/PA34-35 — what a child said when explaining a saved item to
+        # Pip, waiting for (or already given) the parent's verdict. {id,
+        # child_id, content_id, text, input_mode, level_at, pip_reply,
+        # status, created_at, decided_at}.
+        self.explanations: dict[str, dict] = {}
         # UV06/PA03 — same cross-instance reasoning as `tokens` above, and
         # persisted for the same reason (a reset/verify link can just as
         # easily be requested and confirmed against two different instances).
@@ -105,11 +110,7 @@ class Database:
             # `monthly_price`; `subscribe()` below never actually read it
             # (charged a hardcoded 999/9900 cents regardless of what an
             # admin set here) until a later pass wired it through for real,
-            # not just displayed it. A 2nd `ultra_*` price pair existed
-            # briefly (2026-09-07, alongside a since-removed "ultra" tier)
-            # — held back out of this prototype for now, planned for the
-            # final product instead (Kiefer's call, 2026-09-23; see
-            # models.py's AccountTier comment).
+            # not just displayed it.
             "billing": {
                 "provider": "none", "currency": "SGD", "billing_enabled": False,
                 "premium_monthly_price": 9.9, "premium_annual_price": 99.0,
@@ -172,6 +173,7 @@ class Database:
         self.chat_sessions = state.get("chat_sessions", {})
         self.deletion_requests = state.get("deletion_requests", [])
         self.reviews = state.get("reviews", {})
+        self.explanations = state.get("explanations", {})
         self.tokens = state.get("tokens", {})
         self.verify_tokens = state.get("verify_tokens", {})
         self.reset_tokens = state.get("reset_tokens", {})
@@ -185,16 +187,9 @@ class Database:
         # doesn't persist across restarts at all.
         from .config import settings as _settings
         self.system["compliance"]["openai_zdr_status"] = _settings.ZDR_STATUS
-        # Same reasoning as ZDR_STATUS above, for a narrower case: the merge
-        # two lines up brings back ANY key an old saved snapshot has, even
-        # one this code no longer defines — a real snapshot saved while
-        # "ultra" existed still carries `ultra_monthly_price`/
-        # `ultra_annual_price` in `billing`, and would otherwise keep
-        # reappearing in SA13's config editor forever with no field left to
-        # edit them from (see AdminDashboard.jsx's CONFIG_SECTIONS, which
-        # dropped those two). Explicit removal here, not just "stop adding
-        # new ones", so a pre-existing saved snapshot actually gets cleaned
-        # up too.
+        # The merge above brings back ANY key an old saved snapshot has, even
+        # one this code no longer defines. Scrub the two price fields of a
+        # tier that no longer exists so they get cleaned out of stored data.
         self.system["billing"].pop("ultra_monthly_price", None)
         self.system["billing"].pop("ultra_annual_price", None)
         # Backfill account fields a saved snapshot predates (e.g. `tier` on
@@ -217,6 +212,20 @@ class Database:
             # child "no" to that a moderator/auto-import has since covered,
             # already mentioned once so it's never repeated on a later login.
             child.setdefault("notified_resolved_topics", [])
+            # Articulation level (see profile.py) — every existing child
+            # starts as an Explorer, no exceptions.
+            child.setdefault("dob", None)
+            child.setdefault("articulation_level", "explorer")
+            child.setdefault("articulation_progress", 0)
+            child.setdefault("level_up_pending", None)
+            child.setdefault("level_history", [{"level": "explorer", "at": child.get("created", time.time())}])
+            # A child with a date of birth keeps ageing: refresh the stored
+            # band so the catalogue filter never serves a stale one.
+            if child["dob"]:
+                try:
+                    child["age_band"] = profile.band_from_dob(child["dob"])
+                except ValueError:
+                    pass  # aged out of 5-12: keep the last band rather than lock them out
             # 2026-09-09 — login_id/pin split (see create_child's docstring).
             # A snapshot saved before this change has `linking_code` (the old
             # single value) but no `login_id` yet — backfill a real, unique
@@ -258,6 +267,7 @@ class Database:
             "chat_sessions": self.chat_sessions,
             "deletion_requests": self.deletion_requests,
             "reviews": self.reviews,
+            "explanations": self.explanations,
             "system": self.system,
             "tokens": self.tokens,
             "verify_tokens": self.verify_tokens,
@@ -332,6 +342,8 @@ class Database:
             self.activity[child_id] = []
             self.feedback[child_id] = []
         self.content_overrides.pop(child_id, None)
+        for eid in [e for e, ex in self.explanations.items() if ex["child_id"] == child_id]:
+            self.explanations.pop(eid, None)
         for sid in [s for s, sess in self.chat_sessions.items() if sess["child_id"] == child_id]:
             self.chat_sessions.pop(sid, None)
         self.reports[:] = [r for r in self.reports if r["child_id"] != child_id]
@@ -604,12 +616,9 @@ class Database:
     # ---------- PA23-27 billing (simulated) ----------
 
     def subscribe(self, account: dict, tier: str, billing_cycle: str, payment_method: dict | None = None) -> dict:
-        """`tier` is "premium" (SubscribeRequest — the only tier this
-        prototype offers a subscribe path for right now, see models.py's
-        AccountTier comment). Price actually comes from `system.billing`'s
-        admin-configured values, not a hardcoded constant — a real gap
-        found and fixed while a 2nd ("ultra") tier was briefly wired
-        through (2026-09-07)."""
+        """`tier` is "premium" (SubscribeRequest). Price actually comes from
+        `system.billing`'s admin-configured values, not a hardcoded
+        constant."""
         if payment_method:
             self.set_payment_method(account, payment_method["brand"], payment_method["last4"])
         account["tier"] = tier
@@ -725,7 +734,7 @@ class Database:
         paired with a distinguishing account number."""
         return f"{secrets.randbelow(1_000_000):06d}"
 
-    def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None, gender=None, interests=None) -> dict:
+    def create_child(self, parent_id: str, name: str, age_band: str, reading_level=None, gender=None, interests=None, dob=None) -> dict:
         """PA07/PA10/CH01. Two separate system-generated values, not one
         doing double duty (see _generate_unique_login_id's docstring for why
         this changed from the original single-code design): `login_id`
@@ -743,6 +752,11 @@ class Database:
             "reading_level": reading_level,
             "gender": gender,
             "interests": interests or [],
+            "dob": dob,
+            "articulation_level": "explorer",
+            "articulation_progress": 0,
+            "level_up_pending": None,  # {"from","to"} until Pip has told the child
+            "level_history": [{"level": "explorer", "at": time.time()}],
             "login_id": self._generate_unique_login_id(),
             "pin": self._generate_pin(),
             "avatar": "purple",  # avatar colour variant the child can change
@@ -762,6 +776,72 @@ class Database:
         self.activity[child["id"]] = []
         self.feedback[child["id"]] = []
         return child
+
+    # ---------- CH21 / PA34-35: explanations and articulation level ----------
+
+    def explanations_for(self, child_id: str) -> list[dict]:
+        """Newest first."""
+        rows = [e for e in self.explanations.values() if e["child_id"] == child_id]
+        return sorted(rows, key=lambda e: e["created_at"], reverse=True)
+
+    def explanation_blocks_item(self, child_id: str, content_id: str) -> bool:
+        """A pending or confirmed explanation uses the item up, but only for the
+        level the child is at right now: once they move up, the same book can
+        be told again in more detail, and the parent judges it against the new
+        level. That keeps a Free child (5 favourites) from running out of
+        things to explain before the top level. A declined explanation never
+        uses an item up. It lives on the explanation, not the favourite, so
+        un-saving and re-saving a book doesn't reset it."""
+        child = self.children.get(child_id) or {}
+        level = child.get("articulation_level", "explorer")
+        return any(
+            e["child_id"] == child_id and e["content_id"] == content_id
+            and e["status"] in ("pending", "confirmed") and e["level_at"] == level
+            for e in self.explanations.values()
+        )
+
+    def pending_explanation_count(self, child_id: str) -> int:
+        return sum(1 for e in self.explanations.values() if e["child_id"] == child_id and e["status"] == "pending")
+
+    def add_explanation(self, child: dict, content_id: str, text: str, input_mode: str, pip_reply: str) -> dict:
+        exp = {
+            "id": _new_id(),
+            "child_id": child["id"],
+            "content_id": content_id,
+            "text": text,
+            "input_mode": input_mode,
+            "level_at": child.get("articulation_level", "explorer"),
+            "pip_reply": pip_reply,
+            "status": "pending",
+            "created_at": time.time(),
+            "decided_at": None,
+        }
+        self.explanations[exp["id"]] = exp
+        return exp
+
+    def decide_explanation(self, explanation_id: str, confirm: bool) -> tuple[dict, bool] | None:
+        """PA35. Returns (explanation, leveled_up), or None when it doesn't
+        exist or was already decided. Three confirmations promote the child
+        one level; Storyteller is the top, after which explanations are still
+        reviewed but nothing counts."""
+        exp = self.explanations.get(explanation_id)
+        if not exp or exp["status"] != "pending":
+            return None
+        exp["status"] = "confirmed" if confirm else "declined"
+        exp["decided_at"] = time.time()
+        leveled_up = False
+        child = self.children.get(exp["child_id"])
+        if confirm and child and profile.next_level(child["articulation_level"]):
+            child["articulation_progress"] = child.get("articulation_progress", 0) + 1
+            if child["articulation_progress"] >= profile.CONFIRMATIONS_PER_LEVEL:
+                old = child["articulation_level"]
+                new = profile.next_level(old)
+                child["articulation_level"] = new
+                child["articulation_progress"] = 0
+                child["level_up_pending"] = {"from": old, "to": new}
+                child.setdefault("level_history", []).append({"level": new, "at": time.time()})
+                leveled_up = True
+        return exp, leveled_up
 
     def children_of(self, parent_id: str) -> list[dict]:
         return [c for c in self.children.values() if c["parent_id"] == parent_id]

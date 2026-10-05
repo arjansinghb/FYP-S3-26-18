@@ -142,9 +142,7 @@ def subscribe(body: SubscribeRequest, account: dict = Depends(require_role("pare
     call, either passed in here or already set via PUT /payment-method.
     Also usable to re-subscribe after a cancellation — only rejected if
     it's the exact same tier with no pending cancellation, not any call
-    while already paid. (Doubled as the upgrade path between paid tiers
-    while an "ultra" tier existed; held back out of this prototype for now
-    — see models.py's AccountTier comment.)"""
+    while already paid."""
     if account["tier"] == body.tier and not account.get("subscription_cancel_at"):
         raise HTTPException(400, f"Already on {body.tier.capitalize()}")
     if not body.payment_method and not account.get("payment_method"):

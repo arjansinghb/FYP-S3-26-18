@@ -197,6 +197,53 @@ export async function ackResolvedTopic(topic) {
   return request('/api/chat/resolved-topics/ack', { method: 'POST', body: { topic }, auth: 'child' })
 }
 
+// ----- child browse (second entry point next to "Ask Pip") -----
+export async function browseCategories(type) {
+  return request(`/api/browse/categories${type ? `?type=${type}` : ''}`, { auth: 'child' })
+}
+export async function browseItems({ genre, type, offset = 0, limit = 8 } = {}) {
+  const q = new URLSearchParams({ offset, limit })
+  if (genre) q.set('genre', genre)
+  if (type) q.set('type', type)
+  return request(`/api/browse/items?${q}`, { auth: 'child' })
+}
+export async function browseForYou(type) {
+  return request(`/api/browse/for-you${type ? `?type=${type}` : ''}`, { auth: 'child' })
+}
+
+// ----- child articulation level (CH21/CH22) -----
+export async function myLevel() {
+  return request('/api/articulation/level', { auth: 'child' })
+}
+export async function pendingLevelUp() {
+  return request('/api/articulation/level-up', { auth: 'child' })
+}
+export async function ackLevelUp() {
+  return request('/api/articulation/level-up/ack', { method: 'POST', auth: 'child' })
+}
+export async function explainToPip(contentId, text, inputMode) {
+  return request('/api/articulation/explanations', {
+    method: 'POST', body: { content_id: contentId, text, input_mode: inputMode }, auth: 'child',
+  })
+}
+
+// ----- parent: articulation (PA34-PA37) -----
+export async function childArticulation(childId) {
+  return request(`/api/children/${childId}/articulation`, { auth: true })
+}
+export async function childExplanations(childId) {
+  return request(`/api/children/${childId}/explanations`, { auth: true })
+}
+export async function confirmExplanation(id) {
+  return request(`/api/explanations/${id}/confirm`, { method: 'POST', auth: true })
+}
+export async function declineExplanation(id) {
+  return request(`/api/explanations/${id}/decline`, { method: 'POST', auth: true })
+}
+export async function articulationTrends(childId) {
+  return request(`/api/children/${childId}/articulation-trends`, { auth: true })
+}
+
 // ----- parent auth -----
 export async function signup(email, password, name) {
   const data = await request('/api/auth/signup', { method: 'POST', body: { email, password, name } })
@@ -284,8 +331,7 @@ export async function markNotificationRead(id) {
 export async function getSubscriptionStatus() {
   return request('/api/account/subscription', { auth: true })
 }
-// `tier`: 'premium' (a 2nd paid tier, "ultra", existed briefly but is held
-// back out of the prototype for now — see ParentDashboard.jsx's TIER_INFO).
+// `tier`: 'premium'.
 export async function subscribe(tier, billingCycle, paymentMethod) {
   return request('/api/account/subscribe', { method: 'POST', body: { tier, billing_cycle: billingCycle, payment_method: paymentMethod }, auth: true })
 }
@@ -400,6 +446,9 @@ export async function listReports() {
 }
 export async function resolveReport(id, action) {
   return request(`/api/reports/${id}/resolve`, { method: 'POST', body: { action }, auth: true })
+}
+export async function sendReportNote(id, note) {
+  return request(`/api/reports/${id}/note`, { method: 'POST', body: { note }, auth: true })
 }
 
 // ----- system admin (SA03-SA14) -----

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import metrics
 from .config import settings
-from .routers import account, admin, auth, chat, child, children, content, health, oversight, public, reports
+from .routers import account, admin, articulation, auth, browse, chat, child, children, content, health, oversight, public, reports
 from .storage import db
 
 logger = logging.getLogger("pip")
@@ -100,6 +100,8 @@ app.include_router(account.router)
 app.include_router(children.router)
 app.include_router(oversight.router)
 app.include_router(chat.router)
+app.include_router(browse.router)
+app.include_router(articulation.router)
 app.include_router(child.router)
 app.include_router(content.router)
 app.include_router(reports.router)

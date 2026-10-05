@@ -21,10 +21,6 @@ def test_uv03_subscription_plans(client: TestClient):
     body = r.json()
     assert "currency" in body
     assert "premium_monthly_price" in body and "premium_annual_price" in body
-    # a 2nd ("ultra") tier existed briefly — held back out of this
-    # prototype for now (see models.py's AccountTier comment), so the
-    # public plans response shouldn't advertise a price for it
-    assert "ultra_monthly_price" not in body and "ultra_annual_price" not in body
 
 
 def test_uv02_catalogue_sample_only_approved(client: TestClient, moderator: dict):

@@ -4,6 +4,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import profile
 from ..deps import require_role
 from ..models import (
     ChildCreate, ChildLinkRequest, ChildOut, ChildPinLogin, ChildSessionOut,
@@ -16,13 +17,9 @@ router = APIRouter(tags=["children"])
 FREE_CHILD_LIMIT = 1
 PREMIUM_CHILD_LIMIT = 4  # PA33
 
-# An "ultra" tier (unlimited child profiles) existed briefly (2026-09-07) —
-# held back out of this prototype for now, planned for the final product
-# instead (Kiefer's call, 2026-09-23; see ParentDashboard.jsx's TIER_INFO
-# comment on the frontend side of this same reversal). `.get(tier, ...)`
-# rather than a direct `[tier]` lookup below is deliberate: no real account
-# is on "ultra" as of this change, but a stored value this code doesn't
-# recognise should degrade to the top real limit, never crash PA07.
+# `.get(tier, ...)` rather than a direct `[tier]` lookup below is
+# deliberate: a stored value this code doesn't recognise should degrade to
+# the top real limit, never crash PA07.
 _TIER_CHILD_LIMITS = {"free": FREE_CHILD_LIMIT, "premium": PREMIUM_CHILD_LIMIT}
 
 
@@ -32,6 +29,10 @@ def _child_out(c: dict) -> ChildOut:
         reading_level=c.get("reading_level"), login_id=c["login_id"], pin=c["pin"], avatar=c["avatar"],
         settings=ChildSettings(**c.get("settings", {})), locked=c.get("locked", False),
         gender=c.get("gender"), interests=c.get("interests", []),
+        dob=c.get("dob"),
+        articulation_level=c.get("articulation_level", "explorer"),
+        articulation_progress=c.get("articulation_progress", 0),
+        pending_explanations=db.pending_explanation_count(c["id"]),
     )
 
 
@@ -40,6 +41,17 @@ def _owned_child(child_id: str, parent: dict) -> dict:
     if not child or child["parent_id"] != parent["id"]:
         raise HTTPException(404, "Child profile not found")
     return child
+
+
+def _resolve_age(dob: str | None, age_band: str | None) -> tuple[str, str | None]:
+    """(age_band, dob). A date of birth is preferred and validated against the
+    5-12 range Pip is built for; a bare age band is still accepted."""
+    if dob:
+        try:
+            return profile.band_from_dob(dob), dob
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+    return age_band, None
 
 
 @router.post("/api/children", response_model=ChildOut, status_code=201)
@@ -63,9 +75,10 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     # PIN/linking code is system-generated inside create_child now, not
     # parent-typed — see models.ChildCreate's docstring for why. No
     # pin_in_use check needed here: it's unique by construction.
+    age_band, dob = _resolve_age(body.dob, body.age_band)
     child = db.create_child(
-        parent["id"], body.name, body.age_band, body.reading_level,
-        gender=body.gender, interests=body.interests,
+        parent["id"], body.name, age_band, body.reading_level,
+        gender=body.gender, interests=profile.clean_interests(body.interests), dob=dob,
     )
     return _child_out(child)
 
@@ -88,7 +101,14 @@ def update_child(child_id: str, body: ChildUpdate, parent: dict = Depends(requir
     bug: PA13 guidance could be set but never removed again."""
     child = _owned_child(child_id, parent)
     updates = body.model_dump(exclude_unset=True)
-    for f in ("name", "age_band", "reading_level", "gender", "interests"):
+    if updates.get("dob"):
+        # Date of birth wins: the band is always derived from it.
+        updates["age_band"], updates["dob"] = _resolve_age(updates["dob"], None)
+    elif "age_band" in updates and updates["age_band"]:
+        updates["dob"] = None  # a band picked by hand no longer matches an old date of birth
+    if updates.get("interests") is not None:
+        updates["interests"] = profile.clean_interests(updates["interests"])
+    for f in ("name", "dob", "age_band", "reading_level", "gender", "interests"):
         if f in updates:
             child[f] = updates[f]
     return _child_out(child)

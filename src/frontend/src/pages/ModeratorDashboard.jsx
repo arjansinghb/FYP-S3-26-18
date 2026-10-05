@@ -3,17 +3,20 @@ import { Link } from 'react-router-dom'
 import {
   getToken, getMe, login, logout,
   listContent, addContent, editContent, removeContent, approveContent, rejectContent,
-  listReports, resolveReport, searchBooks, searchVideos, importContent, listTopicRequests, autoImportTopic,
+  listReports, resolveReport, sendReportNote, searchBooks, searchVideos, importContent, listTopicRequests, autoImportTopic,
   dismissTopicRequest, bulkImport,
+  listAuditQueue, submitAudit,
 } from '../api'
 import {
-  AlertIcon, BookIcon, ChartIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
+  AlertIcon, BookIcon, ChartIcon, ChatIcon, CheckIcon, ChevronIcon, ClockIcon, CloseIcon, EditIcon, FlagIcon, GridIcon,
   InboxIcon, PlusIcon, RefreshIcon, SearchIcon, SparkleIcon, TrashIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import ConfirmDialog from '../components/ConfirmDialog'
+import ReportNoteDialog from '../components/ReportNoteDialog'
+import PromptDialog from '../components/PromptDialog'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import { firstMissingField } from '../formValidation'
@@ -138,6 +141,7 @@ const TABS = [
   { key: 'overview', label: 'Overview', icon: ChartIcon },
   { key: 'submissions', label: 'Submissions', icon: InboxIcon, countKey: 'pending' },
   { key: 'catalogue', label: 'Catalogue', icon: GridIcon },
+  { key: 'audit', label: 'AI Audit', icon: SparkleIcon, countKey: 'auditPending' },
   { key: 'reports', label: 'Reports', icon: FlagIcon, countKey: 'reportsOpen' },
 ]
 
@@ -149,16 +153,18 @@ function Tools({ account, onLogout }) {
   // a moderator lands on Overview and can already see "3 waiting" without
   // clicking into the tab, and the number stays in sync as items are
   // actioned (each tab calls onCountsChange after approve/reject/resolve).
-  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0 })
+  const [counts, setCounts] = useState({ pending: 0, reportsOpen: 0, auditPending: 0 })
 
   async function refreshCounts() {
     try {
-      const [pending, reports] = await Promise.all([
+      const [pending, reports, audit] = await Promise.all([
         listContent({ status: 'pending' }),
         listReports(),
+        listAuditQueue(),
       ])
       setCounts({
         pending: pending.length, reportsOpen: reports.filter((r) => r.status === 'open').length,
+        auditPending: audit.pending_count,
       })
     } catch {
       // Best-effort — badges just stay at their last known value.
@@ -198,6 +204,7 @@ function Tools({ account, onLogout }) {
         {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} onRefreshCounts={refreshCounts} />}
         {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'catalogue' && <Catalogue notify={notify} />}
+        {tab === 'audit' && <AuditQueue notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
       </div>
 
@@ -235,6 +242,7 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
   const [activity, setActivity] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [updatedAt, setUpdatedAt] = useState(null)
+  const [showAllGenres, setShowAllGenres] = useState(false)
 
   async function load() {
     setRefreshing(true)
@@ -259,7 +267,7 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
           genreCounts[g] = (genreCounts[g] || 0) + 1
         }
       }
-      const topGenres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
+      const genres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       setStats({
         total: items.length,
         books: items.filter((i) => i.type === 'book').length,
@@ -268,7 +276,7 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
         rejected,
         approvalRate: approved + rejected > 0 ? Math.round((approved / (approved + rejected)) * 100) : null,
         ageBandCounts,
-        topGenres,
+        genres,
       })
       setActivity(buildActivity(items, reports))
       setUpdatedAt(new Date())
@@ -304,7 +312,7 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
   return (
     <>
       <section className="card">
-        <div className="child-top">
+        <div className="child-top child-top--wrap">
           <h2><ChartIcon width={20} height={20} /> Moderation overview</h2>
           <button className="ghost small" onClick={load} disabled={refreshing}>
             <RefreshIcon width={14} height={14} className={refreshing ? 'spin' : ''} />
@@ -383,14 +391,29 @@ function Overview({ counts, onNavigate, onRefreshCounts }) {
               </div>
             </div>
           )}
-          {stats.topGenres.length > 0 && (
-            <div className="genre-cloud">
-              <span className="review-field-label">Top genres in the live catalogue</span>
-              <div className="chip-row">
-                {stats.topGenres.map(([genre, count]) => (
-                  <span className="chip" key={genre}>{genre} · {count}</span>
-                ))}
+          {stats.genres.length > 0 && (
+            <div className="genre-bars">
+              <div className="genre-bars-head">
+                <span className="review-field-label">Genres in the live catalogue</span>
+                <span className="muted">Genres with {LOW_GENRE_COUNT} items or fewer are marked, so you can see where to add more.</span>
               </div>
+              <ul className="genre-bar-list">
+                {(showAllGenres ? stats.genres : stats.genres.slice(0, GENRES_SHOWN)).map(([genre, count]) => (
+                  <li className={count <= LOW_GENRE_COUNT ? 'genre-bar genre-bar--low' : 'genre-bar'} key={genre}>
+                    <span className="genre-bar-name">{cap(genre)}</span>
+                    <span className="genre-bar-track" aria-hidden="true">
+                      <span className="genre-bar-fill" style={{ width: `${Math.max(3, (count / stats.genres[0][1]) * 100)}%` }} />
+                    </span>
+                    <span className="genre-bar-count">{count}</span>
+                    {count <= LOW_GENRE_COUNT && <span className="genre-bar-flag">Few</span>}
+                  </li>
+                ))}
+              </ul>
+              {stats.genres.length > GENRES_SHOWN && (
+                <button type="button" className="ghost small genre-bars-more" onClick={() => setShowAllGenres(!showAllGenres)}>
+                  {showAllGenres ? 'Show fewer genres' : `Show all ${stats.genres.length} genres`}
+                </button>
+              )}
             </div>
           )}
         </section>
@@ -460,7 +483,18 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
     if (!query.trim()) return
     setBusy(true); setError(''); setShowFiltered(false)
     try {
-      setResults(searchType === 'book' ? await searchBooks(query) : await searchVideos(query))
+      if (searchType === 'any') {
+        // No format was asked for: look in both and interleave, so neither kind buries the other.
+        const [books, videos] = await Promise.all([searchBooks(query), searchVideos(query)])
+        const merged = []
+        for (let i = 0; i < Math.max(books.length, videos.length); i++) {
+          if (books[i]) merged.push({ ...books[i], _type: 'book' })
+          if (videos[i]) merged.push({ ...videos[i], _type: 'video' })
+        }
+        setResults(merged)
+      } else {
+        setResults(searchType === 'book' ? await searchBooks(query) : await searchVideos(query))
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -475,7 +509,15 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
   useEffect(() => {
     if (!prefill) return
     setImporting(null); setType(prefill.type); setQ(prefill.q); setResults(null)
-    sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Land with the section heading just below the pinned header and tabs
+    // (.dash-top), not behind them, which is where a plain scrollIntoView
+    // leaves it.
+    if (sectionRef.current) {
+      const pinned = document.querySelector('.dash-top')
+      const offset = (pinned ? pinned.offsetHeight : 0) + 12
+      const top = sectionRef.current.getBoundingClientRect().top + window.scrollY - offset
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+    }
     runSearch(prefill.type, prefill.q)
   }, [prefill?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -483,18 +525,19 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
   // pre-filled from the real search data — the moderator still has to
   // pick age bands/genres themselves (CM09/CM10), never auto-assigned.
   if (importing) {
+    const importType = importing._type || type
     return (
       <EntryForm
         isNew
         initial={{
-          type,
+          type: importType,
           title: importing.title,
           description: importing.description,
           thumbnail: importing.thumbnail,
           external_ref: importing.external_ref,
           age_bands: [],
           genres: [],
-          source: type === 'book' ? 'google_books' : 'youtube',
+          source: importType === 'book' ? 'google_books' : 'youtube',
         }}
         onSave={async (payload) => {
           await importContent(payload)
@@ -514,10 +557,11 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
         <Select value={type} onChange={(e) => { setType(e.target.value); setResults(null) }}>
           <option value="book">Books</option>
           <option value="video">Videos</option>
+          <option value="any">Books &amp; videos</option>
         </Select>
         <input
           type="search"
-          placeholder={`Search Google Books/YouTube for ${type}s…`}
+          placeholder={type === 'any' ? 'Search Google Books and YouTube…' : `Search Google Books/YouTube for ${type}s…`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           style={{ flex: '1 1 220px' }}
@@ -533,7 +577,7 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
       </form>
       {error && <p className="error">{error}</p>}
       {results && results.length === 0 && !error && (
-        <p className="muted">No results — try a different search, or check the {type === 'book' ? 'Google Books' : 'YouTube Data'} API key is configured.</p>
+        <p className="muted">No results — try a different search, or check the {type === 'book' ? 'Google Books' : type === 'video' ? 'YouTube Data' : 'Google Books and YouTube Data'} API key{type === 'any' ? 's are' : ' is'} configured.</p>
       )}
       {results && results.length > 0 && (() => {
         const kept = results.filter((r) => !r.ai_filtered)
@@ -555,8 +599,8 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
               <p className="muted">Every result on this page was filtered out — show them to review anyway, or try a different search.</p>
             )}
             <div className="search-results">
-              {kept.map((r) => <SearchResultCard key={r.external_id} r={r} type={type} onImport={setImporting} />)}
-              {showFiltered && filtered.map((r) => <SearchResultCard key={r.external_id} r={r} type={type} onImport={setImporting} />)}
+              {kept.map((r) => <SearchResultCard key={`${r._type || type}-${r.external_id}`} r={r} type={r._type || type} onImport={setImporting} />)}
+              {showFiltered && filtered.map((r) => <SearchResultCard key={`${r._type || type}-${r.external_id}`} r={r} type={r._type || type} onImport={setImporting} />)}
             </div>
           </>
         )
@@ -578,10 +622,7 @@ function SearchResultCard({ r, type, onImport }) {
         <p className="muted">{truncate(r.description, 150)}</p>
         {type === 'video' && r.channel && <p className="muted">Channel: {r.channel}</p>}
         {r.ai_filtered && (
-          <div className="ai-note ai-note--reject">
-            <SparkleIcon width={15} height={15} />
-            <span><b>AI would reject this</b>{r.ai_filter_reason && <> — {r.ai_filter_reason}</>}</span>
-          </div>
+          <AiNote tone="reject" title="AI would reject this" reason={r.ai_filter_reason} />
         )}
         <button className={r.ai_filtered ? 'ghost small' : 'small'} onClick={() => onImport(r)}>
           <PlusIcon width={14} height={14} /> {r.ai_filtered ? 'Import anyway' : 'Import for review'}
@@ -646,7 +687,7 @@ function TopicRequests({ onFind, onAutoImport, busy }) {
       ) : (
         <div className="topic-requests">
           {rows.map((r) => {
-            const Icon = r.format === 'video' ? VideoIcon : BookIcon
+            const formatLabel = r.format === 'any' ? 'no format given, so books and videos' : r.format === 'video' ? 'videos' : 'books'
             const threshold = r.auto_import_threshold
             // Why the manual button is still here even though this feature
             // auto-imports on its own — real confusion (Kiefer, 2026-09-24):
@@ -664,13 +705,33 @@ function TopicRequests({ onFind, onAutoImport, busy }) {
             }
             return (
               <div className="topic-request" key={r.topic}>
-                <span className="item-type-icon"><Icon width={16} height={16} /></span>
+                <span className={`topic-tile ${r.format === 'any' ? 'topic-tile--pair' : ''}`} title={`Asked for ${formatLabel}`}>
+                  {r.format !== 'video' && <BookIcon width={r.format === 'any' ? 14 : 18} height={r.format === 'any' ? 14 : 18} />}
+                  {r.format !== 'book' && <VideoIcon width={r.format === 'any' ? 14 : 18} height={r.format === 'any' ? 14 : 18} />}
+                </span>
                 <div className="topic-request-main">
-                  <b>{r.topic}</b>
-                  <span className="muted">
-                    asked {r.count} time{r.count === 1 ? '' : 's'} · last {timeAgo(r.last_requested_at)}
+                  <div className="topic-request-title">
+                    <b>{r.topic}</b>
+                    <span className="topic-format">{r.format === 'any' ? 'Books & videos' : r.format === 'video' ? 'Videos' : 'Books'}</span>
+                  </div>
+                  <span className="topic-request-meta">
+                    Asked {r.count} time{r.count === 1 ? '' : 's'} · last {timeAgo(r.last_requested_at)}
                   </span>
-                  {statusNote && <span className="muted topic-request-status">{statusNote}</span>}
+                  {!r.auto_imported && threshold && (
+                    <span className="topic-meter" title={statusNote}>
+                      <span className="topic-meter-segs" aria-hidden="true">
+                        {Array.from({ length: threshold }).map((_, i) => (
+                          <span key={i} className={i < r.count ? 'topic-seg topic-seg--on' : 'topic-seg'} />
+                        ))}
+                      </span>
+                      <span className="topic-meter-label">
+                        {Math.min(r.count, threshold)}/{threshold} asked · auto-imports at {threshold}
+                      </span>
+                    </span>
+                  )}
+                  {(r.auto_imported || (threshold && r.count >= threshold)) && statusNote && (
+                    <span className="topic-note">{statusNote}</span>
+                  )}
                 </div>
                 <div className="topic-request-actions">
                   <button type="button" className="ghost small" onClick={() => onFind(r)}>
@@ -819,7 +880,7 @@ function Submissions({ notify, onCountsChange }) {
       )}
       {items.map((i) => (
         <div className={`card ${leaving === i.id ? 'card-leaving' : ''}`} key={i.id}>
-          <div className="child-top">
+          <div className="child-top child-top--wrap">
             <div className="item-with-thumb">
               {i.thumbnail && <img className={`item-thumb item-thumb--${i.type}`} src={i.thumbnail} alt="" />}
               <div>
@@ -832,8 +893,8 @@ function Submissions({ notify, onCountsChange }) {
           </div>
           <div className="chip-row">
             {i.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
-            {i.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
-            {i.genres.length === 0 && <span className="chip chip-muted">no genres tagged</span>}
+            {i.genres.map((g) => <span className="chip chip-muted" key={g}>{cap(g)}</span>)}
+            {i.genres.length === 0 && <span className="chip chip-muted">No genres tagged</span>}
           </div>
           {/* CM06 triage aid — a first-pass AI read (app/ai_assist.py),
               never a decision: the moderator's own Approve/Reject below is
@@ -842,14 +903,11 @@ function Submissions({ notify, onCountsChange }) {
               key isn't configured or the call failed) — no "AI unavailable"
               noise on every card. */}
           {i.ai_suggestion && (
-            <div className={`ai-note ai-note--${i.ai_suggestion}`}>
-              <SparkleIcon width={15} height={15} />
-              <span>
-                <b>AI suggests: {i.ai_suggestion === 'approve' ? 'Approve' : 'Reject'}</b>
-                {i.ai_reason && <> — {i.ai_reason}</>}
-                {i.ai_confidence && <span className="ai-note-confidence"> ({i.ai_confidence} confidence)</span>}
-              </span>
-            </div>
+            <AiNote
+              tone={i.ai_suggestion}
+              title={`AI suggests: ${i.ai_suggestion === 'approve' ? 'Approve' : 'Reject'}`}
+              reason={i.ai_reason} confidence={i.ai_confidence}
+            />
           )}
           <div className="row">
             <button className="success" disabled={leaving === i.id}
@@ -868,7 +926,7 @@ function Submissions({ notify, onCountsChange }) {
         tone="primary"
         icon={<SparkleIcon width={20} height={20} />}
         title="Auto-import this topic?"
-        message={bulkAsk ? `Up to 10 ${bulkAsk.type === 'book' ? 'books' : 'videos'} about “${bulkAsk.topic}” will be searched and checked by AI. Clear, child-safe matches are approved straight away, clearly unsuitable ones are rejected, and anything unsure waits here for you.` : ''}
+        message={bulkAsk ? `Up to ${bulkAsk.type === 'any' ? '5 books and 5 videos' : `10 ${bulkAsk.type === 'book' ? 'books' : 'videos'}`} about “${bulkAsk.topic}” will be searched and checked by AI. Clear, child-safe matches are approved straight away, clearly unsuitable ones are rejected, and anything unsure waits here for you.` : ''}
         confirmLabel="Import"
         onConfirm={async () => {
           const ask = bulkAsk
@@ -912,6 +970,28 @@ function Submissions({ notify, onCountsChange }) {
 // truncated description in the list (Edit still shows the full text in
 // its own textarea) so a card reads as one scannable line, not a wall of
 // marketing copy.
+const GENRES_SHOWN = 8
+const LOW_GENRE_COUNT = 3 // a genre with this many live items or fewer is flagged as thin
+const cap = (text) => (text ? text[0].toUpperCase() + text.slice(1) : text)
+
+// The AI's opinion on a catalogue item (never a decision). Header line with an
+// optional confidence pill, then the reason as its own full-width paragraph so
+// long reasons read as a clean block instead of breaking around the label.
+function AiNote({ tone, title, reason, confidence }) {
+  return (
+    <div className={`ai-note ai-note--${tone}`}>
+      <SparkleIcon width={15} height={15} />
+      <div className="ai-note-body">
+        <div className="ai-note-head">
+          <b>{title}</b>
+          {confidence && <span className="ai-note-conf">{cap(confidence)} confidence</span>}
+        </div>
+        {reason && <p className="ai-note-text">{reason}</p>}
+      </div>
+    </div>
+  )
+}
+
 function truncate(text, max = 140) {
   if (!text || text.length <= max) return text
   return text.slice(0, max).trimEnd() + '…'
@@ -1014,7 +1094,7 @@ function Catalogue({ notify }) {
           />
         ) : (
           <div className="card" key={i.id}>
-            <div className="child-top">
+            <div className="child-top child-top--wrap">
               <div className="item-with-thumb">
                 {i.thumbnail && <img className={`item-thumb item-thumb--${i.type}`} src={i.thumbnail} alt="" />}
                 <div>
@@ -1031,8 +1111,8 @@ function Catalogue({ notify }) {
             </div>
             <div className="chip-row">
               {i.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
-              {i.genres.map((g) => <span className="chip chip-muted" key={g}>{g}</span>)}
-              {i.reading_level && <span className="chip chip-muted">{i.reading_level}</span>}
+              {i.genres.map((g) => <span className="chip chip-muted" key={g}>{cap(g)}</span>)}
+              {i.reading_level && <span className="chip chip-muted">{cap(i.reading_level)}</span>}
             </div>
             {/* Inline, two-step confirmation instead of a native confirm()
                 popup — matches the rest of the app's own convention of
@@ -1156,11 +1236,142 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
 }
 
 // CM11 review reported content + CM12 resolve
+// QA audit (step 4 of the catalogue-scale plan): a random slice of what
+// bulk import auto-approved/auto-rejected (app/bulk_import.py's
+// AUDIT_SAMPLE_RATE), waiting for a moderator to confirm or overturn the
+// AI's call. Not a second gate before publish — an overturned "approved"
+// item is already live until this action pulls it; an overturned "rejected"
+// one only goes live once confirmed here. That's why every row shows the
+// AI's own decision and reason before asking for a verdict.
+function AuditQueue({ notify, onCountsChange }) {
+  const [data, setData] = useState(null)
+  const [acting, setActing] = useState(null) // id mid-request
+  const [overturning, setOverturning] = useState(null) // the item awaiting an overturn reason
+  // Client-side only — the sample itself already fits in one page (see
+  // listAuditQueue's own default `limit`), so a second round-trip just to
+  // filter by a field already in hand would be waste. Real ask (Kiefer,
+  // 2026-09-24): a queue mixing AI-approved and AI-rejected spot-checks
+  // made it hard to tell at a glance whether the AI's approve calls or its
+  // reject calls needed more scrutiny.
+  const [statusFilter, setStatusFilter] = useState('')
+
+  async function reload() {
+    try { setData(await listAuditQueue()) } catch { setData({ items: [], pending_count: 0, confirmed: 0, overturned: 0, accuracy: null }) }
+  }
+  useEffect(() => { reload() }, [])
+
+  async function decide(item, decision, decisionNote) {
+    setActing(item.id)
+    try {
+      await submitAudit(item.id, { decision, note: decisionNote || undefined })
+      notify?.(
+        decision === 'confirm'
+          ? `Confirmed — the AI's call on “${item.title}” stands.`
+          : `Overturned — “${item.title}” is now ${item.status === 'approved' ? 'rejected' : 'approved'}.`,
+        decision === 'confirm' ? 'success' : 'danger',
+      )
+      await reload()
+      onCountsChange?.()
+    } catch (err) {
+      notify?.(err.message, 'danger')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  if (!data) return <p className="muted">Loading…</p>
+
+  const visibleItems = statusFilter ? data.items.filter((i) => i.status === statusFilter) : data.items
+  const approvedCount = data.items.filter((i) => i.status === 'approved').length
+  const rejectedCount = data.items.filter((i) => i.status === 'rejected').length
+
+  return (
+    <section>
+      <h2><SparkleIcon width={20} height={20} /> AI audit {data.pending_count > 0 && `(${data.pending_count})`}</h2>
+      <div className="audit-intro">
+        <p className="muted">A random sample of what the AI approved or rejected on its own during bulk import.</p>
+        <p className="muted">It is a spot-check after the fact, not a second gate before publishing.</p>
+      </div>
+      {data.accuracy !== null && (
+        <div className="chip-row audit-accuracy">
+          <span className="badge badge-approved">{Math.round(data.accuracy * 100)}% confirmed</span>
+          <span className="muted">{data.confirmed} confirmed · {data.overturned} overturned, out of {data.confirmed + data.overturned} audited so far</span>
+        </div>
+      )}
+      {data.items.length > 0 && (
+        <div className="audit-filter">
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by AI decision">
+            <option value="">All ({data.items.length})</option>
+            <option value="approved">AI approved ({approvedCount})</option>
+            <option value="rejected">AI rejected ({rejectedCount})</option>
+          </Select>
+        </div>
+      )}
+      {data.items.length === 0 && (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> Nothing sampled right now — check back after the next bulk import.</p>
+      )}
+      {data.items.length > 0 && visibleItems.length === 0 && (
+        <p className="empty-state"><CheckIcon width={18} height={18} /> No {statusFilter} items in the current sample.</p>
+      )}
+      {visibleItems.map((item) => (
+        <div className="card" key={item.id}>
+          <div className="child-top child-top--wrap">
+            <div className="item-with-thumb">
+              {item.thumbnail && <img className={`item-thumb item-thumb--${item.type}`} src={item.thumbnail} alt="" />}
+              <div>
+                <h3 className="item-title"><TypeIcon type={item.type} /> {item.title}</h3>
+                <p className="muted">{truncate(item.description, 140)}</p>
+              </div>
+            </div>
+            <span className={`badge badge-${item.status}`}>AI {item.status}</span>
+          </div>
+          <AiNote
+            tone={item.status === 'approved' ? 'approve' : 'reject'}
+            title="AI reasoning" reason={item.ai_reason || 'No reason was recorded.'} confidence={item.ai_confidence}
+          />
+          <div className="chip-row">
+            {item.age_bands.map((b) => <span className="chip" key={b}>{b}</span>)}
+            {item.genres.map((g) => <span className="chip chip-muted" key={g}>{cap(g)}</span>)}
+          </div>
+          <div className="confirm-actions" style={{ justifyContent: 'flex-start' }}>
+            <button type="button" disabled={acting === item.id} onClick={() => decide(item, 'confirm')}>
+              <CheckIcon width={16} height={16} /> AI got it right
+            </button>
+            <button type="button" className="ghost" disabled={acting === item.id} onClick={() => setOverturning(item)}>
+              <CloseIcon width={16} height={16} /> AI got it wrong
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <PromptDialog
+        open={!!overturning}
+        icon={<AlertIcon width={20} height={20} />}
+        title="Overturn this decision?"
+        message={overturning ? `“${overturning.title}” will be ${overturning.status === 'approved' ? 'removed from the catalogue' : 'published'} right away. Say why, for the record.` : ''}
+        label="Reason" type="text"
+        placeholder="e.g. too intense for 5-8 after all"
+        minLength={3}
+        confirmLabel="Overturn"
+        onConfirm={(value) => {
+          const item = overturning
+          setOverturning(null)
+          decide(item, 'overturn', value)
+        }}
+        onCancel={() => setOverturning(null)}
+      />
+    </section>
+  )
+}
+
 
 function Reports({ notify, onCountsChange }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [leaving, setLeaving] = useState(null)
+  const [confirming, setConfirming] = useState(null) // { report, action: 'dismiss' | 'remove' }
+  const [noting, setNoting] = useState(null) // the report a note is being written for
+  const [noteBusy, setNoteBusy] = useState(false)
 
   async function reload() {
     setLoading(true)
@@ -1199,29 +1410,110 @@ function Reports({ notify, onCountsChange }) {
       {!loading && items.length === 0 && (
         <p className="empty-state"><CheckIcon width={18} height={18} /> No reports right now.</p>
       )}
-      {items.map((r) => (
+      {(() => {
+        // Open reports first, then the ones already resolved (most recently
+        // resolved first), so the two never mix.
+        const openList = items.filter((r) => r.status === 'open')
+        const resolvedList = items
+          .filter((r) => r.status !== 'open')
+          .sort((x, y) => (y.resolved_at || y.ts) - (x.resolved_at || x.ts))
+        const both = openList.length > 0 && resolvedList.length > 0
+        const renderCard = (r) => (
         <div className={`card ${leaving === r.id ? 'card-leaving' : ''}`} key={r.id}>
-          <div className="child-top">
-            <div>
+          <div className="child-top child-top--wrap">
+            <div className="item-with-thumb">
+              {r.thumbnail && <img className={`item-thumb item-thumb--${r.content_type || 'book'}`} src={r.thumbnail} alt="" />}
+              <div>
               <h3 className="item-title">{r.content_type ? <TypeIcon type={r.content_type} /> : null} {r.content_title}</h3>
               <p className="muted">Reason: {r.reason}</p>
               <p className="muted">
                 Reported {timeAgo(r.ts)}
                 {r.resolved_at && <> · Resolved {timeAgo(r.resolved_at)}</>}
               </p>
+              {((r.status === 'resolved' && r.outcome) || r.note) && (
+                <div className="report-decision">
+                  {r.status === 'resolved' && r.outcome && (
+                    <span className={`report-decision-outcome report-decision-outcome--${r.outcome}`}>
+                      {r.outcome === 'removed' ? 'Content removed' : 'Dismissed, no change'}
+                    </span>
+                  )}
+                  {r.note && <span className="report-decision-note"><b>Note to the parent:</b> {r.note}</span>}
+                </div>
+              )}
+              </div>
             </div>
             <span className={`badge badge-${r.status === 'open' ? 'pending' : 'approved'}`}>{r.status}</span>
           </div>
           {r.status === 'open' && (
             <div className="row">
-              <button className="ghost small" disabled={leaving === r.id} onClick={() => act(r, 'dismiss', `Report on “${r.content_title}” dismissed.`)}>Dismiss</button>
-              <button className="danger small" disabled={leaving === r.id} onClick={() => act(r, 'remove', `“${r.content_title}” removed from the catalogue.`)}>
+              <button className="ghost small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'dismiss' })}>Dismiss</button>
+              <button className="danger small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'remove' })}>
                 <TrashIcon width={15} height={15} /> Remove content
+              </button>
+              <button className="ghost small report-note-btn" disabled={leaving === r.id} onClick={() => setNoting(r)}>
+                <ChatIcon width={16} height={16} /> <span>{r.note ? 'Edit note to parent' : 'Note to parent'}</span>
               </button>
             </div>
           )}
         </div>
-      ))}
+        )
+        return (
+          <>
+            {openList.length > 0 && (
+              <div className="report-group">
+                {both && <h4 className="report-group-label">Open ({openList.length})</h4>}
+                {openList.map(renderCard)}
+              </div>
+            )}
+            {resolvedList.length > 0 && (
+              <div className="report-group">
+                {both && <h4 className="report-group-label">Resolved ({resolvedList.length})</h4>}
+                {resolvedList.map(renderCard)}
+              </div>
+            )}
+          </>
+        )
+      })()}
+      <ConfirmDialog
+        open={!!confirming}
+        tone={confirming?.action === 'remove' ? 'danger' : 'primary'}
+        icon={confirming?.action === 'remove' ? <TrashIcon width={20} height={20} /> : <FlagIcon width={20} height={20} />}
+        title={confirming?.action === 'remove' ? 'Remove this content?' : 'Dismiss this report?'}
+        message={confirming
+          ? (confirming.action === 'remove'
+            ? `“${confirming.report.content_title}” will be removed from the catalogue and children will no longer see it. The report will be marked resolved.`
+            : `The report on “${confirming.report.content_title}” will be marked resolved and the content stays in the catalogue.`)
+          : ''}
+        confirmLabel={confirming?.action === 'remove' ? 'Remove content' : 'Dismiss report'}
+        onConfirm={() => {
+          const { report, action } = confirming
+          setConfirming(null)
+          act(report, action, action === 'remove'
+            ? `“${report.content_title}” removed from the catalogue.`
+            : `Report on “${report.content_title}” dismissed.`)
+        }}
+        onCancel={() => setConfirming(null)}
+      />
+      <ReportNoteDialog
+        open={!!noting}
+        title={noting ? `About your report on “${noting.content_title}”.` : ''}
+        initialNote={noting?.note || ''}
+        busy={noteBusy}
+        onSend={async (note) => {
+          setNoteBusy(true)
+          try {
+            await sendReportNote(noting.id, note)
+            notify?.('Note sent to the parent.')
+            setNoting(null)
+            reload()
+          } catch (err) {
+            notify?.(err.message, 'danger')
+          } finally {
+            setNoteBusy(false)
+          }
+        }}
+        onCancel={() => setNoting(null)}
+      />
     </section>
   )
 }

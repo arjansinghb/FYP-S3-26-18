@@ -1,16 +1,21 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Avatar, { AVATAR_COLORS } from '../components/Avatar'
 import RecommendationCard from '../components/RecommendationCard'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Overlay from '../components/Overlay'
+import BrowseView from '../components/BrowseView'
+import ExplainOverlay from '../components/ExplainOverlay'
+import { LevelCard, LevelChip } from '../components/LevelBadge'
+import { iconForGenre } from '../components/genreIcons'
 import ChildLogin from './ChildLogin'
 import {
   askPip, getChildToken, getChildMe, childLogout, setChildAvatar, getTopics,
   saveFavourite, removeFavourite, myFavourites, sendFeedback, startChatSession, endChatSession, speakPip,
-  resolvedTopic, ackResolvedTopic,
+  resolvedTopic, ackResolvedTopic, myLevel, pendingLevelUp, ackLevelUp,
 } from '../api'
 import { curateTitle } from '../curate'
 import {
-  BookIcon, ChatIcon, CloseIcon, CompassIcon, FlameIcon, FlaskIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
+  BookIcon, ChatIcon, CheckIcon, CompassIcon, FlameIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
   PaletteIcon, PawIcon, SendIcon, SparkleIcon, SpeakerIcon, TrashIcon, VideoIcon,
 } from '../icons'
 import { recordVisit } from '../streak'
@@ -33,16 +38,6 @@ const FALLBACK_TOPIC_PROMPTS = [
   { icon: PawIcon, label: 'Animal stories', message: 'Do you have anything about animals?' },
   { icon: CompassIcon, label: 'Adventure', message: 'I want something exciting and adventurous.' },
 ]
-const GENRE_ICONS = {
-  animals: PawIcon, nature: PawIcon,
-  adventure: CompassIcon, dinosaur: CompassIcon, mystery: CompassIcon, space: CompassIcon,
-  cosy: MoonIcon, calming: MoonIcon,
-  science: FlaskIcon,
-  funny: SparkleIcon, humor: SparkleIcon,
-}
-function iconForGenre(genre) {
-  return GENRE_ICONS[genre.toLowerCase()] || BookIcon
-}
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
@@ -122,7 +117,9 @@ function Experience({ child, setChild, onLogout }) {
       ? restoredRef.current.turns
       : [{ id: 'greeting', role: 'pip', text: `Hi ${child.name}! Tap the mic or type below to tell me what you'd like to read or watch.` }]
   ))
-  const [view, setView] = useState('chat')       // 'chat' | 'library' — Library is a real screen, not a modal
+  const [view, setView] = useState('chat')       // 'chat' | 'browse' | 'library' — real screens, not modals
+  const [level, setLevel] = useState(null)       // CH22 articulation level
+  const [explaining, setExplaining] = useState(null) // the saved item being explained to Pip (CH21)
   const [overlay, setOverlay] = useState(null)   // 'avatar' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
@@ -176,6 +173,26 @@ function Experience({ child, setChild, onLogout }) {
   // behind a header button. See the "Welcome back" strip below.
   useEffect(() => {
     myFavourites().then(setFavs).catch(() => {})
+  }, [child.id])
+
+  // CH22 — the child's articulation level, plus the payoff moment: a parent
+  // confirms explanations asynchronously, so Pip tells the child they levelled
+  // up the next time they open the app, then marks it told so it's said once.
+  const levelUpToldRef = useRef(false)
+  useEffect(() => {
+    myLevel().then(setLevel).catch(() => {})
+    pendingLevelUp().then((res) => {
+      const lu = res?.level_up
+      if (!lu || levelUpToldRef.current) return
+      levelUpToldRef.current = true  // StrictMode runs this twice in dev: say it once
+      const article = /^[aeiou]/i.test(lu.to_label) ? 'an' : 'a'
+      const text = `Guess what, ${child.name}! You just became ${article} ${lu.to_label}! Thank you for telling me all about your books and videos.`
+      setTurns((t) => [...t, { id: newId(), role: 'pip', text }])
+      speak(text)
+      ackLevelUp().catch(() => {})
+      myLevel().then(setLevel).catch(() => {})
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [child.id])
 
   // A topic Pip once had to say "Oops" to THIS child about, that real
@@ -275,6 +292,17 @@ function Experience({ child, setChild, onLogout }) {
     const last = turns[turns.length - 1]
     if (last?.role === 'pip' && !last.pending && last.recs?.length > 0) {
       lastBubbleRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' })
+      // On a short screen the bubble plus its cards can be taller than the
+      // transcript, which left the card's buttons below the fold. Nudge down
+      // just enough to show them, but never so far that Pip's own sentence
+      // is scrolled out of sight (keep its last line visible).
+      const bubble = lastBubbleRef.current
+      const box = bubble?.closest('.chat-transcript')
+      const row = bubble?.closest('.bubble-row')
+      if (box && row) {
+        const overflow = row.getBoundingClientRect().bottom - box.getBoundingClientRect().bottom
+        if (overflow > 0) box.scrollTop += Math.min(overflow, Math.max(0, bubble.offsetHeight - 24))
+      }
     } else {
       transcriptEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
     }
@@ -478,6 +506,7 @@ function Experience({ child, setChild, onLogout }) {
     setView('library')
     setFavsError(false)
     try { setFavs(await myFavourites()) } catch { setFavsError(true) }
+    myLevel().then(setLevel).catch(() => {})
   }
 
   // CH16's missing half — without this, the free-tier 5-item cap (PA34) is
@@ -505,6 +534,7 @@ function Experience({ child, setChild, onLogout }) {
   function moreLikeThis(item) {
     setDetails(null)
     setVideo(null)
+    setView('chat')
     const genre = item.genres?.[0]
     ask(genre ? `Do you have more ${item.type}s about ${genre}?` : `Do you have anything else like ${curateTitle(item.title)}?`)
   }
@@ -545,6 +575,7 @@ function Experience({ child, setChild, onLogout }) {
           {streak > 1 && (
             <span className="streak-badge"><FlameIcon width={14} height={14} /> {streak}-day streak</span>
           )}
+          <LevelChip level={level} />
         </h1>
         <div className="bar-btns">
           {canSpeak && (
@@ -563,6 +594,17 @@ function Experience({ child, setChild, onLogout }) {
         </div>
       </div>
 
+      {view !== 'library' && (
+        <div className="mode-switch" role="tablist" aria-label="How do you want to find something?">
+          <button type="button" role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'on' : ''} onClick={() => setView('chat')}>
+            <MicIcon width={18} height={18} /> Ask Pip
+          </button>
+          <button type="button" role="tab" aria-selected={view === 'browse'} className={view === 'browse' ? 'on' : ''} onClick={() => setView('browse')}>
+            <CompassIcon width={18} height={18} /> Browse
+          </button>
+        </div>
+      )}
+
       {view === 'library' ? (
         <LibraryView
           favs={favs}
@@ -570,11 +612,20 @@ function Experience({ child, setChild, onLogout }) {
           onRetry={openLibrary}
           onRemove={handleRemoveFavourite}
           onTalkAbout={(title) => { setView('chat'); ask(`Tell me more about ${title}`) }}
+          onExplain={setExplaining}
+          level={level}
+        />
+      ) : view === 'browse' ? (
+        <BrowseView
+          savedIds={new Set(favs.map((f) => f.id))}
+          onSave={handleSave}
+          onDetails={setDetails}
+          onWatch={setVideo}
         />
       ) : (
       <>
       <div className="chat-shell">
-        <div className="chat-presence">
+        <div className={`chat-presence ${hasChatted ? 'chat-presence--compact' : ''}`}>
           <div className={`chat-presence-glow ${speaking ? 'chat-presence-glow--active' : ''}`} />
           <Avatar speaking={speaking} mood={speaking ? 'idle' : 'happy'} color={color} />
           <p className={`chat-status ${listening ? 'chat-status-listening' : ''}`} aria-live="polite">{statusLine || ' '}</p>
@@ -730,6 +781,16 @@ function Experience({ child, setChild, onLogout }) {
       </>
       )}
 
+      {explaining && (
+        <ExplainOverlay
+          item={explaining}
+          color={color}
+          onClose={() => setExplaining(null)}
+          onDone={(item) => setFavs((prev) => prev.map((f) => (f.id === item.id ? { ...f, told_pip: true } : f)))}
+          speak={speak}
+        />
+      )}
+
       {/* CH19/CH20 — choose / edit avatar */}
       {overlay === 'avatar' && (
         <Overlay title="Choose your buddy's colour" onClose={() => setOverlay(null)}>
@@ -805,7 +866,7 @@ function Experience({ child, setChild, onLogout }) {
 // ("Talk about this"), not a dead-end shelf — the library and the chat
 // are one product, not two features bolted together. Remove closes the
 // free-tier cap dead-end (PA34's 5-item limit was otherwise permanent).
-function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
+function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout, onExplain, level }) {
   // A child's tap on the bin is easy to do by accident — ask first, in
   // words a young child can follow, instead of removing straight away.
   const [pendingRemove, setPendingRemove] = useState(null)
@@ -816,6 +877,8 @@ function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
         <h2><HeartIcon width={22} height={22} filled /> My Library</h2>
         <p className="muted">{favs.length === 0 ? 'Nothing saved yet' : `${favs.length} saved ${favs.length === 1 ? 'item' : 'items'}`}</p>
       </div>
+
+      <LevelCard level={level} />
 
       {favs.length === 0 && favsError && (
         <div className="library-empty">
@@ -852,6 +915,13 @@ function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
                     {f.genres.slice(0, 2).map((g) => <span className="rec-tag" key={g}>{g}</span>)}
                   </div>
                 )}
+                {f.told_pip ? (
+                  <p className="told-pip"><CheckIcon width={14} height={14} /> You told Pip about this</p>
+                ) : (
+                  <button className="library-card-action library-card-action--explain" onClick={() => onExplain(f)}>
+                    <MicIcon width={14} height={14} /> Tell Pip about this
+                  </button>
+                )}
                 <div className="library-card-actions">
                   <button className="library-card-action" onClick={() => onTalkAbout(curateTitle(f.title))}>
                     <ChatIcon width={14} height={14} /> Talk about this
@@ -884,39 +954,6 @@ function LibraryView({ favs, favsError, onRetry, onRemove, onTalkAbout }) {
         }}
         onCancel={() => setPendingRemove(null)}
       />
-    </div>
-  )
-}
-
-function Overlay({ title, icon: Icon, children, onClose }) {
-  const titleId = useId()
-  const closeRef = useRef(null)
-  const triggerRef = useRef(document.activeElement)
-
-  useEffect(() => {
-    // Move focus into the dialog on open, restore it to whatever opened
-    // the dialog on close, and let Escape dismiss it — none of that
-    // existed before (a keyboard/screen-reader user had no signal a
-    // modal had even opened, and no way out but a mouse click).
-    closeRef.current?.focus()
-    function onKeyDown(e) {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      triggerRef.current?.focus?.()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  return (
-    <div className="overlay" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e) => e.stopPropagation()}>
-        <button ref={closeRef} className="pill close" onClick={onClose} aria-label="Close"><CloseIcon width={16} height={16} /></button>
-        <h2 id={titleId}>{Icon && <Icon width={20} height={20} />} {title}</h2>
-        {children}
-      </div>
     </div>
   )
 }

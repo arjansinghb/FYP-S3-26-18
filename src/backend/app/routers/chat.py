@@ -100,14 +100,50 @@ def _shown_ids(child_id: str, session_id: str | None) -> set[str]:
     return ids
 
 
-def _disliked_ids(child_id: str) -> set[str]:
-    """CH17 — "Not for me" now actually means something: once a child
-    dislikes an item, it's excluded from every future recommendation for
-    them, not just this session. (Liked items aren't specially re-ranked in
-    this pass — see PA31/oversight's genre trends for where "liked" data
-    already surfaces instead; hard-excluding dislikes is the one behaviour
-    change that's both safe and directly verifiable.)"""
-    return {f["content_id"] for f in db.feedback.get(child_id, []) if f.get("liked") is False}
+DISLIKE_DAYS = 30
+
+
+def _disliked_ids(child_id: str, now: float | None = None) -> set[str]:
+    """CH17: "Not for me" keeps an item out of Pip's picks for DISLIKE_DAYS,
+    then it may come back. Forever would punish a mis-tap and a child's
+    changing taste, and would slowly empty a small catalogue. A later "Loved
+    it" or a later save cancels it straight away. Only the child's most recent
+    verdict on an item counts. The item itself stays in the catalogue, in
+    Browse and in the Library; this only affects what Pip suggests."""
+    now = time.time() if now is None else now
+    latest: dict[str, tuple[float, bool]] = {}
+    for f in db.feedback.get(child_id, []):
+        ts = f.get("ts")
+        ts = now if ts is None else ts  # an entry with no timestamp is treated as just given
+        prev = latest.get(f["content_id"])
+        if prev is None or ts >= prev[0]:
+            latest[f["content_id"]] = (ts, f.get("liked"))
+    saved_at = {f["content_id"]: f.get("ts") or 0 for f in db.favourites.get(child_id, [])}
+    return {
+        cid for cid, (ts, liked) in latest.items()
+        if liked is False and now - ts < DISLIKE_DAYS * 86400 and saved_at.get(cid, 0) <= ts
+    }
+
+
+LEARNED_GENRES = 3
+
+
+def _learned_genres(child_id: str) -> list[str]:
+    """Genres this child has shown they like: items they marked "Loved it" or
+    saved, most frequent first, at most LEARNED_GENRES of them. A soft hint
+    for retrieval and phrasing, like the parent's interests; it never narrows
+    what Pip can recommend. Items no longer in the catalogue are skipped."""
+    ids = [f["content_id"] for f in db.feedback.get(child_id, []) if f.get("liked") is True]
+    ids += [f["content_id"] for f in db.favourites.get(child_id, [])]
+    counts: dict[str, int] = {}
+    for content_id in dict.fromkeys(ids):
+        item = db.content.get(content_id)
+        for genre in (item or {}).get("genres", []):
+            g = genre.strip().lower()
+            if g:
+                counts[g] = counts.get(g, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [g for g, _ in ranked[:LEARNED_GENRES]]
 
 
 # How many genuine misses in a row (asked for something real, nothing in the
@@ -255,6 +291,15 @@ def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends
                     "on that' — never say it doesn't exist."
                 )
             catalogue = [c for c in catalogue if c["id"] not in exclude]
+        # Something the child already saved isn't a recommendation: they have
+        # it. Left out, but softly. If that would leave nothing, or nothing
+        # that matches a genre the message names, the favourites stay in so
+        # Pip never answers "I have nothing" while holding a perfect match.
+        saved = {f["content_id"] for f in db.favourites.get(child["id"], [])}
+        if saved:
+            fresh = [c for c in catalogue if c["id"] not in saved]
+            if fresh and (not _named_genre_items(body.message, catalogue) or _named_genre_items(body.message, fresh)):
+                catalogue = fresh
 
     # Age eligibility (and PA18 overrides) is already fully resolved by
     # _visible_catalogue above — the brain never re-filters by age_band
@@ -282,6 +327,7 @@ def chat(body: ChatRequest, creds: HTTPAuthorizationCredentials | None = Depends
             history=history, reading_level=child.get("reading_level") if child else None,
             already_shown_note=already_shown_note,
             interests=child.get("interests") if child else None,
+            liked_genres=_learned_genres(child["id"]) if child else None,
         )
         result.reply, guardrail = guardrails.check_output(result.reply)
         if guardrail:
@@ -440,6 +486,10 @@ def list_favourites(creds: HTTPAuthorizationCredentials = Depends(require_bearer
                 "id": item["id"], "title": item["title"], "type": item["type"],
                 "description": item.get("description", ""), "thumbnail": item.get("thumbnail"),
                 "genres": item.get("genres", []),
+                # CH21 — lets the Library show "Tell Pip about this" only for
+                # items that can still be explained. A declined explanation
+                # frees the item again, and the child never sees the decline.
+                "told_pip": db.explanation_blocks_item(child["id"], item["id"]),
             })
     return out
 

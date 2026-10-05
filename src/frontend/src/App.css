@@ -53,6 +53,27 @@
   width: 116px;
   height: 116px;
 }
+/* Once the conversation has started the big mascot has done its job. Left at
+   full size it eats ~170px of a short laptop screen and squeezes the
+   recommendation cards (reported by a tester: "the Pip icon is blocking most
+   of the page"). It shrinks to a slim row instead: small avatar, status text
+   beside it. */
+.chat-presence--compact {
+  flex-direction: row;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.chat-presence--compact .avatar { width: 52px; height: 52px; }
+.chat-presence--compact .chat-presence-glow { display: none; }
+.chat-presence--compact .chat-status { min-height: 0; }
+/* Even before the first message, don't let the mascot take a third of a short
+   screen. */
+@media (max-height: 760px) {
+  .chat-presence:not(.chat-presence--compact) { padding-top: var(--space-2); }
+  .chat-presence:not(.chat-presence--compact) .avatar { width: 84px; height: 84px; }
+  .chat-presence:not(.chat-presence--compact) .chat-presence-glow { width: 124px; height: 124px; }
+}
 /* Presence glow — motivated by Pip's own speaking state, not a permanent
    decorative halo: quiet at rest, pulses only while Pip is actually
    talking (see .chat-presence-glow--active below). A static purple aurora
@@ -230,17 +251,17 @@
   background: var(--surface);
   color: var(--primary-700);
   cursor: pointer;
-  max-width: 220px;
+  max-width: min(100%, 340px);
+  text-align: left;
+  line-height: 1.3;
+  border-radius: 20px;
   transition: border-color 0.12s, transform 0.1s;
 }
 .welcome-back-fav-chip svg { flex-shrink: 0; }
-.welcome-back-fav-chip span,
-.welcome-back-fav-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The title sits in a <span> so the ellipsis actually applies (a bare text
-   node inside an inline-flex button can't be ellipsised — it just overflowed
-   and got clipped on both sides). min-width: 0 lets the span shrink inside
-   the chip's max-width instead of forcing the chip wider. */
-.welcome-back-fav-chip span { min-width: 0; }
+/* The whole title is shown: a long one wraps onto a second line instead of
+   being cut off at a fixed width (it used to read "Goodnight Farm Frien…",
+   which hid the one thing that tells a child which book it is). */
+.welcome-back-fav-chip span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* Scoped through .welcome-back-fav-row so this reliably beats parent.css's
    global `button:hover:not(:disabled)` fill (same cross-page CSS-bundling
    bleed-through as the pills/logo in child.css — see those comments for

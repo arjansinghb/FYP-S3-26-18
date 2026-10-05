@@ -8,7 +8,7 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..deps import require_role
-from ..models import ChildComparisonOut, ChildTrendsOut, ReportOut, ReportRequest
+from ..models import ChildComparisonOut, ChildTrendsOut, GenreCount, ReportOut, ReportRequest
 from ..storage import db
 
 router = APIRouter(prefix="/api/children", tags=["oversight"])
@@ -26,7 +26,9 @@ def _report_out(r: dict) -> ReportOut:
     return ReportOut(
         id=r["id"], content_id=r["content_id"],
         content_title=content["title"] if content else "(removed content)",
+        content_type=content["type"] if content else None,
         reason=r["reason"], status=r["status"], ts=r["ts"],
+        resolved_at=r.get("resolved_at"), outcome=r.get("outcome"), note=r.get("note"),
     )
 
 
@@ -113,12 +115,24 @@ def child_trends(child_id: str, parent: dict = Depends(require_role("parent"))):
     activity = db.activity.get(child_id, [])
     total_recs = sum(len(a.get("rec_ids", [])) for a in activity)
     genre_counts = _genre_counts(child_id)
+    kinds = Counter()
+    for entry in activity:
+        for rec_id in entry.get("rec_ids", []):
+            item = db.content.get(rec_id)
+            if item:
+                kinds[item.get("type")] += 1
+    cutoff = time.time() - 60 * 86400  # bounded payload; the chart only shows the most recent weeks
     return ChildTrendsOut(
         child_id=child["id"],
         total_messages=len(activity),
         total_recommendations=total_recs,
         favourites_count=len(db.favourites.get(child_id, [])),
         top_genres=[g for g, _ in genre_counts.most_common(5)],
+        genre_counts=[GenreCount(genre=g, count=n) for g, n in genre_counts.most_common(5)],
+        books_recommended=kinds["book"],
+        videos_recommended=kinds["video"],
+        message_timestamps=[a["ts"] for a in activity if a.get("ts", 0) >= cutoff],
+        interests=child.get("interests", []),
     )
 
 

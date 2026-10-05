@@ -92,7 +92,25 @@ def _source_gate(c: dict, media_type: str) -> str | None:
     return None
 
 
+def run_both(topic: str, limit: int = 10, auto_approve: bool = True) -> dict:
+    """A topic nobody asked a format for: search books and videos, splitting the
+    limit between them, and return one combined report."""
+    limit = max(1, min(int(limit), MAX_LIMIT))
+    per_format = max(1, limit // 2)
+    parts = [run(topic, "book", per_format, auto_approve), run(topic, "video", per_format, auto_approve)]
+    out = {
+        "topic": topic.strip(), "type": "any", "auto_approve": auto_approve,
+        "topic_flagged": any(p["topic_flagged"] for p in parts),
+        "items": [item for p in parts for item in p["items"]],
+    }
+    for key in ("found", "skipped_duplicates", "skipped_off_topic", "approved", "rejected", "pending"):
+        out[key] = sum(p[key] for p in parts)
+    return out
+
+
 def run(topic: str, media_type: str, limit: int = 10, auto_approve: bool = True) -> dict:
+    if media_type == "any":
+        return run_both(topic, limit, auto_approve)
     limit = max(1, min(int(limit), MAX_LIMIT))
     topic = topic.strip()
 

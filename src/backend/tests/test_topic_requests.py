@@ -226,3 +226,70 @@ def test_dismissing_an_already_gone_topic_is_still_a_204(client: TestClient, mod
 def test_only_moderators_can_dismiss_topic_requests(client: TestClient, active_parent: dict):
     assert client.delete("/api/content/topic-requests/x", headers=active_parent["headers"]).status_code == 403
     assert client.delete("/api/content/topic-requests/x").status_code in (401, 403)
+
+
+# ---- a request that names no format means "book or video": look in both ----
+
+def test_a_topic_asked_without_a_format_is_listed_as_any(client: TestClient, child_session: dict, moderator: dict, monkeypatch):
+    from app.routers import chat as chat_router
+    from app.storage import db
+
+    db.topic_misses.clear()
+    monkeypatch.setattr(chat_router, "get_brain", lambda: _fake_brain("minecraft", "any"))
+    client.post("/api/chat", headers=child_session["headers"], json={"message": "anything about minecraft?"})
+    rows = client.get("/api/content/topic-requests", headers=moderator["headers"]).json()
+    assert [(x["topic"], x["format"]) for x in rows] == [("minecraft", "any")]
+
+
+def test_a_named_format_still_wins_when_there_is_no_any_request(client: TestClient, child_session: dict, moderator: dict, monkeypatch):
+    from app.routers import chat as chat_router
+    from app.storage import db
+
+    db.topic_misses.clear()
+    monkeypatch.setattr(chat_router, "get_brain", lambda: _fake_brain("fortnite", "video"))
+    client.post("/api/chat", headers=child_session["headers"], json={"message": "a video about fortnite"})
+    rows = client.get("/api/content/topic-requests", headers=moderator["headers"]).json()
+    assert [(x["topic"], x["format"]) for x in rows] == [("fortnite", "video")]
+
+
+def test_auto_import_picks_up_an_any_only_topic_and_searches_both_formats(client: TestClient, moderator: dict, monkeypatch):
+    from app.routers import content as content_router
+    from app.storage import db
+
+    db.topic_misses.clear()
+    db.topic_misses.append({"key": "minecraft", "topic": "minecraft", "count": 3, "formats": {"book": 0, "video": 0, "any": 3},
+                            "first_at": 1.0, "last_at": 2.0})
+    calls = []
+    monkeypatch.setattr(content_router.bulk_import, "run", lambda topic, fmt, limit=10, auto_approve=True: calls.append((topic, fmt)) or {})
+    r = client.post("/api/content/topic-requests/auto-import", headers=moderator["headers"])
+    assert r.json() == {"imported_topic": "minecraft"}
+    assert calls == [("minecraft", "any")]
+
+
+def test_bulk_import_any_runs_both_formats_and_merges(monkeypatch):
+    from app import bulk_import
+
+    seen = []
+
+    def fake(topic, media_type, limit=10, auto_approve=True):
+        seen.append((media_type, limit))
+        return {"topic": topic, "type": media_type, "found": 4, "skipped_duplicates": 1, "skipped_off_topic": 0,
+                "auto_approve": auto_approve, "topic_flagged": media_type == "video", "approved": 2, "rejected": 1, "pending": 0,
+                "items": [{"id": media_type, "title": media_type}]}
+
+    real_run = bulk_import.run
+    monkeypatch.setattr(bulk_import, "run", fake)
+    out = bulk_import.run_both("minecraft", limit=10, auto_approve=True)
+    monkeypatch.setattr(bulk_import, "run", real_run)
+
+    assert seen == [("book", 5), ("video", 5)]
+    assert out["type"] == "any" and out["found"] == 8 and out["approved"] == 4 and out["topic_flagged"] is True
+    assert [i["id"] for i in out["items"]] == ["book", "video"]
+
+
+def test_bulk_import_endpoint_accepts_any(client: TestClient, moderator: dict, monkeypatch):
+    from app.routers import content as content_router
+
+    monkeypatch.setattr(content_router.bulk_import, "run", lambda topic, t, limit=10, auto_approve=True: {"topic": topic, "type": t})
+    r = client.post("/api/content/bulk-import", headers=moderator["headers"], json={"topic": "minecraft", "type": "any"})
+    assert r.status_code == 200 and r.json()["type"] == "any"

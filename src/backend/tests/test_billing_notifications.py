@@ -72,6 +72,10 @@ def test_pa33_second_child_allowed_on_premium(client: TestClient, active_parent:
 def test_pa31_child_trends(client: TestClient, active_parent: dict, child: dict):
     r = client.get(f"/api/children/{child['id']}/trends", headers=active_parent["headers"])
     assert r.status_code == 200
+    body = r.json()
+    for key in ("genre_counts", "books_recommended", "videos_recommended", "message_timestamps", "interests"):
+        assert key in body
+    assert body["top_genres"] == [g["genre"] for g in body["genre_counts"]]
 
 
 def test_pa32_multi_child_comparison(client: TestClient, active_parent: dict):
@@ -83,28 +87,12 @@ def test_pa32_multi_child_comparison(client: TestClient, active_parent: dict):
     assert len(r.json()) == 2
 
 
-def test_ultra_tier_is_not_offered_in_this_prototype(client: TestClient, active_parent: dict):
-    """A 2nd paid tier ("ultra") existed briefly (2026-09-07) — deliberately
-    held back out of this prototype for now, planned for the final product
-    instead (Kiefer's call, 2026-09-23; see models.py's AccountTier
-    comment). "premium" is the only value SubscribeRequest.tier accepts, so
-    asking for "ultra" is a plain 422 (Pydantic rejects it), never a 400
-    "already subscribed" or a silent fallback to some other tier."""
-    r = client.post("/api/account/subscribe", headers=active_parent["headers"], json={"tier": "ultra", "billing_cycle": "monthly"})
-    assert r.status_code == 422
-    # and the account's own tier is completely unaffected by the attempt
-    assert client.get("/api/account/subscription", headers=active_parent["headers"]).json()["tier"] == "premium"
-
-
-def test_premium_child_limit_still_caps_at_four_with_no_ultra_escape_hatch(client: TestClient, active_parent: dict):
+def test_premium_child_limit_caps_at_four(client: TestClient, active_parent: dict):
     """`active_parent` already has 2 children (PA33's test above) — fill up
-    to Premium's real cap of 4, then confirm a 5th is rejected. With "ultra"
-    (unlimited profiles) gone, Premium is the highest tier there is right
-    now, so this cap has to actually hold, not just be reachable in theory."""
+    to Premium's real cap of 4, then confirm a 5th is rejected."""
     for name in ("Third Kid", "Fourth Kid"):
         r = client.post("/api/children", headers=active_parent["headers"], json={"name": name, "age_band": "5-8"})
         assert r.status_code == 201
 
     r = client.post("/api/children", headers=active_parent["headers"], json={"name": "Fifth Kid", "age_band": "5-8"})
     assert r.status_code == 403
-    assert "Ultra" not in r.json()["detail"]  # the old escape-hatch upsell must not linger in the copy
