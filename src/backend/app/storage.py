@@ -49,6 +49,7 @@ class Database:
         # fallback, the other half of this fix).
         self.tokens: dict[str, dict] = {}
         self.tickets: list[dict] = []             # escalated support tickets (SA14)
+        self._last_retention_run = 0.0            # throttle for apply_retention()
         # PA18 — per-child overrides on top of the global catalogue status.
         self.content_overrides: dict[str, dict] = {}   # child_id -> {content_id: "approve"|"hide"}
         # PA20 — in-app notifications.
@@ -556,6 +557,67 @@ class Database:
                     self._clear_child_data(child_id, full=False)
                 record["status"] = "completed"
 
+    # ---------- SA14 support tickets (raised by parents) ----------
+
+    MAX_OPEN_TICKETS_PER_PARENT = 5
+
+    def tickets_for(self, parent_id: str) -> list[dict]:
+        return sorted((t for t in self.tickets if t.get("parent_id") == parent_id), key=lambda t: t["ts"], reverse=True)
+
+    def create_ticket(self, account: dict, subject: str, message: str) -> dict:
+        ticket = {
+            "id": _new_id(), "parent_id": account["id"], "parent_name": account["name"], "subject": subject,
+            "from_email": account["email"], "message": message, "status": "open", "ts": time.time(),
+        }
+        self.tickets.append(ticket)
+        return ticket
+
+    # ---------- PA29 data retention ----------
+
+    RETENTION_MIN_DAYS = 7
+    MINIMAL_RETENTION_DAYS = 30
+
+    def standard_retention_days(self) -> int:
+        """How long chat history is kept by default: the admin's SA10 setting,
+        never below RETENTION_MIN_DAYS."""
+        try:
+            days = int(self.system["compliance"].get("data_retention_days", 365))
+        except (TypeError, ValueError):
+            days = 365
+        return max(self.RETENTION_MIN_DAYS, days)
+
+    def retention_days(self, account: dict | None) -> int:
+        """A parent who chose "minimal" (PA29) gets the shorter of the two periods."""
+        standard = self.standard_retention_days()
+        minimal = (account or {}).get("privacy_settings", {}).get("retention_preference") == "minimal"
+        return min(standard, self.MINIMAL_RETENTION_DAYS) if minimal else standard
+
+    def apply_retention(self, force: bool = False) -> int:
+        """Deletes chat conversations (the activity log and the sessions) older
+        than each child's retention period. Favourites, feedback and the
+        child's learning progress are kept. Runs lazily on authenticated
+        requests, at most once an hour (no cron needed), and saves when it
+        actually removed something. Returns how many records it removed."""
+        now = time.time()
+        if not force and now - self._last_retention_run < 3600:
+            return 0
+        self._last_retention_run = now
+        removed = 0
+        for child in self.children.values():
+            cutoff = now - self.retention_days(self.accounts.get(child["parent_id"])) * 86400
+            log = self.activity.get(child["id"], [])
+            kept = [a for a in log if a.get("ts", now) >= cutoff]
+            if len(kept) != len(log):
+                self.activity[child["id"]] = kept
+                removed += len(log) - len(kept)
+            for sid in [s for s, sess in self.chat_sessions.items()
+                        if sess["child_id"] == child["id"] and sess.get("started_at", now) < cutoff]:
+                self.chat_sessions.pop(sid, None)
+                removed += 1
+        if removed:
+            self.save()
+        return removed
+
     # ---------- UV04 reviews ----------
 
     def add_review(self, parent_id: str, parent_name: str, rating: int, text: str,
@@ -590,15 +652,23 @@ class Database:
     # ---------- PA20/22 notifications ----------
 
     def add_notification(self, parent_id: str, type_: str, title: str, body: str) -> dict | None:
+        """PA20/PA22. Each channel the parent switched on gets the message: the
+        in-app bell (stored, returned) and/or email (sent, best-effort). Push is
+        not delivered yet."""
         account = self.accounts.get(parent_id)
-        channels = (account or {}).get("notification_preferences", {}).get("channels", {})
-        if not account or not channels.get("in_app", True):
-            return None  # respects the parent's own preference (PA22) — only in_app actually delivers
-        notif = {
-            "id": _new_id(), "parent_id": parent_id, "type": type_, "title": title,
-            "body": body, "created_at": time.time(), "read": False,
-        }
-        self.notifications.append(notif)
+        if not account:
+            return None
+        channels = account.get("notification_preferences", {}).get("channels", {})
+        notif = None
+        if channels.get("in_app", True):
+            notif = {
+                "id": _new_id(), "parent_id": parent_id, "type": type_, "title": title,
+                "body": body, "created_at": time.time(), "read": False,
+            }
+            self.notifications.append(notif)
+        if channels.get("email") and account.get("email"):
+            from . import email_service
+            email_service.send_notification_email(account["email"], title, body)
         return notif
 
     def notifications_for(self, parent_id: str) -> list[dict]:
@@ -844,7 +914,12 @@ class Database:
         return exp, leveled_up
 
     def children_of(self, parent_id: str) -> list[dict]:
-        return [c for c in self.children.values() if c["parent_id"] == parent_id]
+        # Oldest profile first, always. The stored dict comes back from
+        # Firestore keyed by random child id, so without sorting the order
+        # was arbitrary (a child added later could show up ahead of the first
+        # one). Profiles without a `created` stamp sort first.
+        mine = [c for c in self.children.values() if c["parent_id"] == parent_id]
+        return sorted(mine, key=lambda c: c.get("created", 0))
 
     def find_child_by_login_id(self, login_id: str):
         login_id = login_id.strip().upper()
@@ -954,13 +1029,7 @@ class Database:
         # a system admin account
         self.create_account("admin@pip.local", "admin123", "Demo Admin", role="admin")
 
-        # a couple of escalated support tickets to review (SA14)
-        self.tickets = [
-            {"id": _new_id(), "subject": "Child can't log in with code", "from_email": "parent_a@example.com",
-             "message": "My daughter's linking code says invalid.", "status": "open", "ts": time.time()},
-            {"id": _new_id(), "subject": "Voice not working on Firefox", "from_email": "parent_b@example.com",
-             "message": "The microphone button does nothing in Firefox.", "status": "open", "ts": time.time()},
-        ]
+        # Support tickets are raised by parents (see routers/account.py), not seeded.
 
         seed_items = [
             ("book", "The Dragon Who Couldn't Stop Sneezing", "A giggly story about a clumsy dragon.", ["5-8"], ["funny", "animals"], "early"),

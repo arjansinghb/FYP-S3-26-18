@@ -87,6 +87,9 @@ def test_sa09_10_11_13_config_sections_readable_and_editable(client: TestClient,
                     json={"app_name": "Pip Test", "maintenance_mode": True, "support_email": "help@pip.local"})
     assert r.status_code == 200
     assert r.json()["maintenance_mode"] is True
+    # Maintenance mode now really pauses parents and children, so switch it
+    # back off or every later test in this file would be turned away.
+    client.put("/api/admin/config/settings", headers=admin["headers"], json={"maintenance_mode": False})
 
     r = client.get("/api/admin/config/unknown-section", headers=admin["headers"])
     assert r.status_code == 404
@@ -107,10 +110,18 @@ def test_sa12_edit_project_website(client: TestClient, admin: dict):
 
 
 def test_sa14_support_tickets(client: TestClient, admin: dict):
+    # Tickets are raised by parents now; none are seeded. Own parent here: the
+    # shared one is suspended and re-tokened by the SA03/SA06/SA07 tests above.
+    signup = client.post("/api/auth/signup", json={"email": "sa14.parent@example.com", "password": "TestPass123", "name": "SA14 Parent"})
+    assert signup.status_code == 200, signup.text
+    parent_headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+    r = client.post("/api/account/support", headers=parent_headers,
+                    json={"subject": "Voice not working", "message": "The mic button does nothing for my son."})
+    assert r.status_code == 201
     r = client.get("/api/admin/tickets", headers=admin["headers"])
     assert r.status_code == 200
     tickets = r.json()
-    assert len(tickets) >= 1  # _seed() ships with two open tickets
+    assert len(tickets) >= 1
 
     r = client.post(f"/api/admin/tickets/{tickets[0]['id']}/resolve", headers=admin["headers"])
     assert r.status_code == 200

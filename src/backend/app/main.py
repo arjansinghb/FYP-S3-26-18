@@ -10,8 +10,9 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from . import metrics
+from . import maintenance, metrics
 from .config import settings
 from .routers import account, admin, articulation, auth, browse, chat, child, children, content, health, oversight, public, reports
 from .storage import db
@@ -40,6 +41,21 @@ def _warn_if_zdr_unresolved() -> None:
             "coursework prototype, no real children's data), or ZDR_STATUS=confirmed "
             "once a real agreement is in place with OpenAI."
         )
+
+@app.middleware("http")
+async def maintenance_gate(request: Request, call_next):
+    """SA11 maintenance mode: while it is on, only admins and moderators get
+    through (see app/maintenance.py). Registered BEFORE the CORS middleware on
+    purpose, so CORS wraps it and the 503 still carries the CORS headers the
+    browser needs to read the message."""
+    if request.method == "OPTIONS" or maintenance.is_open_path(request.url.path) or not maintenance.active():
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else None
+    if maintenance.is_staff_token(token):
+        return await call_next(request)
+    return JSONResponse(maintenance.payload(), status_code=503, headers={"Retry-After": "300"})
+
 
 # Let the React dev server (any localhost port) call the API during development.
 app.add_middleware(

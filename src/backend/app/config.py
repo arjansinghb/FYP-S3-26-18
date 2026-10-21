@@ -125,6 +125,10 @@ class Settings:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
     RESEND_FROM = os.getenv("RESEND_FROM", "Pip <onboarding@resend.dev>")
 
+    # Where the web app lives — verification emails link to <FRONTEND_URL>/parent/verify?token=...
+    # (set it to the deployed frontend's address in production).
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
     # Allow the React dev server (any localhost port) to call the API.
     CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"http://localhost:\d+")
 

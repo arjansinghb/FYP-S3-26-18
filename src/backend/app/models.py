@@ -125,6 +125,35 @@ class PrivacySettings(BaseModel):
     retention_preference: Literal["standard", "minimal"] = "standard"
 
 
+class PrivacySettingsOut(PrivacySettings):
+    """What PA29 actually does: chat conversations older than these many days
+    are deleted automatically, the standard period being the admin's SA10
+    setting. Read-only here."""
+    standard_days: int = 365
+    minimal_days: int = 30
+
+
+class SupportTicketCreate(BaseModel):
+    subject: str = Field(min_length=3, max_length=100)
+    message: str = Field(min_length=10, max_length=1000)
+
+    @model_validator(mode="after")
+    def _trim(self):
+        self.subject, self.message = self.subject.strip(), self.message.strip()
+        if len(self.subject) < 3 or len(self.message) < 10:
+            raise ValueError("Add a short subject and a few words about what you need.")
+        return self
+
+
+class SupportTicketOut(BaseModel):
+    id: str
+    subject: str
+    message: str
+    status: Literal["open", "resolved"]
+    ts: float
+    resolved_at: Optional[float] = None
+
+
 class DataDeletionRequestOut(BaseModel):
     id: str
     child_id: str

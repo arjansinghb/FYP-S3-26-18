@@ -8,6 +8,7 @@
      hierarchy instead of mixing families ---- */
   --font: 'Nunito', system-ui, 'Segoe UI', Roboto, sans-serif;
 
+  --text-2xs: 12px;   /* micro labels only: counters, chart axes, tiny chips */
   --text-xs: 13px;    /* fine print, timestamps, meta */
   --text-sm: 15px;    /* captions, secondary labels */
   --text-base: 16px;  /* body copy default */
@@ -43,6 +44,11 @@
   --radius-md: 16px;
   --radius-lg: 22px;
   --radius-pill: 999px;
+
+  /* ---- elevation: three levels, so every raised surface reads the same ---- */
+  --shadow-sm: 0 6px 16px color-mix(in srgb, var(--primary-700) 6%, transparent);   /* cards at rest */
+  --shadow-md: 0 10px 22px color-mix(in srgb, var(--primary-700) 10%, transparent); /* hovered / lifted cards */
+  --shadow-lg: 0 16px 40px color-mix(in srgb, var(--ink) 14%, transparent);         /* popovers, dialogs, sheets */
 
   /* ---- colour: 1 primary + 1 accent + neutrals. Every colour below
      has exactly one defined job — see the comment on each. Nothing
@@ -88,11 +94,11 @@
      a healthy system. */
   --blue-700: #1d5fae;   --blue-100: #e3edfb;
   --pink-700: #b0246f;   --pink-100: #fbe3f0;
-  --amber-700: #a5670c;  --amber-100: #fbedd6;
-  --teal-700: #157a6e;   --teal-100: #dff5f2;
+  --amber-700: #8d570a;  --amber-100: #fbedd6;
+  --teal-700: #11695f;   --teal-100: #dff5f2;
   --indigo-700: #4338a8; --indigo-100: #eae8fb;
-  --orange-700: #c2540c; --orange-100: #fde8d6;
-  --cyan-700: #0e7c86;   --cyan-100: #dcf3f4;
+  --orange-700: #a84a0a; --orange-100: #fde8d6;
+  --cyan-700: #0b6e77;   --cyan-100: #dcf3f4;
   --brown-700: #8a5a2e;  --brown-100: #f2e6d8;
   --magenta-700: #a3218e; --magenta-100: #f7e2f4;
 
@@ -101,7 +107,7 @@
      meant to actually read. */
   --ink: #241f36;
   --text: #4a4460;
-  --muted: #6f6789;
+  --muted: #665e80;
   --border: #ece6f5;
   --surface: #ffffff;
   --bg: #fdf9f2;

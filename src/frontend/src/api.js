@@ -5,13 +5,26 @@
 // the child chat falls back to the local placeholder so the avatar still works.
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
-const TOKEN_KEY = 'pip_parent_token'
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY)
+// One token slot per area (parent / moderator / admin), picked by the page
+// the call is made from. They used to share a single key, so signing in as
+// admin in a second tab silently swapped the parent tab's token for the
+// admin's: the parent page still looked signed in, but every call after
+// that (a support request, saving settings...) went out as an admin and was
+// rejected with "Not allowed for this role". Each area keeps its own
+// session now, and signing out of one no longer signs out the others.
+function tokenKey(role) {
+  const area = role || (window.location.pathname.startsWith('/admin') ? 'admin'
+    : window.location.pathname.startsWith('/moderator') ? 'moderator' : 'parent')
+  return `pip_${area}_token`
 }
-export function setToken(t) {
-  if (t) localStorage.setItem(TOKEN_KEY, t)
-  else localStorage.removeItem(TOKEN_KEY)
+export function getToken() {
+  return localStorage.getItem(tokenKey())
+}
+// `role` is only passed at sign-in: every role signs in on the same page
+// now, so the slot comes from who actually signed in, not from the page.
+export function setToken(t, role) {
+  if (t) localStorage.setItem(tokenKey(role), t)
+  else localStorage.removeItem(tokenKey(role))
 }
 
 // Separate token for a logged-in child (different person, different device).
@@ -25,13 +38,13 @@ export function setChildToken(t) {
 }
 
 // auth: false | 'parent' | 'child'  -> which token (if any) to attach
-async function request(path, { method = 'GET', body, auth = false } = {}) {
+async function request(path, { method = 'GET', body, auth = false, token } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   if (auth === 'child') {
     const t = getChildToken()
     if (t) headers['Authorization'] = `Bearer ${t}`
   } else if (auth) {
-    const t = getToken()
+    const t = token || getToken()
     if (t) headers['Authorization'] = `Bearer ${t}`
   }
   const res = await fetch(`${API_BASE}${path}`, {
@@ -41,15 +54,35 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
   })
   if (!res.ok) {
     let detail
+    let body = null
     try {
-      detail = (await res.json()).detail
+      body = await res.json()
+      detail = body.detail
     } catch {
       detail = res.statusText
+    }
+    // A signed-in call that is no longer signed in (the session was cleared or expired, e.g. a
+    // logout in another tab): tell the page so it can fall back to the sign-in screen instead of
+    // showing a raw "Not authenticated".
+    // Only the "no usable session" answers — a 401 can also mean something else (a wrong password
+    // on a confirmation step), and that must not sign anyone out.
+    if (auth && auth !== 'child' && ['Not authenticated', 'Invalid or expired token', 'Account not found'].includes(detail)) {
+      window.dispatchEvent(new CustomEvent('pip-session-expired'))
+    }
+    // 503 from this API means maintenance mode is on (SA11): tell the app, so
+    // it can show the maintenance screen instead of a bare error.
+    if (res.status === 503 && body && typeof detail === 'string') {
+      window.dispatchEvent(new CustomEvent('pip-maintenance', { detail: { message: detail, supportEmail: body.support_email || '' } }))
     }
     throw new Error(detail || `Request failed (${res.status})`)
   }
   if (res.status === 204) return null
   return res.json()
+}
+
+// ----- maintenance mode (SA11) -----
+export async function getMaintenanceStatus() {
+  return request('/api/public/maintenance')
 }
 
 // ----- public landing (no login) -----
@@ -255,16 +288,24 @@ export async function signup(email, password, name) {
 }
 export async function login(email, password) {
   const data = await request('/api/auth/login', { method: 'POST', body: { email, password } })
-  setToken(data.token)
+  setToken(data.token, data.account.role)
   return data.account
 }
 export async function logout() {
+  // Sign out HERE first, then tell the server. The server round-trip can take seconds, and
+  // until it finished the old session was still stored: a quick click to another page restored
+  // it (a ghost dashboard whose token vanished a moment later — "Not authenticated"), and a page
+  // load in that window meant the token was never removed at all. The slot is picked now, before
+  // anything else, because callers switch page right after calling this (admin -> sign-in page).
+  const slot = tokenKey()
+  const token = localStorage.getItem(slot)
+  localStorage.removeItem(slot)
+  if (!token) return
   try {
-    await request('/api/auth/logout', { method: 'POST', auth: true })
+    await request('/api/auth/logout', { method: 'POST', auth: true, token })
   } catch {
     /* ignore network errors on logout */
   }
-  setToken(null)
 }
 export async function getMe() {
   return request('/api/auth/me', { auth: true })
@@ -296,6 +337,12 @@ export async function getConsent() {
 }
 export async function giveConsent(password) {
   return request('/api/account/consent', { method: 'POST', body: { password }, auth: true })
+}
+export async function createSupportTicket(subject, message) {
+  return request('/api/account/support', { method: 'POST', body: { subject, message }, auth: true })
+}
+export async function mySupportTickets() {
+  return request('/api/account/support', { auth: true })
 }
 export async function getPrivacySettings() {
   return request('/api/account/privacy-settings', { auth: true })

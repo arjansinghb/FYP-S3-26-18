@@ -191,7 +191,7 @@
 .library-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   overflow: hidden; display: flex; flex-direction: column;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-700) 6%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 .library-cover {
   /* Fixed height (not aspect-ratio — this box holds both book covers,
@@ -250,7 +250,7 @@
 /* ---------- recommendation cards (rendered inside a pip bubble — see App.css's .bubble-recs) ---------- */
 .rec-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 8%, transparent); text-align: left;
+  box-shadow: var(--shadow-sm); text-align: left;
 }
 /* The card Pip leads with, when there's a second option to compare
    against — a slightly thicker, tinted border, not a second colour or a
@@ -357,7 +357,7 @@
 }
 .sheet {
   background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-6); max-width: 520px; width: 100%;
-  max-height: 84vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  max-height: 84vh; overflow-y: auto; box-shadow: var(--shadow-lg);
 }
 .sheet h2 {
   display: flex; align-items: center; gap: var(--space-2);
@@ -417,7 +417,7 @@
 .level-ring text { fill: var(--lv-700); font-size: 14px; font-weight: 800; }
 .level-chip-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.1; }
 .level-chip-name { font-size: var(--text-sm); font-weight: 800; }
-.level-chip-sub { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.level-chip-sub { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-2xs); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 @media (max-width: 640px) { .level-chip-next { display: none; } }
 
 .level-card {
@@ -542,3 +542,26 @@
   .child-screen .chat-presence--compact .avatar { width: 40px; height: 40px; }
   .child-screen .rec-cover { height: 88px; }
 }
+
+/* tappable level chip + the level guide it opens */
+.level-chip--button { font: inherit; cursor: pointer; text-align: left; transition: filter 0.12s, transform 0.12s; }
+.level-chip--button:hover { filter: brightness(0.97); transform: translateY(-1px); }
+.level-chip--button:focus-visible { outline: 3px solid var(--lv-700); outline-offset: 2px; }
+.level-guide { display: flex; flex-direction: column; gap: var(--space-3); text-align: left; }
+.level-guide .level-card { margin-bottom: 0; }
+.level-guide-h { margin: var(--space-3) 0 0; font-size: var(--text-md); font-weight: 800; color: var(--ink); }
+.level-guide-list, .level-guide-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
+.level-guide-row { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); }
+.level-guide-row--now { background: var(--lv-100); border-color: var(--lv-border); }
+.level-guide-dot { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--surface); border: 2px solid var(--lv-border); color: var(--lv-700); }
+.level-guide-row--done .level-guide-dot, .level-guide-row--now .level-guide-dot { background: var(--lv-700); border-color: var(--lv-700); color: var(--on-primary); }
+.level-guide-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--ink); }
+.level-guide-text b { color: var(--lv-700); }
+.level-guide-you { font-weight: 700; color: var(--muted); }
+.level-guide-steps { counter-reset: lvstep; }
+.level-guide-steps li { counter-increment: lvstep; display: flex; gap: var(--space-3); align-items: flex-start; color: var(--ink); }
+.level-guide-steps li::before { content: counter(lvstep); flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: var(--text-sm); background: var(--primary-100); color: var(--primary-700); }
+.level-guide .level-card .level-steps { display: none; }   /* the list below shows the same three levels, with what each one asks for */
+/* the generic button hover (purple fill) must not recolour the level chip: it keeps its own level colours */
+.level-chip--button:hover:not(:disabled),
+.level-chip--button:active:not(:disabled) { background: var(--lv-100); color: var(--lv-700); border-color: var(--lv-border); }

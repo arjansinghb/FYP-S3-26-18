@@ -11,8 +11,8 @@ from ..deps import require_role
 from ..models import (
     BillingRecordOut, ConsentOut, ConsentRequest, DataDeletionRequestOut,
     NotificationOut, NotificationPreferences, PaymentMethodIn,
-    PaymentMethodOut, PrivacySettings, ReviewCreate, ReviewOut, SubscribeRequest,
-    SubscriptionStatusOut,
+    PaymentMethodOut, PrivacySettings, PrivacySettingsOut, ReviewCreate, ReviewOut, SubscribeRequest,
+    SubscriptionStatusOut, SupportTicketCreate, SupportTicketOut,
 )
 from ..storage import db
 
@@ -53,17 +53,24 @@ def _require_consent(account: dict) -> None:
         raise HTTPException(403, "Please provide parental consent first (PA28).")
 
 
-@router.get("/privacy-settings", response_model=PrivacySettings)
+def _privacy_out(account: dict) -> PrivacySettingsOut:
+    return PrivacySettingsOut(
+        **account.get("privacy_settings", {}),
+        standard_days=db.standard_retention_days(), minimal_days=min(db.standard_retention_days(), db.MINIMAL_RETENTION_DAYS),
+    )
+
+
+@router.get("/privacy-settings", response_model=PrivacySettingsOut)
 def get_privacy_settings(account: dict = Depends(require_role("parent"))):
     _require_consent(account)
-    return PrivacySettings(**account.get("privacy_settings", {}))
+    return _privacy_out(account)
 
 
-@router.patch("/privacy-settings", response_model=PrivacySettings)
+@router.patch("/privacy-settings", response_model=PrivacySettingsOut)
 def update_privacy_settings(body: PrivacySettings, account: dict = Depends(require_role("parent"))):
     _require_consent(account)
     db.update_privacy_settings(account, body.retention_preference)
-    return PrivacySettings(**account["privacy_settings"])
+    return _privacy_out(account)
 
 
 # ---------- PA30: request child data deletion ----------
@@ -234,3 +241,19 @@ def submit_review(body: ReviewCreate, account: dict = Depends(require_role("pare
         ai_recommend=suggestion.get("recommend"), ai_reason=suggestion.get("reason"),
     )
     return _review_out(review)
+
+
+# ---------- SA14: support requests raised by the parent ----------
+
+@router.post("/support", response_model=SupportTicketOut, status_code=201)
+def create_support_ticket(body: SupportTicketCreate, account: dict = Depends(require_role("parent"))):
+    """A parent asks for help; it lands in the admin's Support tab."""
+    open_now = [t for t in db.tickets_for(account["id"]) if t["status"] == "open"]
+    if len(open_now) >= db.MAX_OPEN_TICKETS_PER_PARENT:
+        raise HTTPException(409, f"You already have {db.MAX_OPEN_TICKETS_PER_PARENT} open requests. We'll get to them soon.")
+    return db.create_ticket(account, body.subject, body.message)
+
+
+@router.get("/support", response_model=list[SupportTicketOut])
+def my_support_tickets(account: dict = Depends(require_role("parent"))):
+    return db.tickets_for(account["id"])

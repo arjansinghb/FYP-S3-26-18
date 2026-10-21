@@ -95,6 +95,23 @@ export default function Home() {
   // never gates rendering, so a stale/expired token just silently falls
   // back to the normal signup link.
   const [loggedInParent, setLoggedInParent] = useState(false)
+  // "See plans" on the parent dashboard links to /#plans. The router doesn't
+  // scroll to a hash by itself, and the sections above the plans keep
+  // loading and re-laying-out for a moment after mount (catalogue, reviews,
+  // reveal animations), which pushes the plans away from where a single
+  // jump landed. So re-anchor to the plans section every 100ms until the
+  // layout settles (about 3s), and stop at once if the visitor scrolls or
+  // touches the page themselves.
+  useEffect(() => {
+    if (window.location.hash !== '#plans') return
+    const jump = () => document.getElementById('plans')?.scrollIntoView({ block: 'start' })
+    const stop = () => { clearInterval(timer); events.forEach((e) => window.removeEventListener(e, stop)) }
+    const events = ['wheel', 'touchstart', 'keydown', 'mousedown']
+    let tries = 0
+    const timer = setInterval(() => { jump(); if (++tries >= 30) stop() }, 100)
+    events.forEach((e) => window.addEventListener(e, stop, { passive: true }))
+    return stop
+  }, [])
   useEffect(() => {
     if (!getToken()) return
     getMe().then((acc) => { if (acc.role === 'parent') setLoggedInParent(true) }).catch(() => {})
@@ -281,7 +298,7 @@ export default function Home() {
             <p className="hero-tag">{site.tagline}</p>
             <div className="hero-cta">
               <Link className="cta cta-child" to="/child"><MicIcon width={18} height={18} /> Talk to Pip</Link>
-              <Link className="cta cta-parent" to="/parent"><UsersIcon width={18} height={18} /> Parent sign up</Link>
+              <Link className="cta cta-parent" to="/parent" state={{ mode: 'signup' }}><UsersIcon width={18} height={18} /> Parent sign up</Link>
             </div>
           </div>
           {/* A loose cluster of flat illustration pieces (not the app's own
@@ -473,7 +490,7 @@ export default function Home() {
                 <li><UsersIcon width={16} height={16} /> 1 child profile</li>
                 <li><ChartIcon width={16} height={16} /> Basic parent dashboard</li>
               </ul>
-              <Link className="cta cta-parent" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Pip for free</Link>
+              <Link className="cta cta-parent" to={loggedInParent ? '/parent/subscription' : '/parent'}>Get Pip for free</Link>
             </div>
             <div className="plan plan-featured">
               <div className="plan-badge">Most popular</div>
@@ -485,7 +502,7 @@ export default function Home() {
                 <li><HeartIcon width={16} height={16} /> Unlimited saved favourites</li>
                 <li><ChartIcon width={16} height={16} /> Full activity history &amp; insights</li>
               </ul>
-              <Link className="cta cta-child" to={loggedInParent ? '/parent#subscription' : '/parent'}>Get Premium plan</Link>
+              <Link className="cta cta-child" to={loggedInParent ? '/parent/subscription' : '/parent'}>Get Premium plan</Link>
             </div>
           </div>
           <p className="plan-note">Free to start, for one child profile, for as long as you like.</p>
@@ -566,9 +583,6 @@ export default function Home() {
 
       <footer className="landing-footer">
         <p className="landing-footer-meta">© {new Date().getFullYear()} Pip. All rights reserved.</p>
-        <p className="landing-footer-links">
-          <Link to="/moderator" className="home-link">Moderator</Link> · <Link to="/admin" className="home-link">Admin</Link>
-        </p>
       </footer>
     </div>
   )

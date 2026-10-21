@@ -421,7 +421,7 @@
   display: flex; flex-direction: column;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
-.plan:hover { transform: translateY(-4px); box-shadow: 0 12px 24px color-mix(in srgb, var(--ink) 8%, transparent); }
+.plan:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); }
 .plan-featured:hover { border-color: var(--primary-700); }
 .plan-featured { border-color: var(--primary-700); border-width: 3px; }
 .plan-badge {
@@ -457,7 +457,7 @@
   padding: var(--space-6) var(--space-5);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
-.trust-point:hover { transform: translateY(-3px); box-shadow: 0 10px 20px color-mix(in srgb, var(--ink) 7%, transparent); border-color: var(--primary-border); }
+.trust-point:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: var(--primary-border); }
 .trust-icon {
   width: 40px; height: 40px; border-radius: var(--radius-sm);
   display: flex; align-items: center; justify-content: center;
@@ -536,7 +536,7 @@
   display: flex; gap: var(--space-4); align-items: flex-start;
   margin-left: calc(48px + var(--space-3)); /* lines up under the Pip bubble, not the child's */
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  padding: var(--space-4); box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 8%, transparent);
+  padding: var(--space-4); box-shadow: var(--shadow-sm);
 }
 /* The card itself still gets a beat-in pop (below); the cover on top of
    that gets its own slower "camera push-in" — starts zoomed in tighter

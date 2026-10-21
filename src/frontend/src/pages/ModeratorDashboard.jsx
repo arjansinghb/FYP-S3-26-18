@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import {
-  getToken, getMe, login, logout,
+  getToken, getMe, logout,
   listContent, addContent, editContent, removeContent, approveContent, rejectContent,
   listReports, resolveReport, sendReportNote, searchBooks, searchVideos, importContent, listTopicRequests, autoImportTopic,
   dismissTopicRequest, bulkImport,
@@ -13,7 +13,6 @@ import {
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
-import PasswordInput from '../components/PasswordInput'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ReportNoteDialog from '../components/ReportNoteDialog'
 import PromptDialog from '../components/PromptDialog'
@@ -70,71 +69,9 @@ export default function ModeratorDashboard() {
   }, [])
 
   if (checking) return <div className="parent"><p className="muted">Loading…</p></div>
-  if (!account) return <ModLogin onAuthed={setAccount} />
+  // One sign-in for every role lives on /parent; it sends staff back here.
+  if (!account) return <Navigate to="/parent" state={{ mode: 'login' }} replace />
   return <Tools account={account} onLogout={() => { logout(); setAccount(null) }} />
-}
-
-// CM01 — moderator login (role-checked)
-function ModLogin({ onAuthed }) {
-  const [email, setEmail] = useState('moderator@pip.local')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function submit(e) {
-    e.preventDefault()
-    const missing = firstMissingField([[email, 'Email'], [password, 'Password']])
-    if (missing) { setError(missing); return }
-    setError(''); setBusy(true)
-    try {
-      const acc = await login(email, password)
-      if (acc.role !== 'moderator') { await logout(); setError('This area is for content moderators only.'); return }
-      onAuthed(acc)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // Same field-routing pattern as ParentDashboard.jsx's AuthPanel: login's
-  // "Wrong email or password" mentions "email" so it lands under that
-  // field, "Incorrect password" lands under Password, anything else falls
-  // through to a plain banner (e.g. the role-check message below).
-  const isEmailError = /email/i.test(error || '')
-  const isWrongPassword = error === 'Incorrect password'
-
-  return (
-    <div className="parent auth">
-      <Link className="home-link" to="/">← Home</Link>
-      <h1>Moderator Sign In</h1>
-      <form onSubmit={submit} className="card" noValidate>
-        <label>Email
-          <input
-            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-            className={isEmailError ? 'field-invalid' : ''}
-            aria-invalid={isEmailError || undefined}
-          />
-        </label>
-        {isEmailError && (
-          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
-        )}
-        <label>Password
-          <PasswordInput
-            value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-            className={isWrongPassword ? 'field-invalid' : ''}
-            aria-invalid={isWrongPassword || undefined}
-          />
-        </label>
-        {isWrongPassword && (
-          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
-        )}
-        {error && !isEmailError && !isWrongPassword && <p className="error">{error}</p>}
-        <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
-      </form>
-      <p className="muted">Demo login: <b>moderator@pip.local</b> / <b>moderator123</b></p>
-    </div>
-  )
 }
 
 const TABS = [
@@ -1114,32 +1051,35 @@ function Catalogue({ notify }) {
               {i.genres.map((g) => <span className="chip chip-muted" key={g}>{cap(g)}</span>)}
               {i.reading_level && <span className="chip chip-muted">{cap(i.reading_level)}</span>}
             </div>
-            {/* Inline, two-step confirmation instead of a native confirm()
-                popup — matches the rest of the app's own convention of
-                never dropping into raw browser chrome for anything the
-                child or a staff member sees. */}
-            {confirmingRemove === i.id ? (
-              <div className="row inline-confirm">
-                <span>Remove “{i.title}” from the catalogue?</span>
-                <button className="danger small" onClick={async () => {
-                  await removeContent(i.id)
-                  setConfirmingRemove(null)
-                  notify?.(`“${i.title}” removed.`, 'danger')
-                  reload()
-                }}>Yes, remove</button>
-                <button className="ghost small" onClick={() => setConfirmingRemove(null)}>Cancel</button>
-              </div>
-            ) : (
-              <div className="row">
-                <button className="ghost small" onClick={() => setEditing(i.id)}><EditIcon width={15} height={15} /> Edit</button>
-                <button className="danger small" onClick={() => setConfirmingRemove(i.id)}>
-                  <TrashIcon width={15} height={15} /> Remove
-                </button>
-              </div>
-            )}
+            <div className="row">
+              <button className="ghost small" onClick={() => setEditing(i.id)}><EditIcon width={15} height={15} /> Edit</button>
+              <button className="danger small" onClick={() => setConfirmingRemove(i)}>
+                <TrashIcon width={15} height={15} /> Remove
+              </button>
+            </div>
           </div>
         )
       ))}
+      <ConfirmDialog
+        open={!!confirmingRemove}
+        icon={<TrashIcon width={20} height={20} />}
+        title="Remove from the catalogue?"
+        message={confirmingRemove ? (
+          <>
+            <span className="dialog-account">{confirmingRemove.title}</span>
+            <span className="dialog-line">Children will no longer be recommended it.</span>
+          </>
+        ) : ''}
+        confirmLabel="Remove"
+        onConfirm={async () => {
+          const item = confirmingRemove
+          setConfirmingRemove(null)
+          await removeContent(item.id)
+          notify?.(`“${item.title}” removed.`, 'danger')
+          reload()
+        }}
+        onCancel={() => setConfirmingRemove(null)}
+      />
     </section>
   )
 }

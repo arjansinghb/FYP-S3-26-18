@@ -32,6 +32,8 @@ def current_account(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> di
     db.apply_pending_cancellation(acc)
     # PA30 — same lazy pattern for scheduled child-data deletions.
     db.apply_due_deletions()
+    # PA29 — and chat history past its retention period.
+    db.apply_retention()
     return acc
 
 
@@ -50,4 +52,5 @@ def current_child(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict
     child = db.refresh_child(child_id)
     if not child:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Child session not found")
+    db.apply_retention()
     return child

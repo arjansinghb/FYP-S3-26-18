@@ -21,7 +21,9 @@ already bit this project once, for an unrelated integration).
 """
 from __future__ import annotations
 
+import html as _html
 import logging
+from urllib.parse import quote
 
 import httpx
 
@@ -66,20 +68,28 @@ def _wrap(title: str, body_html: str) -> str:
     """
 
 
+def verification_link(token: str) -> str:
+    """The page in the web app that confirms the token (works signed in or not)."""
+    return f"{settings.FRONTEND_URL.rstrip('/')}/parent/verify?token={quote(token, safe='')}"
+
+
 def send_verification_email(to_email: str, token: str) -> bool:
-    """UV06. `token` is the same code the recipient types into the app's
-    "Enter code from email" field (ParentDashboard.jsx's VerifyBanner) —
-    there's no clickable confirm link, by design, since this backend has no
-    separate hosted confirmation page of its own."""
+    """UV06. The email carries a link to the app's confirmation page
+    (/parent/verify?token=...), which calls POST /api/auth/verify/confirm — that
+    endpoint needs no login, so the link works from any browser."""
+    link = verification_link(token)
     html = _wrap(
         "Verify your email",
         f"""
         <p style="font-size:14px;line-height:1.6">
-          Enter this code in the app to verify {to_email} and finish setting up your Pip account:
+          Confirm {to_email} to finish setting up your Pip account:
         </p>
-        <p style="font-size:28px;font-weight:700;letter-spacing:2px;background:#EFE7FA;
-                   color:#452c70;padding:14px 18px;border-radius:10px;text-align:center;margin:18px 0">
-          {token}
+        <p style="text-align:center;margin:22px 0">
+          <a href="{link}" style="display:inline-block;background:#6A2EA0;color:#ffffff;text-decoration:none;
+                     font-weight:700;padding:12px 26px;border-radius:999px">Verify my email</a>
+        </p>
+        <p style="font-size:12px;color:#746a87;word-break:break-all">
+          Or paste this link into your browser: {link}
         </p>
         <p style="font-size:13px;color:#746a87">
           Didn't sign up for Pip? You can safely ignore this email.
@@ -108,3 +118,15 @@ def send_password_reset_email(to_email: str, token: str) -> bool:
         """,
     )
     return _send(to_email, "Reset your Pip password", html)
+
+
+def send_notification_email(to_email: str, title: str, body: str) -> bool:
+    """PA20/PA22 email channel: the same text a parent sees in the in-app bell,
+    for parents who switched the Email channel on. Best-effort like the others."""
+    html = _wrap(
+        _html.escape(title),
+        f'<p style="font-size:14px;line-height:1.6">{_html.escape(body)}</p>'
+        '<p style="font-size:13px;color:#746a87">You are getting this because the Email channel is on in your Pip '
+        "notification settings. You can turn it off there at any time.</p>",
+    )
+    return _send(to_email, title, html)

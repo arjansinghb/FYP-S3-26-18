@@ -17,6 +17,14 @@ def site():
     return {"site_title": w["site_title"], "tagline": w["tagline"], "announcement": w["announcement"]}
 
 
+@router.get("/maintenance")
+def maintenance_status():
+    """Whether maintenance mode (SA11) is on, so the app can show a notice
+    before anyone tries to sign in. Never paused itself."""
+    from .. import maintenance
+    return {"active": maintenance.active(), "message": maintenance.message(), "support_email": maintenance.support_email()}
+
+
 @router.get("/plans")
 def plans():
     db.refresh_public()

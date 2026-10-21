@@ -9,7 +9,7 @@ comes back directly in the API response instead of being emailed.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import email_service, email_validation
+from .. import email_service, email_validation, maintenance
 from ..config import settings
 from ..deps import current_account
 from ..models import (
@@ -73,6 +73,9 @@ def login(body: LoginRequest):
         raise HTTPException(401, "Incorrect password")
     if acc.get("suspended"):
         raise HTTPException(403, "This account has been suspended. Please contact support.")
+    if maintenance.active() and acc.get("role") not in maintenance.STAFF_ROLES:
+        # Maintenance mode (SA11): staff may sign in, everyone else is turned away.
+        raise HTTPException(503, maintenance.message(), headers={"Retry-After": "300"})
     token = db.issue_token("account", acc["id"])
     return AuthOut(token=token, account=_account_out(acc))
 
@@ -114,11 +117,11 @@ def request_verification(account: dict = Depends(current_account)):
         raise HTTPException(400, "Account is already verified")
     token = db.request_email_verification(account)
     if settings.resend_configured and email_service.send_verification_email(account["email"], token):
-        return VerifyRequestOut(token=None, note=f"Check {account['email']} for your verification code.")
+        return VerifyRequestOut(token=None, note=f"Check {account['email']} for your verification link.")
     note = (
-        "Couldn't email a code to this address right now, so here it is directly instead."
+        "Couldn't email a link to this address right now, so it is returned here directly instead."
         if settings.resend_configured
-        else "Dev mode: no email service configured, so the token is returned here directly instead of being emailed."
+        else "Dev mode: no email service configured, so the verification token is returned here directly instead of being emailed."
     )
     return VerifyRequestOut(token=token, note=note)
 

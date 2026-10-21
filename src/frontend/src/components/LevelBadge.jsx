@@ -16,7 +16,7 @@ const RING_LEN = 2 * Math.PI * RING_R
 // fills toward the next level, with the level's name beside it. Counts
 // confirmations only; nothing here can reveal that an explanation was ever
 // declined.
-export function LevelChip({ level }) {
+export function LevelChip({ level, onOpen }) {
   if (!level) return null
   const top = !level.next_level
   const rank = ORDER.indexOf(level.level) + 1
@@ -24,8 +24,10 @@ export function LevelChip({ level }) {
   const hint = top
     ? `Level ${rank} of ${ORDER.length}: you reached the top level`
     : `Level ${rank} of ${ORDER.length}: ${level.progress} of ${level.needed} to ${level.next_label}`
+  const Tag = onOpen ? 'button' : 'span'
+  const tagProps = onOpen ? { type: 'button', onClick: onOpen, 'aria-haspopup': 'dialog' } : {}
   return (
-    <span className="level-chip" data-level={level.level} title={hint} aria-label={hint}>
+    <Tag className={`level-chip${onOpen ? ' level-chip--button' : ''}`} data-level={level.level} title={onOpen ? undefined : hint} aria-label={onOpen ? `${hint}. Opens how levels work.` : hint} {...tagProps}>
       <svg className="level-ring" width="36" height="36" viewBox="0 0 36 36" aria-hidden="true">
         <circle className="level-ring-track" cx="18" cy="18" r={RING_R} />
         <circle
@@ -44,7 +46,37 @@ export function LevelChip({ level }) {
           )}
         </span>
       </span>
-    </span>
+    </Tag>
+  )
+}
+
+// CH22 — what a child sees when they tap the level chip: where they are, what each level asks for, and how to
+// get to the next one. Only counts confirmations; nothing here can reveal that an explanation was ever declined.
+export function LevelGuide({ level }) {
+  if (!level) return null
+  const current = ORDER.indexOf(level.level)
+  return (
+    <div className="level-guide">
+      <LevelCard level={level} />
+      <h3 className="level-guide-h">The three levels</h3>
+      <ol className="level-guide-list">
+        {ORDER.map((key, i) => (
+          <li key={key} data-level={key} className={`level-guide-row ${i === current ? 'level-guide-row--now' : ''} ${i < current ? 'level-guide-row--done' : ''}`}>
+            <span className="level-guide-dot">{i < current ? '\u2713' : i + 1}</span>
+            <span className="level-guide-text">
+              <b>{key[0].toUpperCase() + key.slice(1)}{i === current && <span className="level-guide-you"> · you are here</span>}</b>
+              <span>{CHILD_TEXT[key]}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <h3 className="level-guide-h">How to level up</h3>
+      <ol className="level-guide-steps">
+        <li>Save a book or video to your library.</li>
+        <li>Tap &ldquo;Tell Pip about this&rdquo; and say or type what you think.</li>
+        <li>A grown-up reads it. Every time they say it shows what you understood, you get one step closer. {level.needed} steps and you level up!</li>
+      </ol>
+    </div>
   )
 }
 

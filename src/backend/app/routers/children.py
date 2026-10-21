@@ -60,9 +60,14 @@ def create_child(body: ChildCreate, parent: dict = Depends(require_role("parent"
     "a child profile isn't allowed to exist without it" is the whole point
     of verifiable parental consent, not a checkbox nobody enforces. Also
     enforces PA33's tier cap (free: 1 child, Premium: up to 4)."""
+    compliance = db.system["compliance"]
+    if not compliance.get("allow_under_13", True):
+        # SA10 "Allow under-13 users" is off: every child on Pip is under 13.
+        raise HTTPException(403, "New child profiles are paused by the administrator right now.")
     if not parent.get("verified"):
         raise HTTPException(403, "Please verify your email before adding a child profile.")
-    if not parent.get("consent"):
+    if compliance.get("pdpa_mode", True) and not parent.get("consent"):
+        # SA10 "PDPA mode": parental consent is required before any child data exists.
         raise HTTPException(403, "Please provide parental consent before adding a child profile.")
     existing = db.children_of(parent["id"])
     tier = parent.get("tier", "free")
@@ -188,6 +193,8 @@ def link_child(body: ChildLinkRequest):
     """CH01 — first-time device activation: enter the login ID + PIN (two
     genuinely different values as of 2026-09-09 — see ChildLinkRequest's
     docstring)."""
+    if not db.system["compliance"].get("allow_under_13", True):
+        raise HTTPException(403, "Pip is paused for children right now. Please ask a grown-up.")
     child = db.find_child_by_login_id(body.login_id)
     if not child:
         raise HTTPException(401, "That ID or PIN doesn't match. Ask a grown-up to help!")

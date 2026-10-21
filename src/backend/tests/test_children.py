@@ -128,3 +128,18 @@ def test_pa09_delete_child(client: TestClient, active_parent: dict, child: dict)
     # deleting frees the free-tier slot back up
     r = client.post("/api/children", headers=active_parent["headers"], json={"name": "Replacement Kid", "age_band": "5-8"})
     assert r.status_code == 201
+
+
+def test_children_listed_oldest_profile_first():
+    """The children come back from Firestore keyed by random id, so insertion
+    order is arbitrary. The list must always put the first-registered child
+    first, whatever order the dict happens to hold them in."""
+    from app.storage import db
+    pid = "order-test-parent"
+    db.children["aaa-newer"] = {"id": "aaa-newer", "parent_id": pid, "name": "Newer", "created": 2000.0}
+    db.children["zzz-older"] = {"id": "zzz-older", "parent_id": pid, "name": "Older", "created": 1000.0}
+    try:
+        assert [c["name"] for c in db.children_of(pid)] == ["Older", "Newer"]
+    finally:
+        db.children.pop("aaa-newer", None)
+        db.children.pop("zzz-older", None)

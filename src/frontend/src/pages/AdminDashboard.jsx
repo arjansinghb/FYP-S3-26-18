@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Fragment, useEffect, useState } from 'react'
+import { Link, Navigate } from 'react-router-dom'
 import {
-  getToken, getMe, login, logout,
+  getToken, getMe, logout,
   adminStats, adminSearchUsers, adminUserDetails, adminResetPassword, adminSuspend, adminUnsuspend,
   adminGetConfig, adminSetConfig, adminTickets, adminResolveTicket,
   adminListReviews, adminApproveReview, adminRejectReview, adminDeleteReview,
@@ -12,15 +12,39 @@ import {
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
 import Select from '../components/Select'
-import PasswordInput from '../components/PasswordInput'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PromptDialog from '../components/PromptDialog'
-import { firstMissingField } from '../formValidation'
 import { timeAgo, logTime } from '../timeFormat'
 import { toneStyle } from '../statTones'
 import './parent.css'
+
+// A short breakdown as one row per group: name, a bar sized to its share of the
+// total, the count and the percentage.
+function ShareBars({ title, rows }) {
+  const total = rows.reduce((sum, r) => sum + (r.count || 0), 0)
+  return (
+    <div className="share-bars">
+      <span className="review-field-label">{title}</span>
+      <ul className="share-bar-list">
+        {rows.map((r) => {
+          const pct = total ? Math.round((r.count / total) * 100) : 0
+          return (
+            <li className={`share-bar share-bar--${r.tone}`} key={r.label}>
+              <span className="share-bar-name">{r.label}</span>
+              <span className="share-bar-track" aria-hidden="true">
+                <span className="share-bar-fill" style={{ width: `${total ? Math.max(r.count ? 3 : 0, (r.count / total) * 100) : 0}%` }} />
+              </span>
+              <span className="share-bar-count">{r.count}</span>
+              <span className="share-bar-pct">{pct}%</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
 
 // Turns raw review/ticket/user records into a flat, time-sorted event
 // list — same shape as ModeratorDashboard's buildActivity, applied to the
@@ -63,71 +87,9 @@ export default function AdminDashboard() {
   }, [])
 
   if (checking) return <div className="parent"><p className="muted">Loading…</p></div>
-  if (!account) return <AdminLogin onAuthed={setAccount} />
+  // One sign-in for every role lives on /parent; it sends staff back here.
+  if (!account) return <Navigate to="/parent" state={{ mode: 'login' }} replace />
   return <Tools account={account} onLogout={() => { logout(); setAccount(null) }} />
-}
-
-// SA01 — admin login (role-checked)
-function AdminLogin({ onAuthed }) {
-  const [email, setEmail] = useState('admin@pip.local')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function submit(e) {
-    e.preventDefault()
-    const missing = firstMissingField([[email, 'Email'], [password, 'Password']])
-    if (missing) { setError(missing); return }
-    setError(''); setBusy(true)
-    try {
-      const acc = await login(email, password)
-      if (acc.role !== 'admin') { await logout(); setError('This area is for system administrators only.'); return }
-      onAuthed(acc)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // Same field-routing pattern as ParentDashboard.jsx's AuthPanel: login's
-  // "Wrong email or password" mentions "email" so it lands under that
-  // field, "Incorrect password" lands under Password, anything else falls
-  // through to a plain banner (e.g. the role-check message below).
-  const isEmailError = /email/i.test(error || '')
-  const isWrongPassword = error === 'Incorrect password'
-
-  return (
-    <div className="parent auth">
-      <Link className="home-link" to="/">← Home</Link>
-      <h1>Admin Sign In</h1>
-      <form onSubmit={submit} className="card" noValidate>
-        <label>Email
-          <input
-            type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-            className={isEmailError ? 'field-invalid' : ''}
-            aria-invalid={isEmailError || undefined}
-          />
-        </label>
-        {isEmailError && (
-          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
-        )}
-        <label>Password
-          <PasswordInput
-            value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-            className={isWrongPassword ? 'field-invalid' : ''}
-            aria-invalid={isWrongPassword || undefined}
-          />
-        </label>
-        {isWrongPassword && (
-          <p className="field-error"><AlertIcon width={14} height={14} /> {error}</p>
-        )}
-        {error && !isEmailError && !isWrongPassword && <p className="error">{error}</p>}
-        <button type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign In'}</button>
-      </form>
-      <p className="muted">Demo login: <b>admin@pip.local</b> / <b>admin123</b></p>
-    </div>
-  )
 }
 
 const ADMIN_TABS = [
@@ -345,21 +307,21 @@ function Overview({ onNavigate }) {
             </div>
           </div>
         )}
-        <div className="genre-cloud">
-          <span className="review-field-label">Users by role</span>
-          <div className="chip-row">
-            <span className="chip">Parents · {s.parents}</span>
-            <span className="chip chip-muted">Moderators · {s.moderators}</span>
-            <span className="chip chip-muted">Admins · {s.admins}</span>
-          </div>
-        </div>
-        <div className="genre-cloud">
-          <span className="review-field-label">Parents by plan</span>
-          <div className="chip-row">
-            <span className="chip">Free · {s.tier_free}</span>
-            <span className="chip chip-muted">Premium · {s.tier_premium}</span>
-          </div>
-        </div>
+        <ShareBars
+          title="Users by role"
+          rows={[
+            { label: 'Parents', count: s.parents, tone: 'strong' },
+            { label: 'Moderators', count: s.moderators, tone: 'mid' },
+            { label: 'Admins', count: s.admins, tone: 'warm' },
+          ]}
+        />
+        <ShareBars
+          title="Parents by plan"
+          rows={[
+            { label: 'Free', count: s.tier_free, tone: 'mid' },
+            { label: 'Premium', count: s.tier_premium, tone: 'warm' },
+          ]}
+        />
       </section>
 
       <section className="card">
@@ -444,12 +406,21 @@ function Users({ notify }) {
       </div>
       {loading && <p className="muted">Loading…</p>}
       {!loading && users.length === 0 && <p className="muted">No accounts match that search.</p>}
-      {users.map((u) => (
+      {(() => {
+        // Accounts grouped by role, in a fixed order, so parents, admins and
+        // moderators never run together in one list.
+        const GROUPS = [['parent', 'Parents'], ['admin', 'Admins'], ['moderator', 'Moderators']]
+        const known = GROUPS.map(([role]) => role)
+        const sections = [
+          ...GROUPS.map(([role, label]) => [label, users.filter((u) => u.role === role)]),
+          ['Other', users.filter((u) => !known.includes(u.role))],
+        ].filter(([, list]) => list.length > 0)
+        const renderUser = (u) => (
         <div className="card" key={u.id}>
           <div className="child-top">
             <div>
               <h3>{u.name}</h3>
-              <p className="muted">{u.email} · role: {u.role}</p>
+              <p className="muted">{u.email}</p>
               {u.suspended && u.suspended_at ? (
                 <p className="muted">Suspended {timeAgo(u.suspended_at)}{u.suspended_by && ` — ${u.suspended_by}`}</p>
               ) : u.unsuspended_at ? (
@@ -461,36 +432,75 @@ function Users({ notify }) {
               {u.verified && <span className="badge badge-approved">verified</span>}
             </div>
           </div>
-          {confirmingSuspend === u.id ? (
-            <div className="row inline-confirm">
-              <span>Suspend {u.email}? They won't be able to log in.</span>
-              <button className="danger small" onClick={() => suspend(u)}>Yes, suspend</button>
-              <button className="ghost small" onClick={() => setConfirmingSuspend(null)}>Cancel</button>
-            </div>
-          ) : (
           <div className="row">
             <button className="ghost small" onClick={() => showDetails(u)}>{details[u.id] ? 'Hide' : 'Details'}</button>
             <button className="ghost small" onClick={() => setResetting(u)}><LockIcon width={14} height={14} /> Reset password</button>
             {u.role !== 'admin' && (
-              <button className={u.suspended ? 'small' : 'danger small'} onClick={() => u.suspended ? unsuspend(u) : setConfirmingSuspend(u.id)}>
+              <button className={u.suspended ? 'small' : 'danger small'} onClick={() => u.suspended ? unsuspend(u) : setConfirmingSuspend(u)}>
                 {u.suspended ? 'Unsuspend' : <><LockIcon width={14} height={14} /> Suspend</>}
               </button>
             )}
           </div>
-          )}
           {details[u.id] && (
-            <p className="muted" style={{ marginTop: 8 }}>
-              ID: {details[u.id].id} · Verified: {String(details[u.id].verified)} ·
-              Suspended: {String(details[u.id].suspended)} · Child profiles: {details[u.id].children}
-            </p>
+            <dl className="user-details">
+              <div className="user-detail user-detail--id">
+                <dt>Account ID</dt>
+                <dd><code>{details[u.id].id}</code></dd>
+              </div>
+              <div className="user-detail">
+                <dt>Email</dt>
+                <dd>{details[u.id].verified
+                  ? <span className="user-pill user-pill--ok"><CheckIcon width={13} height={13} /> Verified</span>
+                  : <span className="user-pill">Not verified</span>}</dd>
+              </div>
+              <div className="user-detail">
+                <dt>Account</dt>
+                <dd>{details[u.id].suspended
+                  ? <span className="user-pill user-pill--bad">Suspended</span>
+                  : <span className="user-pill user-pill--ok">Active</span>}</dd>
+              </div>
+              {u.role === 'parent' && (
+                <div className="user-detail">
+                  <dt>Child profiles</dt>
+                  <dd className="user-detail-num">{details[u.id].children}</dd>
+                </div>
+              )}
+            </dl>
           )}
         </div>
-      ))}
+        )
+        return sections.map(([label, list]) => (
+          <div className="user-group" key={label}>
+            <h4 className="report-group-label">{label} ({list.length})</h4>
+            {list.map(renderUser)}
+          </div>
+        ))
+      })()}
+      <ConfirmDialog
+        open={!!confirmingSuspend}
+        tone="danger"
+        icon={<LockIcon width={20} height={20} />}
+        title="Suspend this account?"
+        message={confirmingSuspend ? (
+          <>
+            <span className="dialog-account">{confirmingSuspend.email}</span>
+            <span className="dialog-line">They can’t log in until you unsuspend them.</span>
+          </>
+        ) : ''}
+        confirmLabel="Suspend account"
+        onConfirm={() => suspend(confirmingSuspend)}
+        onCancel={() => setConfirmingSuspend(null)}
+      />
       <PromptDialog
         open={!!resetting}
         icon={<LockIcon width={20} height={20} />}
         title="Set a new password"
-        message={resetting ? `This immediately replaces ${resetting.email}’s current password.` : ''}
+        message={resetting ? (
+          <>
+            <span className="dialog-account">{resetting.email}</span>
+            <span className="dialog-line">It replaces their current password immediately.</span>
+          </>
+        ) : ''}
         label="New password"
         placeholder="Min. 6 characters"
         minLength={6}
@@ -506,8 +516,8 @@ function Users({ notify }) {
 const CONFIG_SECTIONS = [
   { key: 'settings', title: 'System Settings', fields: [
     { name: 'app_name', label: 'App name', type: 'text' },
-    { name: 'support_email', label: 'Support email', type: 'text' },
-    { name: 'maintenance_mode', label: 'Maintenance mode', type: 'bool' },
+    { name: 'support_email', label: 'Support email', type: 'text', hint: 'Shown on the maintenance screen so people know who to contact.' },
+    { name: 'maintenance_mode', label: 'Maintenance mode', type: 'bool', hint: 'Pauses Pip for parents and children while you make changes. Admins and moderators can still sign in, so you can switch it off again.' },
   ] },
   { key: 'integrations', title: 'API Integrations', fields: [
     { name: 'llm_provider', label: 'LLM provider', type: 'text' },
@@ -519,9 +529,9 @@ const CONFIG_SECTIONS = [
     { name: 'trusted_book_publishers', label: 'Trusted book publishers for bulk import (comma-separated, e.g. "DK Children, Scholastic, Usborne") — an easier auto-approve bar, never a skipped one', type: 'list' },
   ] },
   { key: 'compliance', title: 'Compliance & Data Retention', fields: [
-    { name: 'data_retention_days', label: 'Data retention (days)', type: 'number' },
-    { name: 'pdpa_mode', label: 'PDPA mode', type: 'bool' },
-    { name: 'allow_under_13', label: 'Allow under-13 users', type: 'bool' },
+    { name: 'data_retention_days', label: 'Data retention (days)', type: 'number', hint: 'Chat conversations older than this are deleted automatically (minimum 7 days). Parents can choose a shorter period of 30 days. Favourites and learning progress are kept.' },
+    { name: 'pdpa_mode', label: 'PDPA mode', type: 'bool', hint: 'On: a parent must give consent before any child profile can be created. Leave this on unless you have a reason not to.' },
+    { name: 'allow_under_13', label: 'Allow under-13 users', type: 'bool', hint: 'Every child on Pip is under 13. Turning this off pauses new child profiles and child sign-in until you turn it back on.' },
   ] },
   { key: 'website', title: 'Project Website', fields: [
     { name: 'site_title', label: 'Site title', type: 'text' },
@@ -588,13 +598,14 @@ function ConfigCard({ section, notify }) {
         </div>
       )}
       {section.fields.map((f) => (
-        f.type === 'bool' ? (
-          <label key={f.name} className="toggle">
+        <Fragment key={f.name}>
+        {f.type === 'bool' ? (
+          <label className="toggle">
             <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} />
             {f.label}
           </label>
         ) : f.type === 'list' ? (
-          <label key={f.name}>{f.label}
+          <label>{f.label}
             <input
               type="text"
               value={(values[f.name] ?? []).join(', ')}
@@ -602,14 +613,16 @@ function ConfigCard({ section, notify }) {
             />
           </label>
         ) : (
-          <label key={f.name}>{f.label}
+          <label>{f.label}
             <input
               type={f.type === 'number' ? 'number' : 'text'}
               value={values[f.name] ?? ''}
               onChange={(e) => set(f.name, f.type === 'number' ? Number(e.target.value) : e.target.value)}
             />
           </label>
-        )
+        )}
+        {f.hint && <p className="muted field-hint-p">{f.hint}</p>}
+        </Fragment>
       ))}
       <div className="row">
         <button onClick={save}>Save</button>
@@ -700,6 +713,7 @@ function Reviews({ notify, onCountsChange }) {
     setConfirming(null)
     if (!pending) return
     if (pending.type === 'delete') del(pending.review)
+    else if (pending.type === 'reject') act(pending.review, adminRejectReview, `${pending.review.parent_name}’s review rejected.`, 'danger')
     else act(pending.review, adminRejectReview, `${pending.review.parent_name}’s review unpublished.`, 'danger')
   }
 
@@ -793,7 +807,7 @@ function Reviews({ notify, onCountsChange }) {
               </button>
               {r.status !== 'rejected' && (
                 <button className="danger small" disabled={leaving === r.id}
-                  onClick={() => act(r, adminRejectReview, `${r.parent_name}’s review rejected.`, 'danger')}>
+                  onClick={() => setConfirming({ type: 'reject', review: r })}>
                   <CloseIcon width={14} height={14} /> Reject
                 </button>
               )}
@@ -820,13 +834,15 @@ function Reviews({ notify, onCountsChange }) {
       <ConfirmDialog
         open={!!confirming}
         icon={confirming?.type === 'delete' ? <TrashIcon width={20} height={20} /> : <AlertIcon width={20} height={20} />}
-        title={confirming?.type === 'delete' ? 'Delete this review?' : 'Unpublish this review?'}
+        title={confirming?.type === 'delete' ? 'Delete this review?' : confirming?.type === 'reject' ? 'Reject this review?' : 'Unpublish this review?'}
         message={
           confirming?.type === 'delete'
             ? `This permanently removes ${confirming?.review.parent_name}’s review. This can’t be undone.`
-            : `${confirming?.review.parent_name}’s review will come off the public landing page right away. You can re-approve it later if you change your mind.`
+            : confirming?.type === 'reject'
+              ? `${confirming?.review.parent_name}’s review will not appear on the public landing page. You can still approve it later if you change your mind.`
+              : `${confirming?.review.parent_name}’s review will come off the public landing page right away. You can re-approve it later if you change your mind.`
         }
-        confirmLabel={confirming?.type === 'delete' ? 'Delete review' : 'Unpublish'}
+        confirmLabel={confirming?.type === 'delete' ? 'Delete review' : confirming?.type === 'reject' ? 'Reject review' : 'Unpublish'}
         onConfirm={confirmPending}
         onCancel={() => setConfirming(null)}
       />
@@ -878,7 +894,8 @@ function Support({ notify, onCountsChange }) {
           <div className="child-top">
             <div>
               <h3>{t.subject}</h3>
-              <p className="muted">From: {t.from_email}</p>
+              <p className="muted">Support ID: <code className="ticket-id">{t.id}</code></p>
+              <p className="muted">From: <b>{t.parent_name || 'Unknown parent'}</b> · {t.from_email}</p>
               <p className="muted">
                 Received {timeAgo(t.ts)}
                 {t.resolved_at && <> · Resolved {timeAgo(t.resolved_at)}{t.resolved_by && ` — ${t.resolved_by}`}</>}

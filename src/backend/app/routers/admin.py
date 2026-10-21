@@ -152,7 +152,16 @@ def update_config(section: str, body: dict = Body(...), admin: dict = Depends(re
 
 @router.get("/tickets")
 def list_tickets(admin: dict = Depends(require_role("admin"))):
-    return sorted(db.tickets, key=lambda t: t["ts"], reverse=True)
+    out = []
+    for t in sorted(db.tickets, key=lambda t: t["ts"], reverse=True):
+        t = dict(t)
+        # Tickets raised before parent_name was stored: look the name up from
+        # the parent's account (still there unless they deleted it).
+        if not t.get("parent_name"):
+            parent = db.accounts.get(t.get("parent_id") or "")
+            t["parent_name"] = parent["name"] if parent else None
+        out.append(t)
+    return out
 
 
 @router.post("/tickets/{ticket_id}/resolve")
@@ -163,6 +172,11 @@ def resolve_ticket(ticket_id: str, admin: dict = Depends(require_role("admin")))
     ticket["status"] = "resolved"
     ticket["resolved_at"] = time.time()
     ticket["resolved_by"] = admin["name"]
+    if ticket.get("parent_id"):  # tickets raised by a parent; tell them it was handled
+        db.add_notification(
+            ticket["parent_id"], "support_resolved", "Your support request was resolved",
+            f'"{ticket["subject"]}" has been marked resolved by our team.',
+        )
     return ticket
 
 

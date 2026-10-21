@@ -175,7 +175,7 @@
   color: var(--ink);
   border: 1px solid var(--border);
   border-bottom-left-radius: var(--space-2);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--primary-700) 8%, transparent);
+  box-shadow: var(--shadow-sm);
   font-weight: 700;
 }
 
@@ -296,7 +296,7 @@
   background: var(--surface);
   color: var(--primary-700);
   cursor: pointer;
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--primary-700) 7%, transparent);
+  box-shadow: var(--shadow-sm);
   transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
   animation: chip-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -319,7 +319,7 @@
 .starter-row .starter-chip:hover {
   transform: translateY(-2px);
   background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 14%, transparent);
+  box-shadow: var(--shadow-md);
 }
 
 /* ---------- input bar: mic + text, its own full-width surface pinned to
@@ -491,3 +491,30 @@
   .avatar.is-speaking .avatar-mouth-open { animation: none; opacity: 1; }
   .chat-presence-glow--active { animation: none; opacity: 1; }
 }
+
+/* ---------- maintenance mode (SA11) ---------- */
+.maintenance-screen {
+  min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: var(--space-6, 24px) 16px;
+  background: var(--bg);
+}
+.maintenance-card {
+  width: 100%; max-width: 440px; text-align: center; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 20px); padding: var(--space-8, 40px) var(--space-6, 24px);
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3, 12px);
+}
+.maintenance-icon {
+  width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.maintenance-card h1 { margin: var(--space-2, 8px) 0 0; font-size: var(--text-xl, 22px); color: var(--ink); text-wrap: balance; }
+.maintenance-card p { margin: 0; color: var(--text); max-width: 34ch; text-wrap: pretty; }
+.maintenance-help { font-size: var(--text-sm, 14px); color: var(--muted); }
+.maintenance-help a { color: var(--primary-700); font-weight: 700; }
+.maintenance-card button { margin-top: var(--space-3, 12px); }
+.maintenance-bar {
+  position: sticky; top: 0; z-index: 60; padding: 8px 16px; text-align: center; font-size: var(--text-sm); font-weight: 700;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.maintenance-bar--staff { background: var(--amber-100); color: var(--amber-700); }
+.field-hint-p { margin: -4px 0 var(--space-3, 12px); max-width: 60ch; text-wrap: pretty; }

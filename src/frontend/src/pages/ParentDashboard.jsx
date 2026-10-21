@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import {
   getToken, getMe, login, signup, logout,
   updateAccount, deleteAccount,
@@ -13,18 +13,22 @@ import {
   getSubscriptionStatus, subscribe as subscribeApi, cancelPremium, resumePremium, getBillingHistory, updatePaymentMethod,
   getPublicPlans,
   setContentOverride, listContentOverrides, clearContentOverride, unlockChild, regenerateChildPin, regenerateChildLoginId,
-  childReports, childTrends, compareChildren,
+  childReports, childTrends, compareChildren, createSupportTicket, mySupportTickets,
   getMyReview, submitReview,
   childArticulation, childExplanations, confirmExplanation, declineExplanation, articulationTrends,
 } from '../api'
 import {
-  AlertIcon, BellIcon, BookIcon, ChatIcon, CheckIcon, ChevronIcon, ClockIcon, CompassIcon, FlagIcon, FlameIcon, LockIcon, MicIcon,
-  PlusIcon, SearchIcon, StarIcon, TrashIcon, UserIcon, VideoIcon,
+  AlertIcon, BellIcon, BookIcon, ChartIcon, ChatIcon, CheckIcon, ChevronIcon, ClockIcon, CompassIcon, FlagIcon, FlameIcon, GridIcon, HeartIcon, LifeBuoyIcon, LockIcon, MicIcon,
+  EditIcon, PlusIcon, SearchIcon, SettingsIcon, StarIcon, TrashIcon, UserIcon, UsersIcon, VideoIcon,
 } from '../icons'
 import { useToast, ToastHost } from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
+import Sentences from '../components/Sentences'
 import Select from '../components/Select'
 import PasswordInput from '../components/PasswordInput'
 import { firstMissingField } from '../formValidation'
+import { toneStyle } from '../statTones'
+import useScrolled from '../useScrolled'
 import './parent.css'
 
 // The same genre vocabulary the catalogue is actually tagged with (CM09/
@@ -77,6 +81,14 @@ function TypeIcon({ type }) {
   return <span className={`fav-icon fav-icon--${type}`}><Icon width={16} height={16} /></span>
 }
 
+// A saved item's cover (book cover or video thumbnail) when it has one, the book/video icon chip when it doesn't
+// or when the image fails to load.
+function FavCover({ item }) {
+  const [broken, setBroken] = useState(false)
+  if (!item.thumbnail || broken) return <TypeIcon type={item.type} />
+  return <img className="fav-cover" src={item.thumbnail} alt="" loading="lazy" onError={() => setBroken(true)} />
+}
+
 export default function ParentDashboard() {
   const [account, setAccount] = useState(null)
   const [checking, setChecking] = useState(true)
@@ -97,6 +109,34 @@ export default function ParentDashboard() {
     setAccount(null)
   }
 
+  // The session disappeared under an open page (signed out in another tab, or it expired):
+  // back to the sign-in screen rather than a raw "Not authenticated".
+  useEffect(() => {
+    const onExpired = () => setAccount(null)
+    window.addEventListener('pip-session-expired', onExpired)
+    return () => window.removeEventListener('pip-session-expired', onExpired)
+  }, [])
+
+  // The link in the verification email lands here. It works whether or not this
+  // browser is signed in, so it's answered before the sign-in check below.
+  const { pathname, state: routeState } = useLocation()
+  const navigate = useNavigate()
+  if (pathname.replace(/\/+$/, '') === '/parent/verify') {
+    return <VerifyEmailPage onVerified={() => getMe().then((a) => { if (a.role === 'parent') setAccount(a) }).catch(() => {})} />
+  }
+
+  // "Parent sign up" on the landing page means "make a NEW account". It must not be swallowed
+  // by a session that happens to be stored in this browser (it used to open that account's dashboard).
+  if (routeState?.mode === 'signup') {
+    return (
+      <AuthPanel
+        onAuthed={(acc) => { setAccount(acc); navigate('/parent', { replace: true, state: null }) }}
+        signedInAs={account?.email}
+        onBack={() => navigate('/parent', { replace: true, state: null })}
+      />
+    )
+  }
+
   if (checking) return <div className="parent"><p className="muted">Loading…</p></div>
   if (!account) return <AuthPanel onAuthed={setAccount} />
   return (
@@ -109,9 +149,65 @@ export default function ParentDashboard() {
   )
 }
 
+// ---------- UV06: the page a verification link opens ----------
+
+// One request per token for the page's whole life: in development React mounts effects
+// twice, and the token is single-use, so a second request would report a good link as spent.
+const verifyRequests = new Map()
+
+function VerifyEmailPage({ onVerified }) {
+  const navigate = useNavigate()
+  const token = new URLSearchParams(useLocation().search).get('token') || ''
+  const [state, setState] = useState(token ? 'working' : 'failed')   // working | done | failed
+  const [message, setMessage] = useState(token ? '' : 'This verification link is incomplete.')
+
+  useEffect(() => {
+    if (!token) return undefined
+    let live = true
+    if (!verifyRequests.has(token)) verifyRequests.set(token, confirmVerification(token))
+    verifyRequests.get(token)
+      .then(() => { if (live) { setState('done'); onVerified?.() } })
+      .catch((err) => { if (live) { setState('failed'); setMessage(err.message) } })
+    return () => { live = false }
+  }, [token])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="parent auth">
+      <Link className="home-link" to="/">← Home</Link>
+      <h1>Email verification</h1>
+      <div className="card">
+        {state === 'working' && <p className="muted">Verifying your email…</p>}
+        {state === 'done' && (
+          <>
+            <p><CheckIcon width={16} height={16} /> Your email is verified. Everything is unlocked now.</p>
+            <div className="row"><button onClick={() => navigate('/parent')}>Continue to dashboard</button></div>
+          </>
+        )}
+        {state === 'failed' && (
+          <>
+            <p className="error">{message || 'That verification link is invalid or has expired.'}</p>
+            <p className="muted">Signed in already? Use “Resend email” on your dashboard to get a new link.</p>
+            <div className="row"><button className="ghost" onClick={() => navigate('/parent')}>Go to sign in</button></div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ---------- login / sign up ----------
 
-function AuthPanel({ onAuthed }) {
+// Moderators and admins sign in on this same screen (it used to be two more
+// forms behind footer links). Their demo accounts are listed beside the form
+// so a demo can sign straight in; set VITE_HIDE_DEMO_LOGINS=true in the
+// frontend env to hide the note for anything that isn't a demo.
+const DEMO_STAFF_LOGINS = [
+  { role: 'Moderator', email: 'moderator@pip.local', password: 'moderator123' },
+  { role: 'Admin', email: 'admin@pip.local', password: 'admin123' },
+]
+const SHOW_DEMO_LOGINS = import.meta.env.VITE_HIDE_DEMO_LOGINS !== 'true'
+
+function AuthPanel({ onAuthed, signedInAs, onBack }) {
   // The landing page's nav now has two separate entry points ("Log in" /
   // "Parent sign up", see Home.jsx) that each pass which form they mean
   // via router state — read that here instead of always defaulting to one
@@ -119,6 +215,7 @@ function AuthPanel({ onAuthed }) {
   // clicked, so "Parent sign up" was actually landing a brand-new parent on
   // a Sign In screen first, not the signup form its own label promised).
   const location = useLocation()
+  const navigate = useNavigate()
   const [mode, setMode] = useState(location.state?.mode === 'signup' ? 'signup' : 'login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -140,6 +237,9 @@ function AuthPanel({ onAuthed }) {
       const acc = mode === 'login'
         ? await login(email, password)
         : await signup(email, password, name)
+      // One sign-in for everyone: parents stay here, staff go to their console.
+      if (acc.role === 'moderator') { navigate('/moderator'); return }
+      if (acc.role === 'admin') { navigate('/admin'); return }
       onAuthed(acc)
     } catch (err) {
       setError(err.message)
@@ -168,7 +268,14 @@ function AuthPanel({ onAuthed }) {
   return (
     <div className="parent auth">
       <Link className="home-link" to="/">← Home</Link>
-      <h1>Parent {mode === 'login' ? 'Sign In' : 'Sign Up'}</h1>
+      <h1>{mode === 'login' ? 'Welcome back' : 'Parent Sign Up'}</h1>
+      {mode === 'login' && <p className="muted auth-lead">Parents, moderators and admins all sign in here.</p>}
+      {mode === 'signup' && signedInAs && (
+        <p className="muted auth-lead">
+          You&rsquo;re signed in as {signedInAs}. Creating a new account replaces that session.{' '}
+          <button type="button" className="linkbtn" onClick={onBack}>Back to dashboard</button>
+        </p>
+      )}
       <form onSubmit={submit} className="card" noValidate>
         {mode === 'signup' && (
           <label>Your name
@@ -211,7 +318,7 @@ function AuthPanel({ onAuthed }) {
         )}
         {error && !isEmailError && !isPasswordMismatch && !isWrongPassword && <p className="error">{error}</p>}
         <button type="submit" disabled={busy}>
-          {busy ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
+          {busy ? 'Please wait…' : mode === 'login' ? 'Log In' : 'Create Account'}
         </button>
       </form>
       <p className="muted">
@@ -222,6 +329,21 @@ function AuthPanel({ onAuthed }) {
       </p>
       {mode === 'login' && (
         <p className="muted"><button className="linkbtn" onClick={() => setForgot(true)}>Forgot password?</button></p>
+      )}
+      {mode === 'login' && SHOW_DEMO_LOGINS && (
+        <aside className="demo-logins" aria-label="Demo moderator and admin accounts">
+          <p className="demo-logins-title">Demo accounts — moderator &amp; admin</p>
+          <ul>
+            {DEMO_STAFF_LOGINS.map((d) => (
+              <li key={d.role}>
+                <span className="demo-logins-role">{d.role}</span>
+                <span className="demo-logins-cred"><code>{d.email}</code> / <code>{d.password}</code></span>
+                <button type="button" className="linkbtn" onClick={() => { setEmail(d.email); setPassword(d.password); setError('') }}>Use</button>
+              </li>
+            ))}
+          </ul>
+          <p className="muted">For demo purposes only.</p>
+        </aside>
       )}
     </div>
   )
@@ -311,8 +433,26 @@ function ForgotPassword({ onBack }) {
 
 // ---------- dashboard ----------
 
+// Four pages, each with its own address, switched from the bar under the
+// header (per the team's wireframes):
+//   Dashboard     /parent               the children at a glance, who's "in context", comparison
+//   Child         /parent/child         one child's profile and tabs
+//   Settings      /parent/settings      account, review, notifications, data & privacy, help
+//   Subscription  /parent/subscription  plan, card, billing
+const PARENT_PAGES = [
+  { to: '/parent', label: 'Dashboard', end: true, icon: GridIcon },
+  { to: '/parent/child', label: 'Child', icon: UsersIcon },
+  { to: '/parent/settings', label: 'Settings', icon: SettingsIcon },
+  { to: '/parent/subscription', label: 'Subscription', icon: StarIcon },
+]
+
+function DashCard({ id, children }) {
+  return <section className="card" id={id}>{children}</section>
+}
+
 function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
-  const [children, setChildren] = useState([])
+  const { pathname, hash } = useLocation()
+  const [kids, setKids] = useState([])
   // Real, reproduced bug (Kiefer, 2026-09-24): `children` starts as `[]`
   // before the first `listChildren()` round-trip ever resolves, and with
   // no loading state of its own, "No child profiles yet" rendered
@@ -322,98 +462,341 @@ function Dashboard({ account, onAccountUpdated, onDeleted, onLogout }) {
   // whoever) actually showed up a moment later, which reads as "did I
   // lose my child's profile?" rather than "still loading." Only gates the
   // FIRST load — reload() after adding a child shouldn't re-show this.
-  const [childrenLoading, setChildrenLoading] = useState(true)
+  const [kidsLoading, setKidsLoading] = useState(true)
   const [error, setError] = useState('')
-  const [activeChildId, setActiveChildId] = useState('all') // PA35 switcher
+  // "Child in context" (PA33): which child the Child page shows — or 'all'.
+  // Lives here so the Dashboard's switcher and the Child page agree.
+  const [context, setContext] = useState('all')
 
   async function reload() {
-    try { setChildren(await listChildren()) } catch (err) { setError(err.message) } finally { setChildrenLoading(false) }
+    try { setKids(await listChildren()) } catch (err) { setError(err.message) } finally { setKidsLoading(false) }
   }
   useEffect(() => { reload() }, [])
+  const scrolled = useScrolled()
 
-  // Landing page's pricing buttons send an already-logged-in parent to
-  // "/parent#subscription" instead of the plain dashboard root. The
-  // Subscription card loads its own data async (see SubscriptionPanel)
-  // and only renders once that's back, so the target element doesn't
-  // necessarily exist yet on the first paint — poll briefly rather than
-  // scrolling too early and missing it entirely.
-  useEffect(() => {
-    if (window.location.hash !== '#subscription') return
-    let attempts = 0
-    const id = setInterval(() => {
-      const el = document.getElementById('subscription')
-      attempts += 1
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        clearInterval(id)
-      } else if (attempts > 20) {
-        clearInterval(id) // gave up after ~2s — never loaded, nothing to scroll to
-      }
-    }, 100)
-    return () => clearInterval(id)
-  }, [])
+  // The landing page's pricing buttons (and any old bookmark) used to point at
+  // "/parent#subscription", back when Subscription was a card on one page.
+  if (pathname === '/parent' && hash === '#subscription') return <Navigate to="/parent/subscription" replace />
 
-  const visibleChildren = activeChildId === 'all' ? children : children.filter((c) => c.id === activeChildId)
+  const premium = account.tier === 'premium'
+  const page = pathname.replace(/\/+$/, '')
+  let body
+  if (page === '/parent') {
+    body = <DashboardHome account={account} kids={kids} loading={kidsLoading} context={context} setContext={setContext} />
+  } else if (page === '/parent/child') {
+    body = <ChildPage account={account} onAccountUpdated={onAccountUpdated} kids={kids} loading={kidsLoading} reload={reload} context={context} setContext={setContext} />
+  } else if (page === '/parent/settings') {
+    body = (
+      <>
+        <DashCard id="account"><AccountPanel account={account} onUpdated={onAccountUpdated} onDeleted={onDeleted} /></DashCard>
+        <DashCard id="review"><ReviewPanel /></DashCard>
+        <DashCard id="notifications"><NotificationSettings /></DashCard>
+        <DashCard id="privacy"><PrivacyPanel account={account} /></DashCard>
+        <DashCard id="help"><SupportPanel /></DashCard>
+      </>
+    )
+  } else if (page === '/parent/subscription') {
+    body = <DashCard id="subscription"><SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} /></DashCard>
+  } else {
+    return <Navigate to="/parent" replace />
+  }
 
   return (
-    <div className="parent dash-tight">
-      <Link className="home-link" to="/">← Home</Link>
-      <header className="parent-header">
-        <div className="parent-header-who">
-          <div className="parent-header-role"><UserIcon width={20} height={20} /></div>
-          <div>
-            <h1>Parent Dashboard</h1>
+    <div className="parent dash-tight parent-dash">
+      <div className={`dash-top ${scrolled ? 'dash-top--scrolled' : ''}`}>
+        <Link className="home-link" to="/">← Home</Link>
+        <header className="parent-header">
+          <div className="parent-header-who">
+            <div className="parent-header-role"><UserIcon width={20} height={20} /></div>
+            <div>
+              <h1>Parent Dashboard</h1>
+              <p className="muted parent-header-sub">
+                {account.name} · {premium ? 'Premium' : 'Free'} plan
+                {!kidsLoading && <> · {kids.length} of {premium ? 4 : 1} child profile{(premium ? 4 : 1) === 1 ? '' : 's'} used</>}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="row">
-          <NotificationsBell />
-          <button className="ghost" onClick={onLogout}>Log out</button>
-        </div>
-      </header>
+          <div className="row">
+            <NotificationsBell />
+            <button className="ghost" onClick={onLogout}>Log out</button>
+          </div>
+        </header>
+
+        <nav className="tabs" aria-label="Parent dashboard pages">
+          {PARENT_PAGES.map(({ to, label, end, icon: Icon }) => (
+            <NavLink key={to} to={to} end={end} className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+              <Icon width={16} height={16} /> {label}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
 
       {error && <p className="error">{error}</p>}
 
       {!account.verified && <VerifyBanner account={account} onAccountUpdated={onAccountUpdated} />}
 
-      <AccountPanel account={account} onUpdated={onAccountUpdated} onDeleted={onDeleted} />
+      <div className="dash-stack">{body}</div>
+    </div>
+  )
+}
 
-      <AddChild account={account} onAccountUpdated={onAccountUpdated} onAdded={reload} childCount={children.length} />
+// The Dashboard page: who is "in context", every child at a glance, and the
+// way into the Premium comparison.
+const FREE_FAVOURITES_LIMIT = 5 // PA34 — same cap the backend enforces (routers/chat.py)
 
-      <h2><UserIcon width={20} height={20} /> Your children ({children.length})</h2>
-      {childrenLoading ? (
-        <p className="muted">Loading your children…</p>
-      ) : children.length === 0 && (
-        <p className="muted">No child profiles yet. Add one above.</p>
-      )}
+function DashboardHome({ account, kids, loading, context, setContext }) {
+  const navigate = useNavigate()
+  function startAdd() { navigate('/parent/child', { state: { add: true } }) }
+  const premium = account.tier === 'premium'
+  const atLimit = !loading && kids.length >= (premium ? 4 : 1)   // Free: 1 profile, Premium: up to 4
+  const [stats, setStats] = useState({})        // childId -> { messages, favourites, reports }
+  const [showCompare, setShowCompare] = useState(false)
 
-      {children.length > 1 && (
-        // PA35 — Switch Between Child Profiles (Premium)
-        <div className="tabs">
-          <button className={`tab ${activeChildId === 'all' ? 'active' : ''}`} onClick={() => setActiveChildId('all')}>All children</button>
-          {children.map((c) => (
-            <button key={c.id} className={`tab ${activeChildId === c.id ? 'active' : ''}`} onClick={() => setActiveChildId(c.id)}>{c.name}</button>
-          ))}
+  // Counts come from the same parent-side endpoints the Child page's tabs use,
+  // so the numbers here always agree with what opening those tabs shows.
+  const kidsKey = kids.map((k) => k.id).join(',')
+  useEffect(() => {
+    let live = true
+    Promise.all(kids.map(async (k) => {
+      const [a, f, r] = await Promise.allSettled([childActivity(k.id), childFavourites(k.id), childReports(k.id)])
+      return [k.id, {
+        messages: a.status === 'fulfilled' ? a.value.length : null,
+        favourites: f.status === 'fulfilled' ? f.value.length : null,
+        reports: r.status === 'fulfilled' ? r.value.filter((x) => x.status === 'open').length : null,
+      }]
+    })).then((rows) => { if (live) setStats(Object.fromEntries(rows)) })
+    return () => { live = false }
+  }, [kidsKey])
+
+  function openChild(id, tab) {
+    setContext(id)
+    navigate('/parent/child', tab ? { state: { tab } } : undefined)
+  }
+  const n = (v) => (v == null ? '—' : v)
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+  return (
+    <>
+      {kids.length > 1 && (
+        <div className="ctx-bar">
+          <span className="ctx-label">Child in context</span>
+          <div className="tabs">
+            <button type="button" className={context === 'all' ? 'tab active' : 'tab'} onClick={() => setContext('all')}>All children</button>
+            {kids.map((k) => (
+              <button type="button" key={k.id} className={context === k.id ? 'tab active' : 'tab'} onClick={() => setContext(k.id)}>{k.name}</button>
+            ))}
+          </div>
         </div>
       )}
 
-      {account.tier === 'premium' && children.length > 1 && activeChildId === 'all' && (
-        <CompareChildrenPanel />
-      )}
-
-      <div className="child-grid">
-        {visibleChildren.map((c) => (
-          <ChildCard key={c.id} child={c} account={account} onChanged={reload} />
-        ))}
+      <div className="ov-head">
+        <h2>Your children{loading ? '' : ` (${kids.length})`}</h2>
+        {kids.length > 0 && (
+          <button
+            type="button" onClick={startAdd} disabled={atLimit}
+            title={atLimit ? (premium ? 'You have reached the 4 child profiles Premium includes.' : 'Free includes 1 child profile. Upgrade to Premium to add more.') : undefined}
+          >Add child profile</button>
+        )}
       </div>
 
-      <NotificationSettings />
+      {loading && <p className="muted">Loading your children…</p>}
+      {!loading && kids.length === 0 && (
+        <DashCard id="children-empty">
+          <div className="ov-empty">
+            <h3>No child profiles yet</h3>
+            <p className="muted">Add your first child and Pip gets set up for their age, reading level and the things they love.</p>
+            <button type="button" onClick={startAdd}>Add child profile</button>
+            <p className="muted ov-empty-note">You will be asked for consent before any data about your child is collected.</p>
+          </div>
+        </DashCard>
+      )}
 
-      <SubscriptionPanel account={account} onAccountUpdated={onAccountUpdated} />
+      <div className="ov-grid">
+        {kids.map((k) => {
+          const st = stats[k.id] || {}
+          const pending = k.pending_explanations || 0
+          const favsFull = !premium && (st.favourites ?? 0) >= FREE_FAVOURITES_LIMIT
+          const inContext = context === k.id
+          return (
+            <article key={k.id} className={`child-card ov-card${inContext ? ' ov-card--ctx' : ''}`}>
+              <h3 className="ov-name">
+                {k.name}
+                <LevelPill level={k.articulation_level} progress={k.articulation_progress} />
+              </h3>
+              <p className="muted">
+                {k.dob ? `${ageFromDob(k.dob)} years old` : `Age ${k.age_band}`}
+                {k.gender === 'girl' ? ' · Girl' : k.gender === 'boy' ? ' · Boy' : ''}
+                {k.reading_level ? ` · Reading level: ${k.reading_level}` : ''}
+              </p>
+              {k.interests?.length > 0 && (
+                <div className="chip-row">
+                  {k.interests.map((i) => <span className="chip chip-muted chip-interest" key={i}>{i}</span>)}
+                </div>
+              )}
 
-      <ReviewPanel />
+              {pending > 0 ? (
+                <div className="ov-banner">
+                  <div>
+                    <p className="ov-banner-title">{plural(pending, 'explanation')} awaiting your review</p>
+                    <p className="muted">{k.name} told Pip about {plural(pending, 'saved item')}</p>
+                  </div>
+                  <button type="button" className="ghost" onClick={() => openChild(k.id, 'explanations')}>Review</button>
+                </div>
+              ) : !favsFull && (
+                <div className="ov-banner ov-banner--empty">
+                  <p className="ov-banner-title">Nothing awaiting your review</p>
+                  <p className="muted">{k.name} can tell Pip about a saved favourite any time</p>
+                </div>
+              )}
 
-      <PrivacyPanel account={account} />
-    </div>
+              {favsFull && (
+                <div className="ov-banner ov-banner--alert" role="alert">
+                  <div>
+                    <p className="ov-banner-title">{FREE_FAVOURITES_LIMIT} of {FREE_FAVOURITES_LIMIT} favourites saved</p>
+                    <p className="muted">{k.name} has to remove one before saving anything new. Premium is unlimited.</p>
+                  </div>
+                  <button type="button" className="ghost" onClick={() => openChild(k.id, 'favourites')}>Manage favourites</button>
+                </div>
+              )}
+
+              <div className="stat-grid">
+                {[
+                  { label: st.messages === 1 ? 'message' : 'messages', val: st.messages, icon: ChatIcon, tone: 'blue' },
+                  { label: st.favourites === 1 ? 'favourite' : 'favourites', val: st.favourites, icon: HeartIcon, tone: 'pink' },
+                  { label: st.reports === 1 ? 'open report' : 'open reports', val: st.reports, icon: FlagIcon, tone: 'orange' },
+                ].map(({ label, val, icon: Icon, tone }) => (
+                  <div className="stat stat--tone" style={toneStyle(tone)} key={label}>
+                    <div className="stat-icon"><Icon width={18} height={18} /></div>
+                    <div className="stat-num">{n(val)}</div>
+                    <div className="stat-label">{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="row">
+                <button type="button" onClick={() => openChild(k.id)}>Open {k.name}&rsquo;s page</button>
+                <button type="button" className="ghost" disabled={inContext} aria-pressed={inContext} onClick={() => setContext(k.id)}>
+                  {inContext ? 'In context' : `Switch to ${k.name}`}
+                </button>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
+      {!premium && !loading && (
+        <div className="ov-banner ov-banner--info">
+          <p className="ov-banner-title">Free includes 1 child profile</p>
+          <ul className="ov-perks">
+            <li>Up to 4 child profiles</li>
+            <li>Unlimited saved favourites</li>
+            <li>Full activity history, trends and articulation history</li>
+            <li>Compare children side by side</li>
+          </ul>
+          <div className="row">
+            <button type="button" onClick={() => navigate('/parent/subscription')}>Upgrade to Premium</button>
+          </div>
+        </div>
+      )}
+
+      {premium && kids.length > 1 && (
+        <DashCard id="compare">
+          <div className="dash-panel">
+            <div className="ov-compare-head">
+              <h3>Compare children</h3>
+              <span className="badge badge-premium">premium</span>
+            </div>
+            <p className="muted">
+              {kids.length === 2 ? `${kids[0].name} and ${kids[1].name}` : `${kids.slice(0, -1).map((k) => k.name).join(', ')}, and ${kids[kids.length - 1].name}`} side by side: messages, recommendations, favourites and top genres.
+            </p>
+            <div className="row">
+              <button type="button" className="ghost" aria-expanded={showCompare} onClick={() => setShowCompare((v) => !v)}>
+                {showCompare ? 'Hide comparison' : 'Open comparison'}
+              </button>
+            </div>
+            {showCompare && <CompareChildrenPanel bare />}
+          </div>
+        </DashCard>
+      )}
+    </>
+  )
+}
+
+// The Child page: pick which child you're looking at (PA33), add one (PA31),
+// then that child's profile and tabs.
+function ChildPage({ account, onAccountUpdated, kids, loading, reload, context, setContext }) {
+  const navigate = useNavigate()
+  const routeState = useLocation().state || {}
+  const [adding, setAdding] = useState(!!routeState.add)
+  const [justAddedId, setJustAddedId] = useState(null)
+  const current = kids.find((c) => c.id === context) || kids[0] || null
+  const premium = account.tier === 'premium'
+  const childLimit = premium ? 4 : 1
+  const atLimit = !loading && kids.length >= childLimit
+  // A link that asks for the add form (or a stale form) must not open past the plan's limit.
+  useEffect(() => { if (atLimit) setAdding(false) }, [atLimit])
+
+  function handleAdded(created) {
+    reload()
+    setAdding(false)
+    if (created?.id) { setContext(created.id); setJustAddedId(created.id) }
+  }
+
+  // Verified but not consented yet: go straight to "Before you add a child…" — no "Your children — new
+  // profile" heading and no child tabs / "Add Child" above it.
+  if (adding && account.verified && !account.consent) {
+    return <ConsentStep account={account} onAccountUpdated={onAccountUpdated} onDone={() => {}} onBack={() => setAdding(false)} />
+  }
+
+  return (
+    <DashCard id="children">
+      <div className="dash-panel">
+        <h2 className="dash-title"><UsersIcon width={20} height={20} /> Your children{kids.length > 0 ? ` (${kids.length})` : ''}{adding ? ' — new profile' : ''}</h2>
+        {loading && <p className="muted">Loading your children…</p>}
+        {!loading && kids.length === 0 && !adding && (
+          <p className="muted">No child profiles yet. Use “Add Child” below to create the first one.</p>
+        )}
+        {kids.length > 1 && !adding && (
+          <p className="muted">Tap a name below to switch which child&rsquo;s profile you&rsquo;re viewing.</p>
+        )}
+        <div className="tabs">
+          {kids.map((c) => (
+            <button
+              type="button" key={c.id}
+              className={!adding && current?.id === c.id ? 'tab active' : 'tab'}
+              onClick={() => { setAdding(false); setContext(c.id) }}
+            >
+              {c.name}
+            </button>
+          ))}
+          <button
+            type="button" className={adding ? 'tab active' : 'tab'} onClick={() => setAdding(true)} disabled={atLimit}
+            title={atLimit ? (premium ? 'You have reached the 4 child profiles Premium includes.' : 'Free includes 1 child profile. Upgrade to Premium to add more.') : undefined}
+          >
+            <PlusIcon width={14} height={14} /> Add Child
+          </button>
+        </div>
+        {kids.length >= 1 && !premium && (
+          <p className="muted">
+            The Free plan includes 1 child profile — Premium allows up to 4.{' '}
+            <button type="button" className="linkbtn" onClick={() => navigate('/parent/subscription')}>Upgrade to Premium</button>
+          </p>
+        )}
+        {premium && atLimit && (
+          <p className="muted">You have reached the 4 child profiles Premium includes.</p>
+        )}
+
+        {adding ? (
+          <AddChild account={account} onAccountUpdated={onAccountUpdated} onAdded={handleAdded} onClose={() => setAdding(false)} />
+        ) : current && (
+          <ChildCard
+            key={current.id} child={current} account={account}
+            initialView={justAddedId === current.id ? 'edit' : (routeState.tab || null)}
+            onChanged={reload}
+          />
+        )}
+      </div>
+    </DashCard>
   )
 }
 
@@ -463,11 +846,11 @@ function ReviewPanel() {
     }
   }
 
-  if (review === undefined) return null // avoid a flash of the form before we know
+  if (review === undefined) return <div className="dash-panel"><h2 className="dash-title"><StarIcon width={20} height={20} /> Your review</h2><p className="muted">Loading…</p></div> // avoid a flash of the form before we know
 
   return (
-    <div className="card">
-      <h3><StarIcon width={18} height={18} filled /> Your review</h3>
+    <div className="dash-panel">
+      <h2 className="dash-title"><StarIcon width={20} height={20} /> Your review</h2>
       {justSubmitted ? (
         <div className="review-submitted review-submitted-thanks">
           <CheckIcon width={20} height={20} />
@@ -515,22 +898,21 @@ function StarPicker({ value, onChange, readOnly }) {
 
 // ---------- UV06 email verification ----------
 
-function VerifyBanner({ account, onAccountUpdated }) {
+function VerifyBanner({ account }) {
+  const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [sent, setSent] = useState(false)
-  // Dev mode only: signup (or a resend below) can hand back a real token
-  // when no email service is configured — prefilling it keeps local/no-key
-  // testing exactly as easy as before this change. In real-email mode the
-  // backend never sends a token back, so this just stays empty and the
-  // parent has to actually check their inbox and type the code in.
-  const [code, setCode] = useState(account.verify_token || '')
+  // When no email can actually go out (dev mode, or the email service can't reach this address)
+  // the backend hands the verification token back instead. It is shown here as the link the
+  // email would have carried, so verifying stays possible without an inbox.
+  const [token, setToken] = useState(account.verify_token || '')
 
-  async function sendCode() {
+  async function sendLink() {
     setBusy(true); setError('')
     try {
       const res = await requestVerification()
-      if (res.token) setCode(res.token)
+      if (res.token) setToken(res.token)
       setSent(true)
     } catch (err) {
       setError(err.message)
@@ -539,42 +921,23 @@ function VerifyBanner({ account, onAccountUpdated }) {
     }
   }
 
-  async function verifyNow(e) {
-    e.preventDefault()
-    const missing = firstMissingField([[code, 'Code from email']])
-    if (missing) { setError(missing); return }
-    setBusy(true); setError('')
-    try {
-      const updated = await confirmVerification(code)
-      onAccountUpdated({ ...account, ...updated })
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const haveCode = sent || !!code
-
   return (
-    <div className="card" style={{ background: 'var(--primary-100)', borderColor: 'var(--primary-border)' }}>
-      <p><AlertIcon width={16} height={16} /> <b>Please verify your email</b> — needed before you can add a child profile.</p>
-      <p className="muted">
-        {code
-          ? 'Dev mode: no email service is configured, so your code is filled in below already.'
-          : `We'll send a verification code to ${account.email}.`}
-      </p>
-      {error && <p className="error">{error}</p>}
-      <form onSubmit={verifyNow} className="row" noValidate>
-        {!haveCode && <button type="button" onClick={sendCode} disabled={busy}>{busy ? 'Sending…' : 'Send verification code'}</button>}
-        {haveCode && (
-          <>
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code from email" style={{ maxWidth: 160 }} />
-            <button type="submit" disabled={busy}>{busy ? 'Verifying…' : 'Verify'}</button>
-            <button type="button" className="linkbtn" onClick={sendCode} disabled={busy}>Resend code</button>
-          </>
+    <div className="verify-banner" role="alert">
+      <div className="verify-banner-main">
+        <p className="verify-banner-title">Verify your email address</p>
+        <p className="verify-banner-text">
+          We sent a link to {account.email}. Some features stay locked until you confirm it.
+          {token && ' Dev mode: no email service is configured, so the link is shown here instead of being emailed.'}
+        </p>
+        {sent && !token && <p className="verify-banner-text"><CheckIcon width={14} height={14} /> Email sent again.</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
+      <div className="verify-banner-actions">
+        {token && (
+          <button type="button" onClick={() => navigate(`/parent/verify?token=${encodeURIComponent(token)}`)}>Open verification link</button>
         )}
-      </form>
+        <button type="button" className="ghost" onClick={sendLink} disabled={busy}>{busy ? 'Sending…' : 'Resend email'}</button>
+      </div>
     </div>
   )
 }
@@ -630,7 +993,7 @@ function NotificationsBell() {
               <span className="notif-dot" />
               <span className="notif-text">
                 <span className="notif-title">{n.title}</span>
-                <span className="notif-body">{n.body}</span>
+                <span className="notif-body"><Sentences text={n.body} /></span>
                 <span className="notif-ts">{new Date(n.created_at * 1000).toLocaleString()}</span>
               </span>
             </button>
@@ -655,8 +1018,12 @@ function NotificationSettings() {
   const [prefs, setPrefs] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // PA20 — "Recent notifications" lives right under the switches (same
+  // list the bell opens), so a parent sees what actually got sent.
+  const [recent, setRecent] = useState(null)
 
   useEffect(() => { getNotificationPreferences().then(setPrefs).catch(() => {}) }, [])
+  useEffect(() => { listNotifications().then(setRecent).catch(() => setRecent([])) }, [])
 
   async function toggle(channel) {
     if (!prefs) return
@@ -673,11 +1040,11 @@ function NotificationSettings() {
     }
   }
 
-  if (!prefs) return null
+  if (!prefs) return <div className="dash-panel"><h2 className="dash-title"><BellIcon width={20} height={20} /> Notifications</h2><p className="muted">Loading…</p></div>
 
   return (
-    <section className="card">
-      <h3><BellIcon width={18} height={18} /> Notifications</h3>
+    <div className="dash-panel">
+      <h2 className="dash-title"><BellIcon width={20} height={20} /> Notifications</h2>
       <p className="muted">Get told when something needs your attention — a report gets resolved, a child activates their profile.</p>
       <label className="toggle">
         <input type="checkbox" checked={prefs.channels.in_app} onChange={() => toggle('in_app')} disabled={saving} />
@@ -687,19 +1054,68 @@ function NotificationSettings() {
         <input type="checkbox" checked={prefs.channels.email} onChange={() => toggle('email')} disabled={saving} />
         <span>Email <span className="muted">— sent to your account email</span></span>
       </label>
-      <label className="toggle">
-        <input type="checkbox" checked={prefs.channels.push} onChange={() => toggle('push')} disabled={saving} />
-        <span>Push <span className="muted">— a notification on this device, even with the tab closed</span></span>
+      <label className="toggle toggle--off">
+        <input type="checkbox" checked={false} disabled />
+        <span>Push <span className="muted">— coming soon</span></span>
       </label>
       {/* Was framed as a "prototype" caveat ("aren't wired to a real
           delivery service yet") — honest to the code, but reads oddly to
           a parent, who isn't the audience for implementation status.
           Same underlying honesty (nothing here is silently overpromised),
           phrased as a normal product roadmap note instead. */}
-      <p className="muted">Email and push are coming soon — everything shows up in-app for now.</p>
+      <p className="muted">Email goes to the address on your account. Push notifications aren&rsquo;t available yet.</p>
       {error && <p className="error">{error}</p>}
-    </section>
+      <h4 className="dash-subhead">Recent notifications</h4>
+      {recent === null && <p className="muted">Loading…</p>}
+      {recent && recent.length === 0 && <p className="muted">Nothing yet — you&rsquo;ll see updates here as they happen.</p>}
+      {recent && recent.length > 0 && (
+        <ul className="recent-notifs">
+          {recent.slice(0, 5).map((n) => {
+            const kind = NOTIF_KINDS[n.type] || NOTIF_KINDS.default
+            const Icon = kind.icon
+            return (
+              <li key={n.id} className={n.read ? 'recent-notif recent-notif--read' : 'recent-notif'}>
+                <span className="recent-notif-icon" style={toneStyle(kind.tone)}><Icon width={17} height={17} /></span>
+                <div className="recent-notif-main">
+                  <div className="recent-notif-head">
+                    <b className="recent-notif-title">{n.title}</b>
+                    <span className="recent-notif-ts" title={new Date(n.created_at * 1000).toLocaleString()}>
+                      {!n.read && <span className="recent-notif-dot" aria-label="Unread" />}
+                      {timeAgo(n.created_at)}
+                    </span>
+                  </div>
+                  <p className="recent-notif-body"><Sentences text={n.body} /></p>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
   )
+}
+
+// Recent-notification rows: an icon chip per kind of event, and "2 hours ago" instead of a bare date.
+const NOTIF_KINDS = {
+  explanation: { icon: ChatIcon, tone: 'blue' },
+  flag_resolved: { icon: FlagIcon, tone: 'success' },
+  support_resolved: { icon: LifeBuoyIcon, tone: 'success' },
+  child_activated: { icon: UserIcon, tone: 'pink' },
+  subscription_started: { icon: StarIcon, tone: 'amber' },
+  default: { icon: BellIcon, tone: 'blue' },
+}
+
+function timeAgo(ts) {
+  const secs = Math.max(0, Date.now() / 1000 - ts)
+  if (secs < 60) return 'Just now'
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins} min ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} hr ago`
+  const days = Math.floor(hrs / 24)
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return `${days} days ago`
+  return new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 // ---------- account: view / edit / delete (PA04/PA05/PA06) ----------
@@ -741,33 +1157,29 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
   }
 
   return (
-    <section className="card">
-      <div className="child-top">
-        <h3>My account</h3>
-        {!editing && <button className="ghost small" onClick={() => setEditing(true)}>Edit</button>}
-      </div>
+    <>
+    <div className="dash-panel">
+      <h2 className="dash-title"><UserIcon width={20} height={20} /> {editing ? 'My account — editing' : 'My account'}</h2>
 
       {!editing ? (
         <>
-          <p className="muted">Name: <b>{account.name}</b></p>
-          <p className="muted">
-            Email: <b>{account.email}</b>{' '}
-            <span className={`badge ${account.verified ? 'badge-approved' : 'badge-pending'}`}>
-              {account.verified ? 'verified' : 'not verified'}
-            </span>
-          </p>
-          <p className="muted">Plan: <b>{account.tier === 'premium' ? 'Premium' : 'Free'}</b></p>
-          {confirmingDelete ? (
-            <div className="row inline-confirm">
-              <span>Delete your account? This removes your profile and ALL child profiles and their data — permanently.</span>
-              <button className="danger small" onClick={remove}>Yes, delete everything</button>
-              <button className="ghost small" onClick={() => setConfirmingDelete(false)}>Cancel</button>
+          <dl className="dash-facts">
+            <div><dt>Name</dt><dd>{account.name}</dd></div>
+            <div>
+              <dt>Email</dt>
+              <dd>
+                {account.email}{' '}
+                <span className={`badge ${account.verified ? 'badge-approved' : 'badge-pending'}`}>
+                  {account.verified ? 'verified' : 'not verified'}
+                </span>
+              </dd>
             </div>
-          ) : (
-            <div className="row">
-              <button className="danger small" onClick={() => setConfirmingDelete(true)}><TrashIcon width={15} height={15} /> Delete account</button>
-            </div>
-          )}
+            <div><dt>Plan</dt><dd>{account.tier === 'premium' ? 'Premium' : 'Free'}</dd></div>
+          </dl>
+          <div className="row dash-actions">
+            <button className="ghost small" onClick={() => setEditing(true)}><EditIcon width={15} height={15} /> Edit details</button>
+            <button className="danger small" onClick={() => setConfirmingDelete(true)}><TrashIcon width={15} height={15} /> Delete account</button>
+          </div>
         </>
       ) : (
         // Was a bare <form>, no className at all — the one edit form in this
@@ -795,7 +1207,18 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
           </div>
         </form>
       )}
-    </section>
+    </div>
+    <ConfirmDialog
+      open={confirmingDelete}
+      icon={<TrashIcon width={20} height={20} />}
+      title="Delete your account?"
+      message={<span className="dialog-line">This permanently removes your account and all linked child data. This can&rsquo;t be undone.</span>}
+      confirmLabel="Delete account"
+      cancelLabel="Never mind"
+      onConfirm={() => { setConfirmingDelete(false); remove() }}
+      onCancel={() => setConfirmingDelete(false)}
+    />
+    </>
   )
 }
 
@@ -836,6 +1259,8 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
     if (!plans) return null
     return plans[`${tier}_${cycle}_price`]
   }
+  // Same currency the landing page's plans use ("SGD 9.90"), not a bare "$".
+  const money = (v) => (v == null ? '' : `${plans?.currency || 'SGD'} ${Number(v).toFixed(2)}`)
 
   async function subscribe(e, tier) {
     e.preventDefault()
@@ -862,6 +1287,11 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
       setBusy(false)
     }
   }
+
+  // Cancelling takes effect one billing cycle from now (30 days monthly, 365 annual) — the same rule the
+  // backend applies in cancel_subscription — so the date promised in the dialog is the one that gets stored.
+  const fmtLong = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+  const cancelDate = fmtLong(new Date(Date.now() + (status?.billing_cycle === 'annual' ? 365 : 30) * 86400000))
 
   async function cancel() {
     const s = await cancelPremium()
@@ -895,7 +1325,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
     }
   }
 
-  if (!status) return null
+  if (!status) return <div className="dash-panel"><h2 className="dash-title"><StarIcon width={20} height={20} /> Subscription</h2><p className="muted">Loading…</p></div>
   const price = priceFor('premium', billingCycle)
   // Same field-routing idea as AuthPanel's isWrongPassword — both card
   // errors are actually about the last-4 box, not the form in general, so
@@ -913,7 +1343,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   // Sits right beside Cancel / Resume on a paid plan; on the Free plan it
   // stays next to "Upgrade to Premium" (see the row at the bottom).
   const historyBtn = (
-    <button className="ghost small" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
+    <button className="ghost" onClick={openHistory}>{showHistory ? 'Hide' : 'View'} billing history</button>
   )
 
   function paidTierBody(tier) {
@@ -933,7 +1363,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
             <p className="premium-status-title">
               {TIER_INFO[tier].label} plan
               {status.billing_cycle && cyclePrice != null && (
-                <> — {status.billing_cycle === 'annual' ? 'Annual' : 'Monthly'}, ${cyclePrice.toFixed(2)}{status.billing_cycle === 'annual' ? '/yr' : '/mo'}</>
+                <> — {status.billing_cycle === 'annual' ? 'Annual' : 'Monthly'}, {money(cyclePrice)}{status.billing_cycle === 'annual' ? '/year' : '/month'}</>
               )}
             </p>
             <p className="premium-status-sub">{TIER_INFO[tier].desc}</p>
@@ -978,47 +1408,78 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
               <div className="cancel-status">
                 <span className="cancel-status-icon"><AlertIcon width={16} height={16} /></span>
                 <div>
-                  <p className="cancel-status-title">Cancels on {new Date(status.cancel_at * 1000).toLocaleDateString()}</p>
+                  <p className="cancel-status-title">Cancels on {fmtLong(new Date(status.cancel_at * 1000))}</p>
                   <p className="cancel-status-sub">You'll drop to Free after that — resume anytime before then to keep Premium.</p>
                 </div>
               </div>
-              <div className="row"><button onClick={resume}>Resume subscription</button>{historyBtn}</div>
+              <div className="row sub-actions">{historyBtn}<button onClick={resume}>Resume subscription</button></div>
             </>
           )
-          : confirmingCancel ? (
-            <div className="row inline-confirm">
-              <span>Cancel your {TIER_INFO[status.tier]?.label} subscription? Stays active until the end of the current billing period.</span>
-              <button className="danger small" onClick={cancel}>Yes, cancel</button>
-              <button className="ghost small" onClick={() => setConfirmingCancel(false)}>Never mind</button>
-            </div>
-          ) : (
-            <div className="row"><button className="danger" onClick={() => setConfirmingCancel(true)}>Cancel subscription</button>{historyBtn}</div>
+          : (
+            <div className="row sub-actions">{historyBtn}<button className="danger" onClick={() => setConfirmingCancel(true)}>Cancel subscription</button></div>
           )}
+          <ConfirmDialog
+            open={confirmingCancel}
+            icon={<AlertIcon width={20} height={20} />}
+            title={`Cancel your ${TIER_INFO[status.tier]?.label} subscription?`}
+            message={<span className="dialog-line">It stays active until <b>{cancelDate}</b>, then you drop to Free. You can resume any time before then.</span>}
+            confirmLabel="Cancel subscription"
+            cancelLabel="Never mind"
+            onConfirm={cancel}
+            onCancel={() => setConfirmingCancel(false)}
+          />
       </>
     )
   }
 
   return (
-    // id lets the landing page's pricing buttons ("Get Premium plan" etc.)
-    // jump an already-logged-in parent straight here instead of dropping
-    // them at the top of the dashboard — see Dashboard's own scroll-to-
-    // hash effect and Home.jsx's plan-grid Links.
-    <section className="card" id="subscription">
-      <div className="child-top">
-        <h3>Subscription</h3>
-        <span className={`badge ${status.tier === 'free' ? 'badge-pending' : 'badge-approved'}`}>{status.tier}</span>
+    // The landing page's pricing buttons ("Get Premium plan" etc.) send an
+    // already-logged-in parent straight to this page (/parent/subscription) —
+    // see Home.jsx's plan-grid Links.
+    <div className="dash-panel">
+      <div className="child-top child-top--inline">
+        <h2 className="dash-title"><StarIcon width={20} height={20} /> {status.tier === 'free' ? (showUpgrade ? 'Subscription — upgrade' : 'Subscription') : 'Subscription — manage'}</h2>
+        <span className={`badge ${status.tier === 'free' ? 'badge-pending' : 'badge-premium'}`}>{status.tier}</span>
       </div>
 
       {status.tier === 'free' && (
         <>
-          <p className="muted">Free plan: 1 child profile, 5 saved favourites per child, basic activity log.</p>
+          {!showUpgrade && (
+            <div className="plan-compare">
+              <section className="plan-col plan-col--current">
+                <span className="plan-tag">Your plan</span>
+                <h3>Free</h3>
+                <p className="plan-price">{plans?.currency || 'SGD'} 0<span>/month</span></p>
+                <ul className="plan-perks">
+                  <li>1 child profile</li>
+                  <li>5 saved favourites per child</li>
+                  <li>Basic activity log</li>
+                </ul>
+              </section>
+              <section className="plan-col plan-col--premium">
+                <span className="plan-tag plan-tag--premium">Recommended</span>
+                <h3>Premium</h3>
+                <p className="plan-price">{money(priceFor('premium', 'monthly'))}<span>/month</span></p>
+                {priceFor('premium', 'annual') != null && (
+                  <p className="plan-alt">or {money(priceFor('premium', 'annual'))}/year</p>
+                )}
+                <ul className="plan-perks">
+                  <li>Up to 4 child profiles</li>
+                  <li>Unlimited saved favourites</li>
+                  <li>Full activity history, trends and articulation history</li>
+                  <li>Compare children side by side</li>
+                </ul>
+                <button type="button" className="btn-grow" onClick={() => { setShowUpgrade(true); setError('') }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
+              </section>
+            </div>
+          )}
           {showUpgrade && (
             <form className="subscribe-form" onSubmit={(e) => subscribe(e, 'premium')} noValidate>
               <p className="muted">{TIER_INFO.premium.desc}</p>
               <label>Billing cycle
                 <Select value={billingCycle} onChange={(e) => setBillingCycle(e.target.value)}>
-                  <option value="monthly">Monthly — ${price?.toFixed(2)}</option>
-                  <option value="annual">Annual — ${priceFor('premium', 'annual')?.toFixed(2)}</option>
+                  <option value="monthly">Monthly — {money(priceFor('premium', 'monthly'))}</option>
+                  <option value="annual">Annual — {money(priceFor('premium', 'annual'))}</option>
                 </Select>
               </label>
               {status.payment_method ? (
@@ -1075,14 +1536,11 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
           it too, for the same reason on the way out. */}
       {status.tier === 'free' && (
         <div className="row">
-          {!showUpgrade && (
-            <button className="btn-grow" onClick={() => { setShowUpgrade(true); setError('') }}><StarIcon width={16} height={16} /> Upgrade to Premium</button>
-          )}
           {historyBtn}
         </div>
       )}
       {showHistory && (
-        <div className="panel">
+        <div className="panel billing-panel">
           {history.length === 0 && <p className="muted">No transaction history.</p>}
           {/* Was .fav-item — borrowed straight from the favourites list,
               which reads fine for "a book" but flattened every row here
@@ -1098,16 +1556,80 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
                 <span className="billing-row-desc">{b.description}</span>
                 <span className="billing-row-date">{new Date(b.ts * 1000).toLocaleDateString()}</span>
               </div>
-              <span className="billing-row-amount">${(b.amount_cents / 100).toFixed(2)}</span>
+              <span className="billing-row-amount">{money(b.amount_cents / 100)}</span>
             </div>
           ))}
         </div>
       )}
-    </section>
+    </div>
   )
 }
 
 // ---------- PA29: data & privacy settings ----------
+
+// ---------- SA14: ask for help (lands in the admin's Support tab) ----------
+
+function SupportPanel() {
+  const [tickets, setTickets] = useState(null)
+  const [subject, setSubject] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  const load = () => mySupportTickets().then(setTickets).catch(() => setTickets([]))
+  useEffect(() => { load() }, [])
+
+  async function submit(e) {
+    e.preventDefault()
+    const missing = firstMissingField([[subject, 'A subject'], [message, 'A message']])
+    if (missing) { setError(missing); return }
+    setError(''); setBusy(true); setSent(false)
+    try {
+      await createSupportTicket(subject.trim(), message.trim())
+      setSubject(''); setMessage(''); setSent(true)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const day = (ts) => new Date(ts * 1000).toLocaleDateString()
+  return (
+    <div className="dash-panel support-card">
+      <h2 className="dash-title"><LifeBuoyIcon width={20} height={20} /> Need help?</h2>
+      <p className="muted">Tell us what&rsquo;s going wrong and our team will take a look. You&rsquo;ll get a notification when it&rsquo;s resolved.</p>
+      <form onSubmit={submit} noValidate>
+        <label>Subject
+          <input value={subject} maxLength={100} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. My child can't sign in" />
+        </label>
+        <label>What happened?
+          <textarea rows={4} value={message} maxLength={1000} onChange={(e) => setMessage(e.target.value)} placeholder="A few details help us fix it faster." />
+        </label>
+        {error && <p className="error">{error}</p>}
+        <div className="row">
+          <button type="submit" disabled={busy}>{busy ? 'Sending…' : 'Send request'}</button>
+          {sent && <span className="muted"><CheckIcon width={14} height={14} /> Sent. We&rsquo;ll let you know.</span>}
+        </div>
+      </form>
+      {tickets && tickets.length > 0 && (
+        <ul className="support-list" aria-label="Your requests">
+          {tickets.map((t) => (
+            <li key={t.id} className="support-item">
+              <span className="support-item-main">
+                <b>{t.subject}</b>
+                <span className="muted">Sent {day(t.ts)}{t.status === 'resolved' && t.resolved_at ? ` · Resolved ${day(t.resolved_at)}` : ''}</span>
+              </span>
+              <span className={`badge ${t.status === 'open' ? 'badge-pending' : 'badge-approved'}`}>{t.status === 'open' ? 'Open' : 'Resolved'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 function PrivacyPanel({ account }) {
   const [settings, setSettings] = useState(null)
@@ -1125,25 +1647,28 @@ function PrivacyPanel({ account }) {
 
   if (!account.consent) {
     return (
-      <section className="card">
-        <h3>Data &amp; Privacy</h3>
-        <p className="muted">Available once you've provided parental consent (see "Add a child profile" below).</p>
-      </section>
+      <div className="dash-panel">
+        <h2 className="dash-title"><LockIcon width={20} height={20} /> Data &amp; Privacy</h2>
+        <p className="muted">Available once you've provided parental consent (use &ldquo;Add Child&rdquo; on the Child page).</p>
+      </div>
     )
   }
-  if (!settings) return null
+  if (!settings) return <div className="dash-panel"><h2 className="dash-title"><LockIcon width={20} height={20} /> Data &amp; Privacy</h2><p className="muted">Loading…</p></div>
 
   return (
-    <section className="card">
-      <h3>Data &amp; Privacy</h3>
-      <p className="muted">Controls how long your child's activity data is kept, per PDPA.</p>
-      <label>Retention preference
+    <div className="dash-panel">
+      <h2 className="dash-title"><LockIcon width={20} height={20} /> Data &amp; Privacy</h2>
+      <p className="muted">
+        <span className="sentence">Your child&rsquo;s chat conversations are deleted automatically once they are older than the period below.</span>
+        <span className="sentence">Favourites and learning progress are kept.</span>
+      </p>
+      <label>Keep chat history for
         <Select value={settings.retention_preference} disabled={busy} onChange={(e) => change(e.target.value)}>
-          <option value="standard">Standard (default retention period)</option>
-          <option value="minimal">Minimal (keep only what's needed right now)</option>
+          <option value="standard">Up to {settings.standard_days} days (standard)</option>
+          <option value="minimal">{settings.minimal_days} days (minimal)</option>
         </Select>
       </label>
-    </section>
+    </div>
   )
 }
 
@@ -1172,7 +1697,6 @@ function ConsentStep({ account, onAccountUpdated, onDone, onBack }) {
 
   return (
     <form onSubmit={submit} className="card consent-card" style={{ background: 'var(--primary-100)' }} noValidate>
-      {onBack && <button type="button" className="linkbtn" onClick={onBack} style={{ alignSelf: 'flex-start' }}>← Back</button>}
       <h3>Before you add a child…</h3>
       <p className="muted">
         Under PDPA, we need your verifiable consent before collecting any data about your child —
@@ -1183,7 +1707,11 @@ function ConsentStep({ account, onAccountUpdated, onDone, onBack }) {
         <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
       </label>
       {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={busy}>{busy ? 'Confirming…' : 'I agree — continue'}</button>
+      <div className="row">
+        <button type="submit" disabled={busy}>{busy ? 'Confirming…' : 'I agree — continue'}</button>
+        {onBack && <button type="button" className="ghost" onClick={onBack}>Cancel</button>}
+      </div>
+      <p className="muted consent-note">Consent is recorded with a timestamp against your account and can be withdrawn in Settings.</p>
     </form>
   )
 }
@@ -1238,7 +1766,12 @@ function DobPicker({ value, onChange }) {
       <div className="dob-part dob-part--month"><Select aria-label="Month of birth" value={parts.m} onChange={(e) => update({ ...parts, m: e.target.value })}>{months}</Select></div>
       <div className="dob-part dob-part--year"><Select aria-label="Year of birth" value={parts.y} onChange={(e) => update({ ...parts, y: e.target.value })}>{years}</Select></div>
     </div>
-    {outOfRange && <p className="dob-warn p-wide" role="alert">{outOfRange}</p>}
+    {outOfRange && (
+      <div className="dob-warn" role="alert">
+        <p className="dob-warn-title">{outOfRange}</p>
+        <p className="dob-warn-text">Change the date, or check you picked the right year.</p>
+      </div>
+    )}
     </div>
   )
 }
@@ -1280,8 +1813,10 @@ function ageFromDob(dob) {
   return age
 }
 
-function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
-  const [open, setOpen] = useState(false)
+// Opened by the "+ Add Child" chip in the Your children card (which owns
+// whether this is showing); `onClose` hands control back, `onAdded` gets the
+// freshly created profile so the dashboard can land on it.
+function AddChild({ account, onAccountUpdated, onAdded, onClose }) {
   const [name, setName] = useState('')
   const [dob, setDob] = useState('')
   const [gender, setGender] = useState('')
@@ -1300,12 +1835,12 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
       // No pin field — the server generates a unique 6-digit linking
       // code/PIN itself (see models.ChildCreate's docstring for why letting
       // a parent type one caused real collisions between families).
-      await createChild({
+      const created = await createChild({
         name, dob, reading_level: readingLevel || null,
         gender: gender || null, interests,
       })
-      setName(''); setReadingLevel(''); setDob(''); setGender(''); setInterests([]); setOpen(false)
-      onAdded()
+      setName(''); setReadingLevel(''); setDob(''); setGender(''); setInterests([])
+      onAdded(created)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -1313,24 +1848,15 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
     }
   }
 
-  if (!open) {
-    return (
-      <button className="add-btn" onClick={() => setOpen(true)}>
-        <PlusIcon width={16} height={16} /> Add a child profile {childCount >= 1 && account.tier !== 'premium' ? '(Premium required for more than 1)' : ''}
-      </button>
-    )
-  }
-
   if (!account.verified) {
     return <VerifyBanner account={account} onAccountUpdated={onAccountUpdated} />
   }
   if (!account.consent) {
-    return <ConsentStep account={account} onAccountUpdated={onAccountUpdated} onDone={() => {}} onBack={() => setOpen(false)} />
+    return <ConsentStep account={account} onAccountUpdated={onAccountUpdated} onDone={() => {}} onBack={onClose} />
   }
 
   return (
-    <form onSubmit={submit} className="card child-form" noValidate>
-      <h3>New child profile</h3>
+    <form onSubmit={submit} className="child-form" noValidate>
       <label>Child's name
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
@@ -1357,11 +1883,11 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
         <span className="field-group-label">What do they love? (optional)</span>
         <InterestPicker value={interests} onChange={setInterests} />
       </div>
-      <p className="muted p-wide">A Login ID and PIN are generated automatically and shown on the child's card.</p>
+      <p className="muted p-wide">A Login ID and PIN are generated automatically — you&rsquo;ll see them under Edit on the child&rsquo;s profile.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Create profile'}</button>
-        <button type="button" className="ghost" onClick={() => setOpen(false)}>Cancel</button>
+        <button type="button" className="ghost" onClick={onClose}>Cancel</button>
       </div>
     </form>
   )
@@ -1369,30 +1895,154 @@ function AddChild({ account, onAccountUpdated, onAdded, childCount }) {
 
 // ---------- PA32: multi-child comparison (Premium) ----------
 
-function CompareChildrenPanel() {
+const COMPARE_TONES = ['orange', 'blue', 'pink', 'cyan']
+
+// PA32 — the same ingredients as one child's Insights tab (big-number tiles,
+// most-asked-for bars, a 14-day chart, books vs videos), but side by side and
+// with one colour per child so who-is-who reads at a glance.
+function CompareChildrenPanel({ bare = false }) {
   const [rows, setRows] = useState(null)
+  const [trends, setTrends] = useState({})   // childId -> ChildTrendsOut (richer breakdown; optional)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    compareChildren().then(setRows).catch((err) => setError(err.message))
+    let live = true
+    compareChildren()
+      .then(async (list) => {
+        const all = await Promise.all(list.map((r) => childTrends(r.child_id).catch(() => null)))
+        if (!live) return
+        setTrends(Object.fromEntries(list.map((r, i) => [r.child_id, all[i]])))
+        setRows(list)
+      })
+      .catch((err) => { if (live) setError(err.message) })
+    return () => { live = false }
   }, [])
 
-  if (error) return null
-  if (!rows) return <p className="muted">Loading comparison…</p>
+  const heading = !bare && <h2 className="dash-title"><ChartIcon width={20} height={20} /> Compare children</h2>
+  if (error) return <div className="dash-panel">{heading}<p className="error">{error}</p></div>
+  if (!rows) return <div className="dash-panel">{heading}<p className="muted">Loading comparison…</p></div>
+
+  const tones = rows.map((_, i) => COMPARE_TONES[i % COMPARE_TONES.length])
+  const leaderOf = (key) => {
+    const max = Math.max(...rows.map((r) => r[key]))
+    const tops = rows.filter((r) => r[key] === max)
+    return max > 0 && tops.length === 1 ? tops[0] : null
+  }
+  const topChatter = leaderOf('total_messages')
+  const runnerUp = topChatter && rows.filter((r) => r !== topChatter).sort((a, b) => b.total_messages - a.total_messages)[0]
+  const sharedGenres = rows[0] ? rows[0].top_genres.filter((g) => rows.every((r) => r.top_genres.includes(g))) : []
+
+  // 14-day chart: one bar per child per day, on a shared scale
+  const perDay = rows.map((r) => lastDays(trends[r.child_id]?.message_timestamps || []))
+  const dayMax = Math.max(1, ...perDay.flatMap((d) => d.map((x) => x.count)))
+  const hasDays = perDay.some((d) => d.some((x) => x.count > 0))
+  const maxGenre = Math.max(1, ...rows.flatMap((r) => (trends[r.child_id]?.genre_counts || []).map((g) => g.count)))
 
   return (
-    <section className="card">
-      <h3>Compare Children</h3>
-      <div className="child-grid">
-        {rows.map((r) => (
-          <div key={r.child_id} className="child-card">
-            <h3>{r.name}</h3>
-            <p className="muted">{r.total_messages} messages · {r.total_recommendations} recommendations · {r.favourites_count} favourites</p>
-            <p className="muted">Top genres: {r.top_genres.length ? r.top_genres.join(', ') : '—'}</p>
-          </div>
+    <div className="dash-panel cmp">
+      {heading}
+
+      <div className="cmp-people">
+        {rows.map((r, i) => (
+          <span className="cmp-person" style={toneStyle(tones[i])} key={r.child_id}>
+            <span className="cmp-avatar">{r.name.slice(0, 1).toUpperCase()}</span>
+            {r.name}
+          </span>
         ))}
       </div>
-    </section>
+
+      {topChatter && runnerUp && (
+        <p className="insights-lead">
+          <b>{topChatter.name}</b> is chatting the most: {topChatter.total_messages} messages, {topChatter.total_messages - runnerUp.total_messages} more than {runnerUp.name}.
+        </p>
+      )}
+
+      <div className={`cmp-cols${rows.length === 4 ? ' cmp-cols--four' : ''}`}>
+        {rows.map((r, i) => (
+          <section className="cmp-col" style={toneStyle(tones[i])} key={r.child_id}>
+            <h4 className="cmp-col-name">{r.name}</h4>
+            <div className="cmp-tiles">
+              <div className="cmp-tile"><span className="cmp-tile-num">{r.total_messages}</span><span className="insights-label">messages</span></div>
+              <div className="cmp-tile"><span className="cmp-tile-num">{r.total_recommendations}</span><span className="insights-label">titles shown</span></div>
+              <div className="cmp-tile"><span className="cmp-tile-num">{r.favourites_count}</span><span className="insights-label">saved</span></div>
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <div className={`cmp-grid2${rows.length >= 3 ? ' cmp-grid2--stack' : ''}`}>
+        <section className="insights-box">
+          <h4>Most asked for</h4>
+          <div className="cmp-rank-cols">
+            {rows.map((r, i) => {
+              const genres = (trends[r.child_id]?.genre_counts || []).slice(0, 4)
+              return (
+                <div className="cmp-rank-col" style={toneStyle(tones[i])} key={r.child_id}>
+                  <span className="cmp-genre-name">{r.name}</span>
+                  {genres.length === 0 ? <span className="muted">No genres yet</span> : (
+                    <ul className="rank-list">
+                      {genres.map((g) => (
+                        <li key={g.genre}>
+                          <div className="rank-head">
+                            <span className="rank-name">{g.genre}{sharedGenres.includes(g.genre) && <span className="rank-note">both enjoy</span>}</span>
+                            <span className="rank-count">{g.count}</span>
+                          </div>
+                          <div className="rank-track cmp-track"><div className="rank-bar cmp-bar" style={{ width: `${(g.count / maxGenre) * 100}%` }} /></div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="insights-box">
+          <h4>Last {INSIGHT_DAYS} days</h4>
+          {!hasDays ? <p className="muted">No chats in the last {INSIGHT_DAYS} days.</p> : (
+            <div className="day-chart cmp-days" role="img" aria-label={`Messages per day over the last ${INSIGHT_DAYS} days for ${rows.map((r) => r.name).join(' and ')}`}>
+              {perDay[0].map((d, di) => (
+                <div className={`day-col ${d.today ? 'day-col--today' : ''}`} key={d.start}>
+                  <div className="day-bar-wrap cmp-day-bars">
+                    {rows.map((r, i) => {
+                      const c = perDay[i][di].count
+                      return <div key={r.child_id} className="day-bar cmp-day-bar" style={{ ...toneStyle(tones[i]), height: c ? `${Math.max(6, (c / dayMax) * 100)}%` : '2px' }} title={`${r.name} · ${d.full}: ${c}`} />
+                    })}
+                  </div>
+                  <span className="day-label">{d.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="insights-box">
+        <h4>Books vs videos</h4>
+        <div className="cmp-split-rows">
+          {rows.map((r, i) => {
+            const t = trends[r.child_id]
+            const books = t?.books_recommended || 0
+            const videos = t?.videos_recommended || 0
+            const kinds = books + videos
+            const pct = kinds ? Math.round((books / kinds) * 100) : 0
+            return (
+              <div className="cmp-split" style={toneStyle(tones[i])} key={r.child_id}>
+                <span className="cmp-row-name">{r.name}</span>
+                <div className="split-line cmp-split-line" role="img" aria-label={`${books} books and ${videos} videos for ${r.name}`}>
+                  {kinds === 0 ? <span className="cmp-split-empty" style={{ width: '100%' }} /> : <>
+                    {books > 0 && <span className="cmp-split-books" style={{ width: `${pct}%` }} />}
+                    {videos > 0 && <span className="cmp-split-videos" style={{ width: `${100 - pct}%` }} />}
+                  </>}
+                </div>
+                <span className="cmp-split-text"><b>{books}</b> {books === 1 ? 'book' : 'books'} · <b>{videos}</b> {videos === 1 ? 'video' : 'videos'}</span>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -1529,6 +2179,59 @@ function InsightsPanel({ trends: t, childName }) {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+// Free accounts: the Insights tab is there, but locked. An upgrade pitch on top, and underneath the real
+// Insights layout filled with made-up sample numbers, blurred and not clickable, so a parent can see what
+// Premium adds without any real data of their child's being exposed.
+const INSIGHTS_PERKS = [
+  (n) => `Everything ${n} has asked for, and what they gravitate towards`,
+  () => 'Fourteen days of activity at a glance',
+  () => 'The level journey, with the date each level was reached',
+  (n) => `Every explanation you have reviewed, in ${n}\u2019s own words`,
+]
+
+function InsightsLocked({ childName }) {
+  const navigate = useNavigate()
+  const sample = useMemo(() => {
+    const perDay = [0, 2, 1, 0, 0, 3, 4, 2, 0, 1, 5, 3, 2, 4]
+    const stamps = []
+    perDay.forEach((n, i) => {
+      const d = new Date()
+      d.setHours(12, 0, 0, 0)
+      d.setDate(d.getDate() - (perDay.length - 1 - i))
+      for (let k = 0; k < n; k++) stamps.push(d.getTime() / 1000 + k * 60)
+    })
+    return {
+      child_id: 'sample', total_messages: 42, total_recommendations: 12, favourites_count: 5,
+      top_genres: ['animals', 'space'], genre_counts: [{ genre: 'animals', count: 9 }, { genre: 'space', count: 6 }],
+      books_recommended: 0, videos_recommended: 0, message_timestamps: stamps, interests: [],
+    }
+  }, [])
+
+  return (
+    <div className="insights-locked">
+      <section className="locked-card">
+        <span className="locked-icon"><LockIcon width={22} height={22} /></span>
+        <h3>Insights are part of Premium</h3>
+        <p className="muted">Premium keeps the full history and a level journey over time. {childName}&rsquo;s own experience is exactly the same on either plan.</p>
+        <ul className="locked-perks">
+          {INSIGHTS_PERKS.map((perk, i) => (
+            <li key={i}><span className="locked-check"><CheckIcon width={12} height={12} /></span>{perk(childName)}</li>
+          ))}
+        </ul>
+        <div className="row locked-actions">
+          <button type="button" onClick={() => navigate('/parent/subscription')}>Upgrade to Premium</button>
+        </div>
+      </section>
+      <div className="locked-preview">
+        <span className="locked-preview-label">Preview</span>
+        <div className="locked-preview-body" aria-hidden="true">
+          <InsightsPanel trends={sample} childName={childName} />
+        </div>
+      </div>
     </div>
   )
 }
@@ -1689,6 +2392,8 @@ function ExplanationsPanel({ child, account, onChanged }) {
   }
   useEffect(() => { load() }, [child.id])
 
+  const [decliningRow, setDecliningRow] = useState(null)   // explanation waiting on the "are you sure?" step
+
   async function decide(row, confirm) {
     setBusyId(row.id)
     setError('')
@@ -1761,6 +2466,11 @@ function ExplanationsPanel({ child, account, onChanged }) {
               <div>
                 <b>All caught up</b>
                 <span>When {child.name} tells Pip about something in their library, it shows up here.</span>
+                {/* Free only ever receives the waiting ones, so "nothing yet" is only certain on Premium
+                    (full history) or while a Free child is still at the very start of Explorer. */}
+                {rows.length === 0 && (account.tier === 'premium' || (level && level.level === 'explorer' && level.progress === 0)) && (
+                  <small>{child.name} has not explained anything yet. In their Library they tap a saved book or video and choose &ldquo;Tell Pip about this&rdquo;.</small>
+                )}
               </div>
             </div>
           ) : (
@@ -1773,7 +2483,7 @@ function ExplanationsPanel({ child, account, onChanged }) {
                     actions={(
                       <div className="expl-actions">
                         <button onClick={() => decide(r, true)} disabled={busyId === r.id}><CheckIcon width={15} height={15} /> Confirm</button>
-                        <button className="ghost" onClick={() => decide(r, false)} disabled={busyId === r.id}>Decline</button>
+                        <button className="ghost" onClick={() => setDecliningRow(r)} disabled={busyId === r.id}>Decline</button>
                       </div>
                     )}
                   />
@@ -1841,13 +2551,34 @@ function ExplanationsPanel({ child, account, onChanged }) {
         ) : (
           <p className="expl-note">Premium keeps the full history and a level journey over time.</p>
         )}
+
+        <ConfirmDialog
+          open={!!decliningRow}
+          icon={<AlertIcon width={20} height={20} />}
+          title="Decline this explanation?"
+          message={<span className="dialog-line">{decliningRow ? `“${decliningRow.title}” won’t count toward ${child.name}’s next level. Declining is never shown to ${child.name}, and they can try that item again later.` : ''}</span>}
+          confirmLabel="Decline"
+          cancelLabel="Go back"
+          onConfirm={() => { const r = decliningRow; setDecliningRow(null); if (r) decide(r, false) }}
+          onCancel={() => setDecliningRow(null)}
+        />
+
+        <section className="expl-how">
+          <h4 className="expl-h">How this works</h4>
+          <ul className="expl-how-list">
+            <li>{child.name} picks something they have saved and tells Pip about it, by speaking or typing. Their choice.</li>
+            <li>Pip always answers warmly and never marks them right or wrong.</li>
+            <li>You read what they actually said and confirm it if it shows understanding at their current level.</li>
+            <li>Three confirmations move them up a level. Declining is never shown to {child.name}, and they can try that item again.</li>
+          </ul>
+        </section>
       </div>
     </div>
   )
 }
 
-function ChildCard({ child, account, onChanged }) {
-  const [view, setView] = useState(null) // 'activity' | 'favourites' | 'edit' | 'safety' | 'reports' | 'insights' | 'explanations' | 'privacy' | null
+function ChildCard({ child, account, onChanged, initialView = null }) {
+  const [view, setView] = useState(initialView) // 'activity' | 'favourites' | 'edit' | 'safety' | 'reports' | 'insights' | 'explanations' | 'privacy' | null
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [overrides, setOverrides] = useState({})
@@ -1865,6 +2596,7 @@ function ChildCard({ child, account, onChanged }) {
   const [reportingId, setReportingId] = useState(null)
   const [reportReason, setReportReason] = useState('')
   const [reportBusy, setReportBusy] = useState(false)
+  const [confirmingReport, setConfirmingReport] = useState(null)   // the item waiting on the "are you sure?" step
   const [toast, notify] = useToast()
 
   async function toggle(which) {
@@ -1880,7 +2612,7 @@ function ChildCard({ child, account, onChanged }) {
         setData(favs)
         setOverrides(Object.fromEntries(ov.map((o) => [o.content_id, o.action])))
       } else if (which === 'reports') setData(await childReports(child.id))
-      else if (which === 'insights') setData([await childTrends(child.id)])
+      else if (which === 'insights') setData(account.tier === 'premium' ? [await childTrends(child.id)] : [])   // Free sees the locked preview instead
       else setData([])
     } catch {
       setData([])
@@ -1898,6 +2630,7 @@ function ChildCard({ child, account, onChanged }) {
     if (!reportReason.trim()) return
     setReportBusy(true)
     try {
+      setConfirmingReport(null)
       await reportContent(child.id, item.id, reportReason.trim())
       notify?.(`“${item.title}” reported — a member of our team will take a look.`)
       setReportingId(null)
@@ -1945,34 +2678,26 @@ function ChildCard({ child, account, onChanged }) {
   }
 
   return (
-    <div className="child-card">
+    <div className="child-detail">
       <div className="child-top">
         <div>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {child.name} {child.locked && <span className="badge badge-rejected"><LockIcon width={10} height={10} /> locked</span>}
+            {child.name} <span className="child-band">{child.age_band}</span>
+            {child.locked && <span className="badge badge-rejected"><LockIcon width={10} height={10} /> locked</span>}
             <LevelPill level={child.articulation_level} progress={child.articulation_progress} />
           </h3>
           <p className="muted">
             {child.dob ? `${ageFromDob(child.dob)} years old` : `Age ${child.age_band}`}
             {child.gender === 'girl' ? ' · Girl' : child.gender === 'boy' ? ' · Boy' : ''}
-            {child.reading_level ? ` · ${child.reading_level}` : ''}
+            {child.reading_level ? ` · Reading level: ${child.reading_level}` : ''}
           </p>
           {child.interests?.length > 0 && (
-            <div className="chip-row" style={{ marginTop: 'var(--space-1)' }}>
+            <div className="chip-row child-interests">
               {child.interests.map((i) => <span className="chip chip-muted chip-interest" key={i}>{i}</span>)}
             </div>
           )}
         </div>
-        {!confirmingDelete && <button className="ghost small" onClick={() => setConfirmingDelete(true)}>Delete</button>}
       </div>
-
-      {confirmingDelete && (
-        <div className="row inline-confirm">
-          <span>Delete {child.name}'s profile? This cannot be undone.</span>
-          <button className="danger small" onClick={remove}>Yes, delete</button>
-          <button className="ghost small" onClick={() => setConfirmingDelete(false)}>Cancel</button>
-        </div>
-      )}
 
       {child.locked && (
         <div className="card" style={{ background: 'var(--danger-100)', margin: '10px 0' }}>
@@ -1980,34 +2705,6 @@ function ChildCard({ child, account, onChanged }) {
           <div className="row"><button onClick={unlock}>Unlock profile</button></div>
         </div>
       )}
-
-      <div className="linking">
-        <span className="muted">Give these to your child to sign in — both generated automatically:</span>
-        <div className="linking-row">
-          <span className="linking-label">Login ID</span>
-          <code className="code">{child.login_id}</code>
-          {!confirmingLoginId && <button className="ghost small" onClick={() => setConfirmingLoginId(true)}>Generate new</button>}
-        </div>
-        {confirmingLoginId && (
-          <div className="row inline-confirm">
-            <span>New Login ID? The old one ({child.login_id}) stops working immediately.</span>
-            <button className="danger small" onClick={regenerateLoginId}>Yes, generate new</button>
-            <button className="ghost small" onClick={() => setConfirmingLoginId(false)}>Cancel</button>
-          </div>
-        )}
-        <div className="linking-row">
-          <span className="linking-label">PIN</span>
-          <code className="code">{child.pin}</code>
-          {!confirmingPin && <button className="ghost small" onClick={() => setConfirmingPin(true)}>Generate new</button>}
-        </div>
-        {confirmingPin && (
-          <div className="row inline-confirm">
-            <span>New PIN? The old one ({child.pin}) stops working immediately.</span>
-            <button className="danger small" onClick={regeneratePin}>Yes, generate new</button>
-            <button className="ghost small" onClick={() => setConfirmingPin(false)}>Cancel</button>
-          </div>
-        )}
-      </div>
 
       {/* Was a plain .row of buttons split arbitrarily into "solid" (small)
           and "outlined" (small ghost) — a styling accident, not a real
@@ -2025,18 +2722,44 @@ function ChildCard({ child, account, onChanged }) {
           Explanations{child.pending_explanations > 0 && <span className="tab-count">{child.pending_explanations}</span>}
         </button>
         <button className={view === 'reports' ? 'tab active' : 'tab'} onClick={() => toggle('reports')}>Reports</button>
-        {account.tier === 'premium' && <button className={view === 'insights' ? 'tab active' : 'tab'} onClick={() => toggle('insights')}>Insights</button>}
+        <button className={view === 'insights' ? 'tab active' : 'tab'} onClick={() => toggle('insights')}>
+          Insights{account.tier !== 'premium' && <LockIcon width={13} height={13} aria-label="Premium" />}
+        </button>
         <button className={view === 'edit' ? 'tab active' : 'tab'} onClick={() => toggle('edit')}>Edit</button>
         <button className={view === 'safety' ? 'tab active' : 'tab'} onClick={() => toggle('safety')}>Safety</button>
         <button className={view === 'privacy' ? 'tab active' : 'tab'} onClick={() => toggle('privacy')}>Data</button>
       </div>
 
-      {view === 'edit' && <EditChild child={child} onDone={() => { setView(null); onChanged() }} />}
+      {view === 'edit' && (
+        <div className="tab-panel">
+          <div className="linking">
+            <span className="muted">Give these to your child to sign in — both generated automatically:</span>
+            <div className="linking-row">
+              <span className="linking-label">Login ID</span>
+              <code className="code">{child.login_id}</code>
+              <button className="ghost small" onClick={() => setConfirmingLoginId(true)}>Generate new</button>
+            </div>
+            <div className="linking-row">
+              <span className="linking-label">PIN</span>
+              <code className="code">{child.pin}</code>
+              <button className="ghost small" onClick={() => setConfirmingPin(true)}>Generate new</button>
+            </div>
+          </div>
+          <EditChild child={child} onDone={() => { setView(null); onChanged() }} />
+          {/* PA09 — wireframe "Delete Child Profile": the delete lives with
+              the rest of the profile's settings under Edit, and confirms
+              in place rather than from a button on the card's header. */}
+          <div className="child-danger">
+            <button className="danger small" onClick={() => setConfirmingDelete(true)}><TrashIcon width={15} height={15} /> Delete profile</button>
+          </div>
+        </div>
+      )}
       {view === 'safety' && <SafetySettings child={child} onDone={() => { setView(null); onChanged() }} />}
       {view === 'privacy' && <ChildDataPrivacy child={child} />}
       {view === 'explanations' && <ExplanationsPanel child={child} account={account} onChanged={onChanged} />}
+      {view === 'insights' && account.tier !== 'premium' && <InsightsLocked childName={child.name} />}
 
-      {(view === 'activity' || view === 'favourites' || view === 'reports' || view === 'insights') && (
+      {(view === 'activity' || view === 'favourites' || view === 'reports' || (view === 'insights' && account.tier === 'premium')) && (
         <div className="panel">
           {loading && <p className="muted">Loading…</p>}
           {!loading && data.length === 0 && <p className="muted">Nothing here yet.</p>}
@@ -2124,13 +2847,25 @@ function ChildCard({ child, account, onChanged }) {
             )
           })()}
 
+          {!loading && view === 'favourites' && data.length > 0 && (
+            <p className="muted fav-summary">
+              {account.tier === 'premium'
+                ? `Premium plan · unlimited favourites saved (${data.length} total)`
+                : `Free plan · ${data.length} of 5 favourites saved`}
+            </p>
+          )}
+
           {!loading && view === 'favourites' && data.map((f) => (
-            <div key={f.id} className={`fav-item ${reportingId === f.id ? 'fav-item--reporting' : ''}`}>
+            <div key={f.id} className={`fav-item ${reportingId === f.id ? 'fav-item--reporting' : ''}${reportingId !== f.id ? ' fav-item--noted' : ''}`}>
               <span className="fav-info">
-                <TypeIcon type={f.type} />
+                <FavCover item={f} />
                 <span className="fav-text">
                   <span className="fav-title fav-title--wrap">{f.title}</span>
-                  <span className="fav-type">{f.type === 'book' ? 'Book' : 'Video'}</span>
+                  <span className="fav-type-row">
+                    <span className="fav-type">{f.type === 'book' ? 'Book' : 'Video'}</span>
+                    {overrides[f.id] === 'approve' && <span className="badge badge-approved">Approved</span>}
+                    {overrides[f.id] === 'hide' && <span className="badge badge-rejected">Blocked</span>}
+                  </span>
                 </span>
               </span>
               {reportingId === f.id ? (
@@ -2141,7 +2876,7 @@ function ChildCard({ child, account, onChanged }) {
                 // this gets its own full-width line underneath instead.
                 <form
                   className="row inline-confirm report-inline-form"
-                  onSubmit={(e) => { e.preventDefault(); submitReport(f) }}
+                  onSubmit={(e) => { e.preventDefault(); if (reportReason.trim()) setConfirmingReport(f) }}
                 >
                   <input
                     autoFocus
@@ -2157,7 +2892,7 @@ function ChildCard({ child, account, onChanged }) {
                 </form>
               ) : (
                 <div className="row">
-                  {f.type === 'book' && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
+                  {(f.type === 'book' || f.external_ref) && <button className="ghost small" onClick={() => accessOptions(f)}>Access Options</button>}
                   <button
                     className={`ghost small ${overrides[f.id] === 'approve' ? 'on' : ''}`}
                     onClick={() => override(f, overrides[f.id] === 'approve' ? undefined : 'approve')}
@@ -2170,6 +2905,20 @@ function ChildCard({ child, account, onChanged }) {
                   ><LockIcon width={14} height={14} /> Block</button>
                   <button className="ghost small" onClick={() => { setReportingId(f.id); setReportReason('') }}><FlagIcon width={14} height={14} /> Report</button>
                 </div>
+              )}
+              {reportingId !== f.id && (
+                <p className="fav-note">
+                  <span className="sentence">
+                    {overrides[f.id] === 'approve'
+                      ? <>Always allowed for {child.name}.</>
+                      : overrides[f.id] === 'hide'
+                        ? <>Pip will not suggest this to {child.name} again. It stays in their library until they remove it.</>
+                        : <>Pip may suggest this to {child.name} when it fits their age.</>}
+                  </span>
+                  {(f.type === 'book' || f.external_ref) && overrides[f.id] !== 'hide' && (
+                    <span className="sentence">Access Options opens the library or publisher page in your browser, not in {child.name}&rsquo;s app.</span>
+                  )}
+                </p>
               )}
             </div>
           ))}
@@ -2236,6 +2985,46 @@ function ChildCard({ child, account, onChanged }) {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={!!confirmingReport}
+        icon={<FlagIcon width={20} height={20} />}
+        title={confirmingReport ? `Report “${confirmingReport.title}”?` : ''}
+        message={<span className="dialog-line">Your reason: “{reportReason.trim()}”. A member of our team will review it. You can follow its status in the Reports tab.</span>}
+        confirmLabel={reportBusy ? 'Sending…' : 'Send report'}
+        cancelLabel="Go back"
+        onConfirm={() => confirmingReport && submitReport(confirmingReport)}
+        onCancel={() => setConfirmingReport(null)}
+      />
+      <ConfirmDialog
+        open={confirmingLoginId}
+        icon={<AlertIcon width={20} height={20} />}
+        title="Generate a new Login ID?"
+        message={<span className="dialog-line">The old one ({child.login_id}) stops working immediately, so {child.name} will need the new one to sign in.</span>}
+        confirmLabel="Generate new"
+        cancelLabel="Never mind"
+        onConfirm={regenerateLoginId}
+        onCancel={() => setConfirmingLoginId(false)}
+      />
+      <ConfirmDialog
+        open={confirmingPin}
+        icon={<AlertIcon width={20} height={20} />}
+        title="Generate a new PIN?"
+        message={<span className="dialog-line">The old one ({child.pin}) stops working immediately, so {child.name} will need the new one to sign in.</span>}
+        confirmLabel="Generate new"
+        cancelLabel="Never mind"
+        onConfirm={regeneratePin}
+        onCancel={() => setConfirmingPin(false)}
+      />
+      <ConfirmDialog
+        open={confirmingDelete}
+        icon={<TrashIcon width={20} height={20} />}
+        title={`Delete ${child.name}’s profile?`}
+        message={<span className="dialog-line">This removes {child.name}&rsquo;s profile and its full history. This can&rsquo;t be undone.</span>}
+        confirmLabel="Delete profile"
+        cancelLabel="Never mind"
+        onConfirm={() => { setConfirmingDelete(false); remove() }}
+        onCancel={() => setConfirmingDelete(false)}
+      />
       <ToastHost toast={toast} />
     </div>
   )
@@ -2307,7 +3096,7 @@ function EditChild({ child, onDone }) {
         <span className="field-group-label">What do they love?</span>
         <InterestPicker value={interests} onChange={setInterests} />
       </div>
-      <p className="muted">To change {child.name}'s code/PIN, use "Generate new code" on their card instead — it's system-generated, not typed in.</p>
+      <p className="muted p-wide">To change {child.name}&rsquo;s Login ID or PIN, use &ldquo;Generate new&rdquo; above. They&rsquo;re system-generated.</p>
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
@@ -2391,6 +3180,7 @@ function ChildDataPrivacy({ child }) {
   }
 
   const fmt = (ts) => new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  const fmtLong = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
   const pending = requests.find((r) => r.status === 'pending')
   const past = requests.filter((r) => r.status !== 'pending')
   const daysLeft = pending ? Math.max(0, Math.ceil((pending.scheduled_for * 1000 - Date.now()) / 86400000)) : 0
@@ -2415,24 +3205,32 @@ function ChildDataPrivacy({ child }) {
             <div className="row"><button className="ghost" onClick={() => cancelRequest(pending.id)}>Cancel this request</button></div>
           </section>
         ) : (
-          <section className="data-box data-box--danger">
-            <h4>Delete {child.name}'s data</h4>
-            {confirming ? (
-              <>
-                <p>This removes {child.name}'s chat history and favourites. It runs in 7 days, and you can cancel before then.</p>
-                <div className="row">
-                  <button className="danger solid" onClick={request} disabled={busy}>{busy ? 'Requesting…' : 'Yes, request deletion'}</button>
-                  <button className="ghost" onClick={() => setConfirming(false)}>Not now</button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p>Deletion is scheduled 7 days out, so there is time to change your mind.</p>
-                <div className="row"><button className="danger" onClick={() => setConfirming(true)}>Delete child data</button></div>
-              </>
-            )}
+          <section className="data-box data-box--danger data-danger">
+            <span className="data-danger-icon"><TrashIcon width={22} height={22} /></span>
+            <div className="data-danger-body">
+              <h4>Delete {child.name}&rsquo;s data</h4>
+              <p>
+                <span className="sentence">This removes {child.name}&rsquo;s chat history and saved favourites.</span>
+                <span className="sentence">Deletion is scheduled 7 days out, so there is time to change your mind.</span>
+              </p>
+              <p className="data-danger-date">
+                <ClockIcon width={14} height={14} />
+                <span>Request it today and it runs on <b>{fmtLong(new Date(Date.now() + 7 * 86400000))}</b>. You can cancel any time before then.</span>
+              </p>
+            </div>
+            <button className="danger data-danger-btn" onClick={() => setConfirming(true)}><TrashIcon width={15} height={15} /> Delete child data</button>
           </section>
         )}
+        <ConfirmDialog
+          open={confirming}
+          icon={<TrashIcon width={20} height={20} />}
+          title={`Delete ${child.name}’s data?`}
+          message={<span className="dialog-line">This removes {child.name}&rsquo;s chat history and favourites. It runs in 7 days, and you can cancel before then.</span>}
+          confirmLabel={busy ? 'Requesting…' : 'Request deletion'}
+          cancelLabel="Not now"
+          onConfirm={request}
+          onCancel={() => setConfirming(false)}
+        />
 
         {past.length > 0 && (
           <section className="insights-box">

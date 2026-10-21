@@ -5,7 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import Overlay from '../components/Overlay'
 import BrowseView from '../components/BrowseView'
 import ExplainOverlay from '../components/ExplainOverlay'
-import { LevelCard, LevelChip } from '../components/LevelBadge'
+import { LevelCard, LevelChip, LevelGuide } from '../components/LevelBadge'
 import { iconForGenre } from '../components/genreIcons'
 import ChildLogin from './ChildLogin'
 import {
@@ -16,7 +16,7 @@ import {
 import { curateTitle } from '../curate'
 import {
   BookIcon, ChatIcon, CheckIcon, CompassIcon, FlameIcon, HeartIcon, LogoutIcon, MicIcon, MoonIcon,
-  PaletteIcon, PawIcon, SendIcon, SparkleIcon, SpeakerIcon, TrashIcon, VideoIcon,
+  PaletteIcon, PawIcon, SendIcon, SparkleIcon, SpeakerIcon, StarIcon, TrashIcon, VideoIcon,
 } from '../icons'
 import { recordVisit } from '../streak'
 import '../App.css'
@@ -120,7 +120,7 @@ function Experience({ child, setChild, onLogout }) {
   const [view, setView] = useState('chat')       // 'chat' | 'browse' | 'library' — real screens, not modals
   const [level, setLevel] = useState(null)       // CH22 articulation level
   const [explaining, setExplaining] = useState(null) // the saved item being explained to Pip (CH21)
-  const [overlay, setOverlay] = useState(null)   // 'avatar' | null
+  const [overlay, setOverlay] = useState(null)   // 'avatar' | 'level' | null
   const [favs, setFavs] = useState([])
   const [details, setDetails] = useState(null)   // a rec item
   const [video, setVideo] = useState(null)       // a rec item
@@ -575,7 +575,7 @@ function Experience({ child, setChild, onLogout }) {
           {streak > 1 && (
             <span className="streak-badge"><FlameIcon width={14} height={14} /> {streak}-day streak</span>
           )}
-          <LevelChip level={level} />
+          <LevelChip level={level} onOpen={() => setOverlay('level')} />
         </h1>
         <div className="bar-btns">
           {canSpeak && (
@@ -789,6 +789,13 @@ function Experience({ child, setChild, onLogout }) {
           onDone={(item) => setFavs((prev) => prev.map((f) => (f.id === item.id ? { ...f, told_pip: true } : f)))}
           speak={speak}
         />
+      )}
+
+      {/* CH22 — what the levels mean and how to move up, opened from the level chip in the top bar */}
+      {overlay === 'level' && (
+        <Overlay title="Your level" icon={StarIcon} onClose={() => setOverlay(null)}>
+          <LevelGuide level={level} />
+        </Overlay>
       )}
 
       {/* CH19/CH20 — choose / edit avatar */}
