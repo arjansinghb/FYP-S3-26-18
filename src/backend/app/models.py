@@ -563,6 +563,7 @@ class ReportOut(BaseModel):
     content_title: str
     content_type: Optional[Literal["book", "video"]] = None  # None if the content was since removed
     thumbnail: Optional[str] = None  # cover image, for the moderator's report cards
+    external_ref: Optional[str] = None  # lets the moderator open the reported book/video
     reason: str
     status: str
     ts: float

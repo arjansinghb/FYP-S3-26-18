@@ -126,3 +126,17 @@ def test_sa14_support_tickets(client: TestClient, admin: dict):
     r = client.post(f"/api/admin/tickets/{tickets[0]['id']}/resolve", headers=admin["headers"])
     assert r.status_code == 200
     assert r.json()["status"] == "resolved"
+
+
+def test_sa10_sa13_config_rejects_nonsense_numbers(client: TestClient, admin: dict):
+    put = lambda section, body: client.put(f"/api/admin/config/{section}", headers=admin["headers"], json=body)
+
+    assert put("billing", {"premium_monthly_price": -5}).status_code == 422
+    assert put("billing", {"premium_annual_price": 0}).status_code == 422
+    assert put("billing", {"premium_monthly_price": "free"}).status_code == 422
+    assert put("compliance", {"data_retention_days": -5}).status_code == 422
+    assert put("compliance", {"data_retention_days": 3}).status_code == 422
+
+    assert put("billing", {"premium_monthly_price": 12.5}).status_code == 200
+    assert put("compliance", {"data_retention_days": 30}).status_code == 200
+    assert client.get("/api/admin/config/billing", headers=admin["headers"]).json()["premium_monthly_price"] == 12.5

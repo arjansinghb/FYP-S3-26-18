@@ -22,6 +22,7 @@ def _report_out(r: dict) -> ReportOut:
         content_title=content["title"] if content else "(removed content)",
         content_type=content["type"] if content else None,
         thumbnail=content.get("thumbnail") if content else None,
+        external_ref=content.get("external_ref") if content else None,
         reason=r["reason"],
         status=r["status"],
         ts=r["ts"],

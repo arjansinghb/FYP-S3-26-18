@@ -38,6 +38,19 @@ export function setChildToken(t) {
 }
 
 // auth: false | 'parent' | 'child'  -> which token (if any) to attach
+// FastAPI answers a failed validation (HTTP 422) with `detail` as a LIST of objects, not a string; passing that
+// straight to `new Error(...)` printed "[object Object]" on screen. Turn it into plain words instead.
+function readableDetail(detail) {
+  if (!Array.isArray(detail)) return detail
+  return detail.map((d) => {
+    const field = Array.isArray(d.loc) ? d.loc.filter((x) => x !== 'body' && x !== 'query').join(' ') : ''
+    const msg = String(d.msg || '').replace(/^Value error, /, '')
+    const min = /at least (\d+) character/.exec(msg)
+    if (min && field) return `${field[0].toUpperCase()}${field.slice(1)} needs at least ${min[1]} characters.`
+    return field && !/^[A-Z]/.test(msg) ? `${field}: ${msg}` : msg
+  }).join(' ')
+}
+
 async function request(path, { method = 'GET', body, auth = false, token } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   if (auth === 'child') {
@@ -74,7 +87,7 @@ async function request(path, { method = 'GET', body, auth = false, token } = {})
     if (res.status === 503 && body && typeof detail === 'string') {
       window.dispatchEvent(new CustomEvent('pip-maintenance', { detail: { message: detail, supportEmail: body.support_email || '' } }))
     }
-    throw new Error(detail || `Request failed (${res.status})`)
+    throw new Error(readableDetail(detail) || `Request failed (${res.status})`)
   }
   if (res.status === 204) return null
   return res.json()

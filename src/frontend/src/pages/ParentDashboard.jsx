@@ -364,6 +364,7 @@ function ForgotPassword({ onBack }) {
     e.preventDefault()
     const missing = firstMissingField([[email, 'Email']])
     if (missing) { setError(missing); return }
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setError('Enter a valid email address'); return }
     setError(''); setBusy(true)
     try {
       const res = await requestPasswordReset(email)
@@ -380,6 +381,7 @@ function ForgotPassword({ onBack }) {
     e.preventDefault()
     const missing = firstMissingField([[token, 'Reset token'], [newPassword, 'New password'], [confirmNewPassword, 'Confirm new password']])
     if (missing) { setError(missing); return }
+    if (newPassword.length < 6) { setError('Password needs at least 6 characters.'); return }
     if (newPassword !== confirmNewPassword) { setError("Passwords don't match"); return }
     setError(''); setBusy(true)
     try {
@@ -1134,6 +1136,7 @@ function AccountPanel({ account, onUpdated, onDeleted }) {
     e.preventDefault()
     const missing = firstMissingField([[name, 'Name'], [email, 'Email']])
     if (missing) { setError(missing); return }
+    if (password && password.length < 6) { setError('Password needs at least 6 characters.'); return }
     if (password !== confirmPassword) { setError("Passwords don't match"); return }
     setError(''); setBusy(true)
     const payload = { name, email }
@@ -1313,6 +1316,7 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
     e.preventDefault()
     const missing = firstMissingField([[newCardBrand, 'Card brand'], [newCardLast4, 'Card last 4 digits']])
     if (missing) { setCardError(missing); return }
+    if (newCardLast4.length !== 4) { setCardError('Enter all 4 digits of the card number'); return }
     setCardError(''); setCardBusy(true)
     try {
       const s = await updatePaymentMethod(newCardBrand, newCardLast4)
@@ -1584,6 +1588,9 @@ function SupportPanel() {
     e.preventDefault()
     const missing = firstMissingField([[subject, 'A subject'], [message, 'A message']])
     if (missing) { setError(missing); return }
+    // same limits the server enforces (3 / 10 characters), checked first so a short note gets a clear message
+    if (subject.trim().length < 3) { setError('The subject needs at least 3 characters.'); return }
+    if (message.trim().length < 10) { setError('Please tell us a little more — the description needs at least 10 characters.'); return }
     setError(''); setBusy(true); setSent(false)
     try {
       await createSupportTicket(subject.trim(), message.trim())

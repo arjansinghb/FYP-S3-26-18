@@ -394,6 +394,22 @@ function TypeIcon({ type }) {
   return <span className="item-type-icon"><Icon width={16} height={16} /></span>
 }
 
+// Lets a moderator open the real book/video in a new tab to check its
+// content before deciding. Books keep a Google Books URL in external_ref,
+// videos a bare YouTube id; with no ref it falls back to a search by title.
+function ViewContentButton({ type, externalRef, title }) {
+  const ref = externalRef || ''
+  const url = type === 'video'
+    ? (ref ? `https://www.youtube.com/watch?v=${encodeURIComponent(ref)}` : `https://www.youtube.com/results?search_query=${encodeURIComponent(title)}`)
+    : (/^https?:\/\//.test(ref) ? ref : `https://www.google.com/books?q=${encodeURIComponent(title)}`)
+  const Icon = type === 'video' ? VideoIcon : BookIcon
+  return (
+    <button type="button" className="ghost small" onClick={() => window.open(url, '_blank', 'noopener')}>
+      <Icon width={15} height={15} /> {type === 'video' ? 'Watch video' : 'View book'}
+    </button>
+  )
+}
+
 // CM03 — search Google Books/YouTube for real import candidates, then land
 // one as a "pending" submission (CM06) for the review queue below. This
 // was the actual missing half of the moderator console: the backend
@@ -1052,6 +1068,7 @@ function Catalogue({ notify }) {
               {i.reading_level && <span className="chip chip-muted">{cap(i.reading_level)}</span>}
             </div>
             <div className="row">
+              <ViewContentButton type={i.type} externalRef={i.external_ref} title={i.title} />
               <button className="ghost small" onClick={() => setEditing(i.id)}><EditIcon width={15} height={15} /> Edit</button>
               <button className="danger small" onClick={() => setConfirmingRemove(i)}>
                 <TrashIcon width={15} height={15} /> Remove
@@ -1386,6 +1403,7 @@ function Reports({ notify, onCountsChange }) {
           </div>
           {r.status === 'open' && (
             <div className="row">
+              {r.content_type && <ViewContentButton type={r.content_type} externalRef={r.external_ref} title={r.content_title} />}
               <button className="ghost small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'dismiss' })}>Dismiss</button>
               <button className="danger small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'remove' })}>
                 <TrashIcon width={15} height={15} /> Remove content

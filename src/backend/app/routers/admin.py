@@ -137,10 +137,33 @@ def get_config(section: str, admin: dict = Depends(require_role("admin"))):
     return db.system[section]
 
 
+def _check_config_numbers(section: str, body: dict) -> None:
+    """Rejects values that would make a setting nonsensical (a negative price,
+    retention below the 7-day floor) before they are saved."""
+    def number(name: str, label: str) -> float | None:
+        if name not in body:
+            return None
+        v = body[name]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise HTTPException(422, f"{label} must be a number.")
+        return v
+
+    if section == "compliance":
+        days = number("data_retention_days", "Data retention")
+        if days is not None and (days < db.RETENTION_MIN_DAYS or days != int(days)):
+            raise HTTPException(422, f"Data retention must be a whole number of at least {db.RETENTION_MIN_DAYS} days.")
+    if section == "billing":
+        for name, label in (("premium_monthly_price", "Monthly price"), ("premium_annual_price", "Annual price")):
+            price = number(name, label)
+            if price is not None and price <= 0:
+                raise HTTPException(422, f"{label} must be more than 0.")
+
+
 @router.put("/config/{section}")
 def update_config(section: str, body: dict = Body(...), admin: dict = Depends(require_role("admin"))):
     if section not in CONFIG_SECTIONS:
         raise HTTPException(404, "Unknown config section")
+    _check_config_numbers(section, body)
     # only update keys that already exist in the section (keeps the shape stable)
     for k, v in body.items():
         if k in db.system[section]:
