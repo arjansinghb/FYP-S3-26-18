@@ -67,6 +67,19 @@ def _known() -> tuple[set[str], set[tuple[str, str]]]:
     return refs, titles
 
 
+def find_duplicate(media_type: str, title: str, external_ref: str | None = None) -> dict | None:
+    """The catalogue entry (any status) that a new one would duplicate — same
+    link/video id, or same type + title once case and punctuation are ignored.
+    The same rule bulk import uses to skip duplicates, so a manual add or a
+    single import from search can't create what the bulk path would refuse."""
+    ref = str(external_ref or "").strip()
+    key = _norm(title)
+    for c in db.content.values():
+        if (ref and str(c.get("external_ref") or "").strip() == ref) or (c["type"] == media_type and _norm(c["title"]) == key):
+            return c
+    return None
+
+
 def _trusted_source(c: dict, media_type: str) -> bool:
     integrations = db.system.get("integrations", {})
     if media_type == "video":

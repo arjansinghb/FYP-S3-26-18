@@ -85,6 +85,7 @@ const TABS = [
 function Tools({ account, onLogout }) {
   const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
+  const [catalogueQuery, setCatalogueQuery] = useState('')
   const [toast, notify] = useToast()
   // Live counts feed the little badges on the Submissions/Reports tabs —
   // a moderator lands on Overview and can already see "3 waiting" without
@@ -127,7 +128,7 @@ function Tools({ account, onLogout }) {
         {TABS.map((t) => {
           const count = t.countKey ? counts[t.countKey] : 0
           return (
-            <button key={t.key} className={tab === t.key ? 'tab active' : 'tab'} onClick={() => setTab(t.key)}>
+            <button key={t.key} className={tab === t.key ? 'tab active' : 'tab'} onClick={() => { setCatalogueQuery(''); setTab(t.key) }}>
               <t.icon width={16} height={16} /> {t.label}
               {count > 0 && <span className="tab-count">{count}</span>}
             </button>
@@ -139,8 +140,8 @@ function Tools({ account, onLogout }) {
 
       <div className="tab-panel" key={tab}>
         {tab === 'overview' && <Overview counts={counts} onNavigate={setTab} onRefreshCounts={refreshCounts} />}
-        {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} />}
-        {tab === 'catalogue' && <Catalogue notify={notify} />}
+        {tab === 'submissions' && <Submissions notify={notify} onCountsChange={refreshCounts} onViewExisting={(dup) => { setCatalogueQuery(dup.title); setTab('catalogue') }} />}
+        {tab === 'catalogue' && <Catalogue notify={notify} initialQuery={catalogueQuery} />}
         {tab === 'audit' && <AuditQueue notify={notify} onCountsChange={refreshCounts} />}
         {tab === 'reports' && <Reports notify={notify} onCountsChange={refreshCounts} />}
       </div>
@@ -419,7 +420,7 @@ function ViewContentButton({ type, externalRef, title }) {
 // hand-type every field into "Add catalogue entry," which is not what
 // CM03's own docstring describes ("search + import... a real editorial
 // judgement call a human makes here").
-function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
+function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy, onViewExisting }) {
   const sectionRef = useRef(null)
   const [type, setType] = useState('book')
   const [q, setQ] = useState('')
@@ -499,6 +500,7 @@ function SearchImport({ onImported, notify, prefill, onAutoImport, autoBusy }) {
           onImported()
         }}
         onCancel={() => setImporting(null)}
+        onViewExisting={onViewExisting}
       />
     )
   }
@@ -765,7 +767,7 @@ function BulkResult({ result, onDismiss }) {
   )
 }
 
-function Submissions({ notify, onCountsChange }) {
+function Submissions({ notify, onCountsChange, onViewExisting }) {
   const [prefill, setPrefill] = useState(null)
   // Auto-import: ask first (it can approve content without a human), then run.
   const [bulkAsk, setBulkAsk] = useState(null) // {topic, type} awaiting confirmation
@@ -822,7 +824,7 @@ function Submissions({ notify, onCountsChange }) {
       </div>
       <div id="sub-search">
         <SearchImport
-          onImported={() => { reload(); onCountsChange?.() }} notify={notify} prefill={prefill}
+          onImported={() => { reload(); onCountsChange?.() }} notify={notify} prefill={prefill} onViewExisting={onViewExisting}
           autoBusy={bulkBusy} onAutoImport={(topic, type) => setBulkAsk({ topic, type })}
         />
       </div>
@@ -868,6 +870,7 @@ function Submissions({ notify, onCountsChange }) {
             />
           )}
           <div className="row">
+            <ViewContentButton type={i.type} externalRef={i.external_ref} title={i.title} />
             <button className="success" disabled={leaving === i.id}
               onClick={() => act(i, approveContent, `“${i.title}” approved — now live in the catalogue.`)}>
               <CheckIcon width={16} height={16} /> Approve
@@ -963,11 +966,11 @@ function truncate(text, max = 140) {
   return text.slice(0, max).trimEnd() + '…'
 }
 
-function Catalogue({ notify }) {
+function Catalogue({ notify, initialQuery = '' }) {
   const [items, setItems] = useState([])
   const [editing, setEditing] = useState(null)
   const [confirmingRemove, setConfirmingRemove] = useState(null)
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(initialQuery)
   const [typeFilter, setTypeFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [genreFilter, setGenreFilter] = useState('')
@@ -1002,6 +1005,11 @@ function Catalogue({ notify }) {
   }
   useEffect(() => { reload() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // "View existing entry" from a duplicate warning: narrow the list to that title, across every type/status.
+  function showExisting(dup) {
+    setEditing(null); setTypeFilter(''); setStatusFilter(''); setGenreFilter(''); setQ(dup.title)
+  }
+
   // Debounced — a real API call per keystroke would be chatty; 300ms feels
   // instant to type against without firing on every letter.
   useEffect(() => {
@@ -1012,7 +1020,7 @@ function Catalogue({ notify }) {
 
   return (
     <section>
-      <AddEntry onAdded={reload} notify={notify} />
+      <AddEntry onAdded={reload} notify={notify} onViewExisting={showExisting} />
       <h2><GridIcon width={20} height={20} /> Catalogue ({items.length})</h2>
 
       <div className="row" style={{ marginBottom: 12 }}>
@@ -1114,7 +1122,7 @@ function Catalogue({ notify }) {
   )
 }
 
-function AddEntry({ onAdded, notify }) {
+function AddEntry({ onAdded, notify, onViewExisting }) {
   const [open, setOpen] = useState(false)
   if (!open) return <button className="add-btn" onClick={() => setOpen(true)}><PlusIcon width={16} height={16} /> Add catalogue entry</button>
   return (
@@ -1127,11 +1135,12 @@ function AddEntry({ onAdded, notify }) {
         onAdded()
       }}
       onCancel={() => setOpen(false)}
+      onViewExisting={(dup) => { setOpen(false); onViewExisting(dup) }}
     />
   )
 }
 
-function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
+function EntryForm({ initial = {}, onSave, onCancel, isNew, onViewExisting }) {
   const [type, setType] = useState(initial.type || 'book')
   const [title, setTitle] = useState(initial.title || '')
   const [description, setDescription] = useState(initial.description || '')
@@ -1146,6 +1155,7 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
   const [externalRef, setExternalRef] = useState(initial.external_ref || '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [duplicate, setDuplicate] = useState(null) // the existing entry a save collided with
 
   function toggleBand(b) {
     setBands(bands.includes(b) ? bands.filter((x) => x !== b) : [...bands, b])
@@ -1156,7 +1166,7 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
     const missing = firstMissingField([[title, 'Title'], [description, 'Description']])
     if (missing) { setError(missing); return }
     if (bands.length === 0) { setError('Pick at least one age band'); return }
-    setError(''); setBusy(true)
+    setError(''); setDuplicate(null); setBusy(true)
     const payload = {
       type, title, description,
       age_bands: bands,
@@ -1166,7 +1176,7 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
       external_ref: externalRef || null,
       source: initial.source || 'manual',
     }
-    try { await onSave(payload) } catch (err) { setError(err.message) } finally { setBusy(false) }
+    try { await onSave(payload) } catch (err) { setError(err.message); setDuplicate(err.duplicate || null) } finally { setBusy(false) }
   }
 
   return (
@@ -1197,6 +1207,11 @@ function EntryForm({ initial = {}, onSave, onCancel, isNew }) {
       <label>Genres, comma-separated<input value={genres} onChange={(e) => setGenres(e.target.value)} placeholder="funny, space" /></label>
       <label>Reading level<input value={level} onChange={(e) => setLevel(e.target.value)} placeholder="early, middle" /></label>
       {error && <p className="error">{error}</p>}
+      {duplicate && onViewExisting && (
+        <div className="row">
+          <button type="button" className="ghost small" onClick={() => onViewExisting(duplicate)}>View existing entry</button>
+        </div>
+      )}
       <div className="row">
         <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
         <button type="button" className="ghost" onClick={onCancel}>Cancel</button>

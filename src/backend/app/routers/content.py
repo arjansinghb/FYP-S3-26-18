@@ -27,6 +27,18 @@ def _out(item: dict) -> ContentOut:
     return ContentOut(**item)
 
 
+def _reject_duplicate(body: ContentIn) -> None:
+    """CM03 alt flow: a catalogue entry that already exists is not added a
+    second time. 409 with the existing entry's id/title/status so the console
+    can warn and link straight to it."""
+    existing = bulk_import.find_duplicate(body.type, body.title, body.external_ref)
+    if existing:
+        raise HTTPException(409, detail={
+            "message": f"“{existing['title']}” is already in the catalogue ({existing['status']}). Open the existing entry instead of adding it again.",
+            "duplicate": {"id": existing["id"], "title": existing["title"], "type": existing["type"], "status": existing["status"]},
+        })
+
+
 def _refresh_embedding(item: dict) -> None:
     """URS Design Constraint 3's "embedding-based content matching" half —
     computed once here (approve/edit-while-approved), not at chat time, so
@@ -79,6 +91,7 @@ def browse(
 
 @router.post("", response_model=ContentOut, status_code=201)
 def add_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))):
+    _reject_duplicate(body)
     item = db.add_content(body.model_dump(), status="approved")
     # Manually-added entries are auto-approved by their own creator (see
     # this router's module docstring) — both timestamps land at once,
@@ -325,6 +338,7 @@ def import_entry(body: ContentIn, mod: dict = Depends(require_role("moderator"))
     suggest_catalogue_decision) attached at import time — advisory only,
     shown to the moderator in the Submissions queue, never auto-applied to
     `status` here."""
+    _reject_duplicate(body)
     data = body.model_dump()
     suggestion = ai_assist.suggest_catalogue_decision(data)
     data["ai_suggestion"] = suggestion.get("suggestion")

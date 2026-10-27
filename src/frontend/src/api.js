@@ -87,6 +87,10 @@ async function request(path, { method = 'GET', body, auth = false, token } = {})
     if (res.status === 503 && body && typeof detail === 'string') {
       window.dispatchEvent(new CustomEvent('pip-maintenance', { detail: { message: detail, supportEmail: body.support_email || '' } }))
     }
+    // A conflict can carry structure ({message, duplicate}) so the page can link to the existing entry.
+    if (detail && typeof detail === 'object' && !Array.isArray(detail) && detail.message) {
+      throw Object.assign(new Error(detail.message), { duplicate: detail.duplicate })
+    }
     throw new Error(readableDetail(detail) || `Request failed (${res.status})`)
   }
   if (res.status === 204) return null

@@ -38,6 +38,32 @@ def test_cm03_06_search_and_import_lands_pending(client: TestClient, moderator: 
     assert r.json()["status"] == "pending"
 
 
+def test_cm03_duplicate_entry_is_refused_with_a_link_to_the_existing_one(client: TestClient, moderator: dict):
+    """CM03 alt flow: adding (or importing) what's already in the catalogue
+    is a 409 that names the existing entry, so the console can warn and link
+    to it. Same title ignoring case/punctuation, or same link, counts."""
+    first = client.post("/api/content", headers=moderator["headers"],
+                        json={"type": "book", "title": "The Little Prince", "description": "d",
+                              "age_bands": ["5-8"], "external_ref": "https://books.example/little-prince"})
+    assert first.status_code == 201
+    for path, title, ref in [
+        ("/api/content", "the little  prince!", None),
+        ("/api/content/import", "A Different Title", "https://books.example/little-prince"),
+    ]:
+        r = client.post(path, headers=moderator["headers"],
+                        json={"type": "book", "title": title, "description": "d",
+                              "age_bands": ["5-8"], "external_ref": ref})
+        assert r.status_code == 409
+        detail = r.json()["detail"]
+        assert "already in the catalogue" in detail["message"]
+        assert detail["duplicate"]["id"] == first.json()["id"]
+        assert detail["duplicate"]["status"] == "approved"
+    # Same title as a different type is a different thing, not a duplicate.
+    video = client.post("/api/content", headers=moderator["headers"],
+                        json={"type": "video", "title": "The Little Prince", "description": "d", "age_bands": ["5-8"]})
+    assert video.status_code == 201
+
+
 def test_cm06_13_browse_pending_and_full_catalogue(client: TestClient, moderator: dict):
     client.post("/api/content/import", headers=moderator["headers"],
                 json={"type": "video", "title": "Pending Video", "description": "d",
