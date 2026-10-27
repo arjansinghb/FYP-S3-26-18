@@ -811,21 +811,26 @@ function Submissions({ notify, onCountsChange }) {
     }, 220)
   }
 
+  const jump = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
   return (
     <section>
-      <TopicRequests
-        key={topicsKey} busy={bulkBusy}
-        onFind={(r) => setPrefill({ q: r.topic, type: r.format, nonce: Date.now() })}
-        onAutoImport={(r) => setBulkAsk({ topic: r.topic, type: r.format })}
-      />
-      <SearchImport
-        onImported={() => { reload(); onCountsChange?.() }} notify={notify} prefill={prefill}
-        autoBusy={bulkBusy} onAutoImport={(topic, type) => setBulkAsk({ topic, type })}
-      />
+      <div className="row">
+        <button type="button" className="ghost small jump-chip" onClick={() => jump('sub-search')}><SearchIcon width={14} height={14} /> Search &amp; import</button>
+        <button type="button" className="ghost small jump-chip" onClick={() => jump('sub-new')}><InboxIcon width={14} height={14} /> New submissions {!loading && `(${items.length})`}</button>
+        <button type="button" className="ghost small jump-chip" onClick={() => jump('sub-topics')}><ChartIcon width={14} height={14} /> Requested topics</button>
+      </div>
+      <div id="sub-search">
+        <SearchImport
+          onImported={() => { reload(); onCountsChange?.() }} notify={notify} prefill={prefill}
+          autoBusy={bulkBusy} onAutoImport={(topic, type) => setBulkAsk({ topic, type })}
+        />
+      </div>
       {bulkBusy && (
         <p className="bulk-busy"><RefreshIcon width={16} height={16} /> Importing and triaging — this takes about 10 seconds…</p>
       )}
       {bulkResult && <BulkResult result={bulkResult} onDismiss={() => setBulkResult(null)} />}
+      <div id="sub-new">
       <h2><InboxIcon width={20} height={20} /> New submissions {!loading && `(${items.length})`}</h2>
       {loading && <p className="muted">Loading…</p>}
       {!loading && items.length === 0 && (
@@ -874,6 +879,14 @@ function Submissions({ notify, onCountsChange }) {
           </div>
         </div>
       ))}
+      </div>
+      <div id="sub-topics">
+        <TopicRequests
+          key={topicsKey} busy={bulkBusy}
+          onFind={(r) => setPrefill({ q: r.topic, type: r.format, nonce: Date.now() })}
+          onAutoImport={(r) => setBulkAsk({ topic: r.topic, type: r.format })}
+        />
+      </div>
       <ConfirmDialog
         open={!!bulkAsk}
         tone="primary"
@@ -1383,6 +1396,7 @@ function Reports({ notify, onCountsChange }) {
               <div>
               <h3 className="item-title">{r.content_type ? <TypeIcon type={r.content_type} /> : null} {r.content_title}</h3>
               <p className="muted">Reason: {r.reason}</p>
+              {r.excerpt && <p className="muted" style={{ whiteSpace: 'pre-line' }}>{r.excerpt}</p>}
               <p className="muted">
                 Reported {timeAgo(r.ts)}
                 {r.resolved_at && <> · Resolved {timeAgo(r.resolved_at)}</>}
@@ -1391,7 +1405,7 @@ function Reports({ notify, onCountsChange }) {
                 <div className="report-decision">
                   {r.status === 'resolved' && r.outcome && (
                     <span className={`report-decision-outcome report-decision-outcome--${r.outcome}`}>
-                      {r.outcome === 'removed' ? 'Content removed' : 'Dismissed, no change'}
+                      {r.outcome === 'removed' ? 'Content removed' : 'Resolved, no change'}
                     </span>
                   )}
                   {r.note && <span className="report-decision-note"><b>Note to the parent:</b> {r.note}</span>}
@@ -1404,10 +1418,12 @@ function Reports({ notify, onCountsChange }) {
           {r.status === 'open' && (
             <div className="row">
               {r.content_type && <ViewContentButton type={r.content_type} externalRef={r.external_ref} title={r.content_title} />}
-              <button className="ghost small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'dismiss' })}>Dismiss</button>
-              <button className="danger small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'remove' })}>
-                <TrashIcon width={15} height={15} /> Remove content
-              </button>
+              <button className="ghost small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'dismiss' })}>Resolve</button>
+              {!r.excerpt && (
+                <button className="danger small" disabled={leaving === r.id} onClick={() => setConfirming({ report: r, action: 'remove' })}>
+                  <TrashIcon width={15} height={15} /> Remove content
+                </button>
+              )}
               <button className="ghost small report-note-btn" disabled={leaving === r.id} onClick={() => setNoting(r)}>
                 <ChatIcon width={16} height={16} /> <span>{r.note ? 'Edit note to parent' : 'Note to parent'}</span>
               </button>
@@ -1436,19 +1452,19 @@ function Reports({ notify, onCountsChange }) {
         open={!!confirming}
         tone={confirming?.action === 'remove' ? 'danger' : 'primary'}
         icon={confirming?.action === 'remove' ? <TrashIcon width={20} height={20} /> : <FlagIcon width={20} height={20} />}
-        title={confirming?.action === 'remove' ? 'Remove this content?' : 'Dismiss this report?'}
+        title={confirming?.action === 'remove' ? 'Remove this content?' : 'Resolve this report?'}
         message={confirming
           ? (confirming.action === 'remove'
             ? `“${confirming.report.content_title}” will be removed from the catalogue and children will no longer see it. The report will be marked resolved.`
             : `The report on “${confirming.report.content_title}” will be marked resolved and the content stays in the catalogue.`)
           : ''}
-        confirmLabel={confirming?.action === 'remove' ? 'Remove content' : 'Dismiss report'}
+        confirmLabel={confirming?.action === 'remove' ? 'Remove content' : 'Resolve report'}
         onConfirm={() => {
           const { report, action } = confirming
           setConfirming(null)
           act(report, action, action === 'remove'
             ? `“${report.content_title}” removed from the catalogue.`
-            : `Report on “${report.content_title}” dismissed.`)
+            : `Report on “${report.content_title}” resolved.`)
         }}
         onCancel={() => setConfirming(null)}
       />

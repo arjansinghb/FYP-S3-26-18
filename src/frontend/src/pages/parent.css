@@ -2089,3 +2089,5 @@ button.danger.solid:hover:not(:disabled) { background: color-mix(in srgb, var(--
 .fav-cover { flex: none; width: 60px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); background: var(--primary-100); box-shadow: 0 3px 8px color-mix(in srgb, var(--ink) 10%, transparent); }
 @media (max-width: 560px) { .fav-cover { width: 48px; height: 68px; } }
 .data-danger-body h4 { font-weight: 800; }
+
+.jump-chip { display: inline-flex; align-items: center; gap: var(--space-2); }

@@ -4,7 +4,7 @@ import {
   getToken, getMe, login, signup, logout,
   updateAccount, deleteAccount,
   listChildren, createChild, updateChild, deleteChild, updateChildSettings,
-  childActivity, childFavourites, reportContent,
+  childActivity, childFavourites, reportContent, reportChat,
   requestVerification, confirmVerification,
   requestPasswordReset, confirmPasswordReset,
   giveConsent, getPrivacySettings, updatePrivacySettings,
@@ -2638,8 +2638,9 @@ function ChildCard({ child, account, onChanged, initialView = null }) {
     setReportBusy(true)
     try {
       setConfirmingReport(null)
-      await reportContent(child.id, item.id, reportReason.trim())
-      notify?.(`“${item.title}” reported — a member of our team will take a look.`)
+      if (item.chatTs != null) await reportChat(child.id, item.chatTs, reportReason.trim())
+      else await reportContent(child.id, item.id, reportReason.trim())
+      notify?.(`${item.chatTs != null ? 'That chat reply' : `“${item.title}”`} reported — a member of our team will take a look.`)
       setReportingId(null)
       setReportReason('')
       if (view === 'favourites') toggle('favourites')
@@ -2840,6 +2841,28 @@ function ChildCard({ child, account, onChanged, initialView = null }) {
                             <span className="activity-bubble activity-bubble--pip">{a.reply}</span>
                           </div>
                           <p className="ts">{new Date(a.ts * 1000).toLocaleString()}</p>
+                          {reportingId === `chat-${a.ts}` ? (
+                            <form
+                              className="row inline-confirm report-inline-form"
+                              onSubmit={(e) => { e.preventDefault(); if (reportReason.trim()) setConfirmingReport({ chatTs: a.ts }) }}
+                            >
+                              <input
+                                autoFocus
+                                value={reportReason}
+                                onChange={(e) => setReportReason(e.target.value)}
+                                placeholder="What was wrong with this reply?"
+                                aria-label="Reason for reporting this chat reply"
+                              />
+                              <button type="submit" className="danger small" disabled={reportBusy || !reportReason.trim()}>
+                                {reportBusy ? 'Reporting…' : 'Submit report'}
+                              </button>
+                              <button type="button" className="ghost small" onClick={() => { setReportingId(null); setReportReason('') }}>Cancel</button>
+                            </form>
+                          ) : (
+                            <button className="ghost small" onClick={() => { setReportingId(`chat-${a.ts}`); setReportReason('') }}>
+                              <FlagIcon width={14} height={14} /> Report
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -2957,6 +2980,7 @@ function ChildCard({ child, account, onChanged, initialView = null }) {
                     <span className="fav-text">
                       <span className="fav-title fav-title--wrap">{r.content_title}</span>
                       <span className="report-reason report-reason--wrap">{r.reason}</span>
+                      {r.excerpt && <span className="report-reason report-reason--wrap">{r.excerpt}</span>}
                       {r.note && <span className="report-reply"><b>Note from our team:</b> {r.note}</span>}
                     </span>
                   </span>
@@ -2995,7 +3019,7 @@ function ChildCard({ child, account, onChanged, initialView = null }) {
       <ConfirmDialog
         open={!!confirmingReport}
         icon={<FlagIcon width={20} height={20} />}
-        title={confirmingReport ? `Report “${confirmingReport.title}”?` : ''}
+        title={confirmingReport ? (confirmingReport.chatTs != null ? 'Report this chat reply?' : `Report “${confirmingReport.title}”?`) : ''}
         message={<span className="dialog-line">Your reason: “{reportReason.trim()}”. A member of our team will review it. You can follow its status in the Reports tab.</span>}
         confirmLabel={reportBusy ? 'Sending…' : 'Send report'}
         cancelLabel="Go back"

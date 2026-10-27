@@ -25,8 +25,9 @@ def _report_out(r: dict) -> ReportOut:
     content = db.content.get(r["content_id"])
     return ReportOut(
         id=r["id"], content_id=r["content_id"],
-        content_title=content["title"] if content else "(removed content)",
+        content_title="Chat reply" if r.get("excerpt") else content["title"] if content else "(removed content)",
         content_type=content["type"] if content else None,
+        excerpt=r.get("excerpt"),
         reason=r["reason"], status=r["status"], ts=r["ts"],
         resolved_at=r.get("resolved_at"), outcome=r.get("outcome"), note=r.get("note"),
     )
@@ -64,17 +65,28 @@ def child_favourites(child_id: str, parent: dict = Depends(require_role("parent"
 @router.post("/{child_id}/report", status_code=201)
 def report_content(child_id: str, body: ReportRequest, parent: dict = Depends(require_role("parent"))):
     _owned_child(child_id, parent)
-    if body.content_id not in db.content:
-        raise HTTPException(404, "Content not found")
+    excerpt = None
+    if body.content_id:
+        if body.content_id not in db.content:
+            raise HTTPException(404, "Content not found")
+    elif body.chat_ts is not None:
+        entry = next((e for e in db.activity.get(child_id, []) if abs(e.get("ts", 0) - body.chat_ts) < 1e-6), None)
+        if not entry:
+            raise HTTPException(404, "Chat message not found")
+        excerpt = f"Child: {entry.get('message', '')}\nPip: {entry.get('reply', '')}"
+    else:
+        raise HTTPException(422, "Choose a book, video or chat message to report.")
     report = {
         "id": uuid.uuid4().hex[:12],
         "parent_id": parent["id"],
         "child_id": child_id,
-        "content_id": body.content_id,
+        "content_id": body.content_id or "",
         "reason": body.reason,
         "status": "open",
         "ts": time.time(),
     }
+    if excerpt:
+        report["excerpt"] = excerpt
     db.reports.append(report)
     return {"ok": True, "report_id": report["id"]}
 

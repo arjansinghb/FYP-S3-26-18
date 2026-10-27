@@ -19,8 +19,9 @@ def _report_out(r: dict) -> ReportOut:
     return ReportOut(
         id=r["id"],
         content_id=r["content_id"],
-        content_title=content["title"] if content else "(removed content)",
+        content_title="Chat reply" if r.get("excerpt") else content["title"] if content else "(removed content)",
         content_type=content["type"] if content else None,
+        excerpt=r.get("excerpt"),
         thumbnail=content.get("thumbnail") if content else None,
         external_ref=content.get("external_ref") if content else None,
         reason=r["reason"],
@@ -42,6 +43,8 @@ def resolve_report(report_id: str, body: ResolveReport, mod: dict = Depends(requ
     report = next((r for r in db.reports if r["id"] == report_id), None)
     if not report:
         raise HTTPException(404, "Report not found")
+    if body.action == "remove" and report.get("excerpt"):
+        raise HTTPException(422, "A chat report has no catalogue item to remove. Dismiss it, or send the parent a note.")
     report["status"] = "resolved"
     report["resolved_at"] = time.time()
     report["outcome"] = "removed" if body.action == "remove" else "no_change"

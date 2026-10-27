@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import {
   getToken, getMe, logout,
-  adminStats, adminSearchUsers, adminUserDetails, adminResetPassword, adminSuspend, adminUnsuspend,
+  adminStats, adminSearchUsers, adminUserDetails, adminSuspend, adminUnsuspend,
   adminGetConfig, adminSetConfig, adminTickets, adminResolveTicket,
   adminListReviews, adminApproveReview, adminRejectReview, adminDeleteReview,
 } from '../api'
@@ -15,7 +15,6 @@ import Select from '../components/Select'
 import useScrolled from '../useScrolled'
 import ApprovalRing from '../components/ApprovalRing'
 import ConfirmDialog from '../components/ConfirmDialog'
-import PromptDialog from '../components/PromptDialog'
 import { timeAgo, logTime } from '../timeFormat'
 import { toneStyle } from '../statTones'
 import './parent.css'
@@ -359,7 +358,6 @@ function Users({ notify }) {
   const [details, setDetails] = useState({}) // id -> detail object
   const [loading, setLoading] = useState(true)
   const [confirmingSuspend, setConfirmingSuspend] = useState(null)
-  const [resetting, setResetting] = useState(null) // the user currently mid "new password" dialog
 
   async function search() {
     setLoading(true)
@@ -370,16 +368,6 @@ function Users({ notify }) {
   async function showDetails(u) {
     if (details[u.id]) { const d = { ...details }; delete d[u.id]; setDetails(d); return }
     setDetails({ ...details, [u.id]: await adminUserDetails(u.id) })
-  }
-  async function doReset(pw) {
-    const u = resetting
-    setResetting(null)
-    try {
-      await adminResetPassword(u.id, pw)
-      notify?.(`Password reset for ${u.email}.`)
-    } catch (e) {
-      notify?.(e.message, 'danger')
-    }
   }
   async function suspend(u) {
     try {
@@ -434,7 +422,6 @@ function Users({ notify }) {
           </div>
           <div className="row">
             <button className="ghost small" onClick={() => showDetails(u)}>{details[u.id] ? 'Hide' : 'Details'}</button>
-            <button className="ghost small" onClick={() => setResetting(u)}><LockIcon width={14} height={14} /> Reset password</button>
             {u.role !== 'admin' && (
               <button className={u.suspended ? 'small' : 'danger small'} onClick={() => u.suspended ? unsuspend(u) : setConfirmingSuspend(u)}>
                 {u.suspended ? 'Unsuspend' : <><LockIcon width={14} height={14} /> Suspend</>}
@@ -490,23 +477,6 @@ function Users({ notify }) {
         confirmLabel="Suspend account"
         onConfirm={() => suspend(confirmingSuspend)}
         onCancel={() => setConfirmingSuspend(null)}
-      />
-      <PromptDialog
-        open={!!resetting}
-        icon={<LockIcon width={20} height={20} />}
-        title="Set a new password"
-        message={resetting ? (
-          <>
-            <span className="dialog-account">{resetting.email}</span>
-            <span className="dialog-line">It replaces their current password immediately.</span>
-          </>
-        ) : ''}
-        label="New password"
-        placeholder="Min. 6 characters"
-        minLength={6}
-        confirmLabel="Reset password"
-        onConfirm={doReset}
-        onCancel={() => setResetting(null)}
       />
     </section>
   )

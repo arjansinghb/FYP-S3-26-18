@@ -506,7 +506,8 @@ class FeedbackRequest(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    content_id: str
+    content_id: Optional[str] = None  # a catalogue item, or...
+    chat_ts: Optional[float] = None   # ...one exchange from the child's chat history (its timestamp)
     reason: str
 
 
@@ -564,6 +565,7 @@ class ReportOut(BaseModel):
     content_type: Optional[Literal["book", "video"]] = None  # None if the content was since removed
     thumbnail: Optional[str] = None  # cover image, for the moderator's report cards
     external_ref: Optional[str] = None  # lets the moderator open the reported book/video
+    excerpt: Optional[str] = None  # set when a chat exchange was reported instead of a catalogue item
     reason: str
     status: str
     ts: float

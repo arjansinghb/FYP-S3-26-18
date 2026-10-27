@@ -559,6 +559,14 @@ export async function reportContent(id, contentId, reason) {
   })
 }
 
+export async function reportChat(id, chatTs, reason) {
+  return request(`/api/children/${id}/report`, {
+    method: 'POST',
+    body: { chat_ts: chatTs, reason },
+    auth: true,
+  })
+}
+
 // ----- PA17: reported-content status -----
 export async function childReports(id) {
   return request(`/api/children/${id}/reports`, { auth: true })

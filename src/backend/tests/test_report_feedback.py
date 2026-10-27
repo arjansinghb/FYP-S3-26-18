@@ -101,3 +101,31 @@ def test_blank_or_overlong_notes_and_unknown_reports_are_rejected(client: TestCl
 def test_only_a_moderator_can_send_a_note(client: TestClient, moderator: dict, active_parent: dict, child: dict):
     _, rid = _report(client, moderator, active_parent, child, "Role Check Book")
     assert client.post(f"/api/reports/{rid}/note", headers=active_parent["headers"], json={"note": "hi"}).status_code in (401, 403)
+
+
+def test_pa16_report_a_chat_exchange(client, active_parent, child, moderator):
+    """A parent can report one exchange from the child's chat history; the
+    moderator sees the excerpt, and it can only be dismissed (nothing to remove)."""
+    from app.storage import db
+    ts = 1_700_000_000.123
+    db.activity.setdefault(child["id"], []).append({"ts": ts, "message": "Tell me about X", "reply": "Here is a story."})
+
+    r = client.post(f"/api/children/{child['id']}/report", headers=active_parent["headers"],
+                    json={"chat_ts": ts, "reason": "Pip's answer felt off"})
+    assert r.status_code == 201
+    report_id = r.json()["report_id"]
+
+    r = client.post(f"/api/children/{child['id']}/report", headers=active_parent["headers"],
+                    json={"chat_ts": 1.0, "reason": "x"})
+    assert r.status_code == 404  # no such exchange
+    r = client.post(f"/api/children/{child['id']}/report", headers=active_parent["headers"], json={"reason": "x"})
+    assert r.status_code == 422  # neither a catalogue item nor a chat message
+
+    mine = client.get(f"/api/children/{child['id']}/reports", headers=active_parent["headers"]).json()
+    rep = next(x for x in mine if x["id"] == report_id)
+    assert rep["content_title"] == "Chat reply" and "Tell me about X" in rep["excerpt"]
+
+    r = client.post(f"/api/reports/{report_id}/resolve", headers=moderator["headers"], json={"action": "remove"})
+    assert r.status_code == 422
+    r = client.post(f"/api/reports/{report_id}/resolve", headers=moderator["headers"], json={"action": "dismiss"})
+    assert r.status_code == 200 and r.json()["status"] == "resolved"
