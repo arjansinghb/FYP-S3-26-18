@@ -971,6 +971,10 @@ class Database:
             child["failed_pin_attempts"] = child.get("failed_pin_attempts", 0) + 1
             if child["failed_pin_attempts"] >= self.PIN_RETRY_LIMIT:
                 child["locked"] = True
+            # A wrong PIN is a 4xx, and main.py's persist_state only saves on
+            # success — so without this the counter (and the lock) never
+            # reaches Firestore and resets on the next request.
+            self.save()
             return False
         child["failed_pin_attempts"] = 0
         return True

@@ -190,20 +190,29 @@ const DEVICE_CHILD_KEY = 'pip_activated_child_id'
 export function getActivatedChildId() {
   return localStorage.getItem(DEVICE_CHILD_KEY)
 }
+// Just the first name, so the PIN screen can say "Welcome back, Maya!" before
+// anyone has logged in (there's no unauthenticated endpoint that returns it).
+const DEVICE_CHILD_NAME_KEY = 'pip_activated_child_name'
+export function getActivatedChildName() {
+  return localStorage.getItem(DEVICE_CHILD_NAME_KEY)
+}
 export function forgetDevice() {
   localStorage.removeItem(DEVICE_CHILD_KEY)
+  localStorage.removeItem(DEVICE_CHILD_NAME_KEY)
 }
 
 export async function linkChild(loginId, pin) {
   const data = await request('/api/children/link', { method: 'POST', body: { login_id: loginId, pin } })
   setChildToken(data.token)
   localStorage.setItem(DEVICE_CHILD_KEY, data.child.id)
+  localStorage.setItem(DEVICE_CHILD_NAME_KEY, data.child.name)
   return data.child
 }
 export async function pinLogin(childId, pin) {
   const data = await request(`/api/children/${childId}/login`, { method: 'POST', body: { pin } })
   setChildToken(data.token)
   localStorage.setItem(DEVICE_CHILD_KEY, data.child.id)
+  localStorage.setItem(DEVICE_CHILD_NAME_KEY, data.child.name)
   return data.child
 }
 export function childLogout() {

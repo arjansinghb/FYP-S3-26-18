@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import Avatar from '../components/Avatar'
-import { linkChild, pinLogin, getActivatedChildId, forgetDevice } from '../api'
+import { linkChild, pinLogin, getActivatedChildId, getActivatedChildName, forgetDevice } from '../api'
 import { firstMissingField } from '../formValidation'
 import './child.css'
 
@@ -28,6 +28,7 @@ function PinOnlyLogin({ childId, onLoggedIn, onForget }) {
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const name = getActivatedChildName()
 
   async function submit(e) {
     e.preventDefault()
@@ -47,7 +48,7 @@ function PinOnlyLogin({ childId, onLoggedIn, onForget }) {
   return (
     <div className="child-login">
       <Avatar speaking={false} mood="happy" />
-      <h1>Welcome back! 👋</h1>
+      <h1>{name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋'}</h1>
       <p className="muted">Type your secret PIN (a grown-up can help!)</p>
       <form onSubmit={submit} noValidate>
         <input

@@ -119,6 +119,30 @@ def test_ch02_return_login_and_lockout(client: TestClient, active_parent: dict, 
     assert r.status_code == 200
 
 
+def test_ch02_failed_pin_attempts_survive_a_firestore_reload(client: TestClient, active_parent: dict, child: dict, monkeypatch):
+    """Regression: on the deployed backend the persist_state middleware
+    reloads the Firestore snapshot before every POST and only saved after
+    responses < 400, so a wrong PIN (401) was never persisted — the counter
+    reset on every request and the profile never locked. Simulate Firestore
+    with a fake snapshot store."""
+    import copy
+    from app import firestore_store
+    from app.storage import db
+
+    snapshot: dict = {}
+    monkeypatch.setattr(firestore_store, "save_state", lambda state: snapshot.update(copy.deepcopy(state)))
+    monkeypatch.setattr(firestore_store, "load_state", lambda: copy.deepcopy(snapshot) or None)
+    db.save()  # the "already in Firestore" starting point
+    pin = db.children[child["id"]]["pin"]  # the fixture's copy can be stale after an earlier PIN regenerate
+
+    for _ in range(5):
+        r = client.post(f"/api/children/{child['id']}/login", json={"pin": "000000" if pin != "000000" else "111111"})
+        assert r.status_code in (401, 403)
+    r = client.post(f"/api/children/{child['id']}/login", json={"pin": pin})
+    assert r.status_code == 403  # locked, even with the right PIN
+    client.post(f"/api/children/{child['id']}/unlock", headers=active_parent["headers"])
+
+
 def test_pa09_delete_child(client: TestClient, active_parent: dict, child: dict):
     """Placed last in this module — `child` no longer exists for any test
     after this one to depend on."""
