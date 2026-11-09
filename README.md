@@ -81,16 +81,6 @@ src/                      Source code (frontend, backend — stack TBD, see src/
 website/                  Marketing website for the project (required deliverable)
 ```
 
-Three folders exist locally but are **git-ignored on purpose** and will
-never appear on GitHub — see `agent-context/CLAUDE.md` for why:
-
-```
-diary/                    Arjan's individual reflective diary — personal UOW
-                          submission, not a team artifact. Local only.
-agent-context/            Claude Code session notes/instructions — local only
-personal-reflections/     Arjan's private reflections — local only, not team-visible
-```
-
 ## Assessment Timeline (Session 1, this session)
 
 | Deliverable | Weight | Due |
