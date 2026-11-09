@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/child", tags=["child"])
 def _child_out(c: dict) -> ChildOut:
     return ChildOut(
         id=c["id"], parent_id=c["parent_id"], name=c["name"], age_band=c["age_band"],
-        reading_level=c.get("reading_level"), linking_code=c["linking_code"], avatar=c["avatar"],
+        reading_level=c.get("reading_level"), login_id=c["login_id"], pin=c["pin"], avatar=c["avatar"],
         settings=ChildSettings(**c.get("settings", {})),
     )
 

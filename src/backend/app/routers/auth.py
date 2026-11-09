@@ -1,13 +1,22 @@
-"""Accounts & auth — covers PA01/PA02 (login/logout), UV05 (sign up), and the
-moderator/admin logins (CM01/SA01) through one shared mechanism.
+"""Accounts & auth — covers PA01/PA02 (login/logout), UV05 (sign up), UV06
+(email verification), PA03 (password reset), and the moderator/admin logins
+(CM01/SA01) through one shared mechanism.
 
-LATER: Firebase Authentication replaces this; email verification and password
-reset become Firebase flows.
+UV06/PA03 send a real email via app/email_service.py once a Resend API key
+is configured (settings.resend_configured) — see each handler below for the
+dev-mode-vs-real branch. No key -> unchanged dev-mode behaviour, the token
+comes back directly in the API response instead of being emailed.
 """
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import email_service, email_validation, maintenance
+from ..config import settings
 from ..deps import current_account
-from ..models import AccountOut, AccountUpdate, AuthOut, LoginRequest, SignupRequest
+from ..models import (
+    AccountOut, AccountUpdate, AuthOut, LoginRequest, PasswordResetConfirm,
+    PasswordResetRequest, PasswordResetRequestOut, SignupOut, SignupRequest,
+    VerifyConfirm, VerifyRequestOut,
+)
 from ..storage import db
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -15,26 +24,58 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 def _account_out(acc: dict) -> AccountOut:
     return AccountOut(id=acc["id"], email=acc["email"], name=acc["name"],
-                      role=acc["role"], verified=acc["verified"])
+                      role=acc["role"], verified=acc["verified"], tier=acc.get("tier", "free"),
+                      consent=bool(acc.get("consent")))
 
 
-@router.post("/signup", response_model=AuthOut)
+@router.post("/signup", response_model=SignupOut)
 def signup(body: SignupRequest):
+    """UV05. Per the URS, signup creates the account "pending email
+    verification" (UV06) — a verification token is minted right away. If a
+    real email service is configured AND the send actually succeeds, it's
+    sent for real and never rides along in this response; otherwise (no
+    email service configured, OR a real send attempt failed — e.g. Resend's
+    sandbox mode rejecting a recipient that isn't the account's own verified
+    address) the token falls back to coming back here directly, same as
+    dev mode, so a delivery failure never leaves the parent with zero way
+    to verify. That fallback assumes the address was real to begin with —
+    app/email_validation.py checks that first (format AND a real DNS
+    lookup on the domain), so a made-up email never gets that far at all."""
+    if not email_validation.is_plausible_email(body.email):
+        raise HTTPException(422, "Enter a valid email address")
     try:
         acc = db.create_account(body.email, body.password, body.name, role="parent")
     except ValueError as e:
         raise HTTPException(409, str(e))
     token = db.issue_token("account", acc["id"])
-    return AuthOut(token=token, account=_account_out(acc))
+    verify_token = db.request_email_verification(acc)
+    if settings.resend_configured and email_service.send_verification_email(acc["email"], verify_token):
+        verify_token = None
+    return SignupOut(token=token, account=_account_out(acc), verify_token=verify_token)
 
 
 @router.post("/login", response_model=AuthOut)
 def login(body: LoginRequest):
+    """Deliberately distinguishes "no such account" from "wrong password"
+    (unlike request_password_reset's non-enumeration design below) — a
+    parent asked to be told specifically which field is wrong rather than
+    a single generic message. Frontend routes each message to sit under
+    the right field (ParentDashboard.jsx's AuthPanel, and the same
+    treatment on ModeratorDashboard.jsx/AdminDashboard.jsx's staff logins:
+    "Wrong email or password" still mentions "email" so it lands under
+    that field for an unknown address; "Incorrect password" lands under
+    Password). No trailing period on these — they read as short inline
+    warnings next to a field, not sentences in a paragraph."""
     acc = db.find_account_by_email(body.email)
-    if not acc or not db.check_password(acc, body.password):
+    if not acc:
         raise HTTPException(401, "Wrong email or password")
+    if not db.check_password(acc, body.password):
+        raise HTTPException(401, "Incorrect password")
     if acc.get("suspended"):
         raise HTTPException(403, "This account has been suspended. Please contact support.")
+    if maintenance.active() and acc.get("role") not in maintenance.STAFF_ROLES:
+        # Maintenance mode (SA11): staff may sign in, everyone else is turned away.
+        raise HTTPException(503, maintenance.message(), headers={"Retry-After": "300"})
     token = db.issue_token("account", acc["id"])
     return AuthOut(token=token, account=_account_out(acc))
 
@@ -65,3 +106,60 @@ def update_me(body: AccountUpdate, account: dict = Depends(current_account)):
 @router.delete("/me", status_code=204)
 def delete_me(account: dict = Depends(current_account)):
     db.delete_account(account["id"])
+
+
+# ---------- UV06: email verification ----------
+
+@router.post("/verify/request", response_model=VerifyRequestOut)
+def request_verification(account: dict = Depends(current_account)):
+    """2b in CH... (UV06 Alt Flow 2b) — visitor requests a resend."""
+    if account["verified"]:
+        raise HTTPException(400, "Account is already verified")
+    token = db.request_email_verification(account)
+    if settings.resend_configured and email_service.send_verification_email(account["email"], token):
+        return VerifyRequestOut(token=None, note=f"Check {account['email']} for your verification link.")
+    note = (
+        "Couldn't email a link to this address right now, so it is returned here directly instead."
+        if settings.resend_configured
+        else "Dev mode: no email service configured, so the verification token is returned here directly instead of being emailed."
+    )
+    return VerifyRequestOut(token=token, note=note)
+
+
+@router.post("/verify/confirm", response_model=AccountOut)
+def confirm_verification(body: VerifyConfirm):
+    account = db.confirm_email_verification(body.token)
+    if not account:
+        raise HTTPException(400, "That verification link is invalid or has expired.")
+    return _account_out(account)
+
+
+# ---------- PA03: password reset ----------
+
+@router.post("/reset-password/request", response_model=PasswordResetRequestOut)
+def request_password_reset(body: PasswordResetRequest):
+    """Doesn't reveal whether the email is registered (same non-enumeration
+    principle as child_login's shared error message) — always 200, but the
+    token is only actually minted (and, dev-mode, returned — real mode,
+    emailed) if it matches a real account. Note text stays generic either
+    way ("if this address is registered...") so a real-mode response can't
+    be used to probe which emails have accounts, the same way the token's
+    presence/absence already couldn't in dev mode."""
+    token = db.request_password_reset(body.email)
+    if token and settings.resend_configured and email_service.send_password_reset_email(body.email, token):
+        return PasswordResetRequestOut(
+            token=None,
+            note="If that email is registered, a reset code has been sent to it.",
+        )
+    if token and settings.DEV_RETURN_RESET_TOKEN:
+        return PasswordResetRequestOut(token=token, note="Dev mode: the reset code is returned here because it was not emailed.")
+    # Same answer whether or not the address is registered, and the code never leaves the server
+    return PasswordResetRequestOut(token=None, note="If that email is registered, a reset code has been sent to it.")
+
+
+@router.post("/reset-password/confirm", response_model=AccountOut)
+def confirm_password_reset(body: PasswordResetConfirm):
+    account = db.confirm_password_reset(body.token, body.new_password)
+    if not account:
+        raise HTTPException(400, "That reset link is invalid or has expired.")
+    return _account_out(account)

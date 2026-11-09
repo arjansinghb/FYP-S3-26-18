@@ -5,17 +5,57 @@ Run from src/backend/ with:
 
 Interactive API docs are then at http://localhost:8000/docs
 """
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import logging
+import time
 
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from . import maintenance, metrics
 from .config import settings
-from .routers import admin, auth, chat, child, children, content, health, oversight, public, reports
+from .routers import account, admin, articulation, auth, browse, chat, child, children, content, health, oversight, public, reports
+from .storage import db
+
+logger = logging.getLogger("pip")
 
 app = FastAPI(
     title="Pip — Kids' Book & Video Recommendation API",
     description="FYP-26-S3-18 backend. Provider-agnostic; runs with a placeholder brain until a real LLM is connected.",
     version="0.1.0",
 )
+
+
+@app.on_event("startup")
+def _warn_if_zdr_unresolved() -> None:
+    """URS §2.5 Constraint 3 / Assumption 3 — not a resolvable-by-code
+    setting (see config.py's ZDR_STATUS docstring), so this exists purely to
+    make the current state loud and visible in server logs on every boot,
+    the same way it's already visible via SA10 (system.compliance config)."""
+    if settings.BRAIN_PROVIDER == "openai" and settings.ZDR_STATUS == "unresolved":
+        logger.warning(
+            "⚠️  OpenAI ZDR status is 'unresolved' (see URS §2.5) — real child "
+            "chat text is going to OpenAI's standard API (30-day abuse-monitoring "
+            "retention, no Zero Data Retention agreement). Set ZDR_STATUS=accepted_risk "
+            "in .env once the team has knowingly decided this is OK for now (e.g. "
+            "coursework prototype, no real children's data), or ZDR_STATUS=confirmed "
+            "once a real agreement is in place with OpenAI."
+        )
+
+@app.middleware("http")
+async def maintenance_gate(request: Request, call_next):
+    """SA11 maintenance mode: while it is on, only admins and moderators get
+    through (see app/maintenance.py). Registered BEFORE the CORS middleware on
+    purpose, so CORS wraps it and the 503 still carries the CORS headers the
+    browser needs to read the message."""
+    if request.method == "OPTIONS" or maintenance.is_open_path(request.url.path) or not maintenance.active():
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else None
+    if maintenance.is_staff_token(token):
+        return await call_next(request)
+    return JSONResponse(maintenance.payload(), status_code=503, headers={"Retry-After": "300"})
+
 
 # Let the React dev server (any localhost port) call the API during development.
 app.add_middleware(
@@ -26,12 +66,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def persist_state(request: Request, call_next):
+    """Snapshot the in-memory store to Firestore after any request that could
+    have changed it — no-op when Firebase isn't configured (see
+    app/firestore_store.py). Keeps every router exactly as-is; this is the
+    only place that knows persistence exists at all.
+
+    2026-09-11 fix: also reloads FIRST, before the handler runs, for every
+    mutating request — not just the read side, which was already covered
+    for authenticated endpoints via deps.py's current_account/current_child
+    (each calls storage.py's refresh_account/refresh_child, itself a
+    _reload_from_firestore()). The gap: signup, login, and child-login
+    can't authenticate an *existing* token (that's the whole point of
+    them), so they never went through that dependency at all — a warm but
+    stale Vercel instance could handle one of these, mutate its own
+    outdated in-memory snapshot, and this middleware's own save() below
+    would write that stale FULL snapshot straight over Firestore,
+    silently undoing whatever a different, more current instance had
+    changed moments earlier. Real, reproduced bug: a parent test account
+    deleted via a fresh instance kept reappearing after later, unrelated
+    signup/login calls landed on a stale one. Reloading first means every
+    instance's mutation is always applied on top of the latest known
+    state before it gets saved back, not whatever this instance happened
+    to have cached."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        db._reload_from_firestore()
+    response = await call_next(request)
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and response.status_code < 400:
+        db.save()
+    return response
+
+
+@app.middleware("http")
+async def track_request(request: Request, call_next):
+    """SA08 — feeds app/metrics.py's rolling window so admin/stats can show
+    real error rate + NLP (chat) latency, not just raw counts. See
+    metrics.py's own docstring for why this exists."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    metrics.record(time.perf_counter() - start, response.status_code, request.url.path)
+    return response
+
+
 app.include_router(health.router)
 app.include_router(public.router)
 app.include_router(auth.router)
+app.include_router(account.router)
 app.include_router(children.router)
 app.include_router(oversight.router)
 app.include_router(chat.router)
+app.include_router(browse.router)
+app.include_router(articulation.router)
 app.include_router(child.router)
 app.include_router(content.router)
 app.include_router(reports.router)

@@ -1,5 +1,117 @@
+/* ============================================================
+   Design tokens — the whole system. Every colour, spacing, radius
+   and font size used anywhere in the app traces back to one of
+   these; nothing invents a one-off value outside this file.
+   ============================================================ */
 :root {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* ---- type: ONE typeface, used at different weights/sizes for
+     hierarchy instead of mixing families ---- */
+  --font: 'Nunito', system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  --text-2xs: 12px;   /* micro labels only: counters, chart axes, tiny chips */
+  --text-xs: 13px;    /* fine print, timestamps, meta */
+  --text-sm: 15px;    /* captions, secondary labels */
+  --text-base: 16px;  /* body copy default */
+  --text-md: 18px;    /* lead paragraph, tagline */
+  --text-lg: 22px;    /* card/tile titles */
+  --text-xl: 28px;    /* section heading, mobile */
+  --text-2xl: 34px;   /* section heading, desktop */
+  --text-3xl: 44px;   /* hero headline, mobile */
+  --text-4xl: 60px;   /* hero headline, desktop */
+
+  --leading-tight: 1.08;   /* display headlines only */
+  --leading-snug: 1.35;    /* UI labels, card titles */
+  --leading-body: 1.6;     /* paragraphs — never tighter than this */
+
+  --measure: 62ch;         /* max paragraph width for readable line length */
+
+  /* ---- spacing scale (4px base) — every margin/padding/gap in the
+     app snaps to one of these, never an arbitrary in-between value ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+  --space-10: 72px;
+  --space-11: 96px;
+
+  /* ---- radius scale ---- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-pill: 999px;
+
+  /* ---- elevation: three levels, so every raised surface reads the same ---- */
+  --shadow-sm: 0 6px 16px color-mix(in srgb, var(--primary-700) 6%, transparent);   /* cards at rest */
+  --shadow-md: 0 10px 22px color-mix(in srgb, var(--primary-700) 10%, transparent); /* hovered / lifted cards */
+  --shadow-lg: 0 16px 40px color-mix(in srgb, var(--ink) 14%, transparent);         /* popovers, dialogs, sheets */
+
+  /* ---- colour: 1 primary + 1 accent + neutrals. Every colour below
+     has exactly one defined job — see the comment on each. Nothing
+     gets used outside its stated role, and nothing gets added to this
+     list without one. ----
+
+     PRIMARY (purple) — brand, primary actions, links, icon accents. */
+  --primary-700: #6a2ea0;   /* solid fills: buttons, active states */
+  --primary-500: #9b6bff;   /* lighter emphasis: icons, secondary accents */
+  --primary-100: #f3ecff;   /* tinted surfaces: icon chips, subtle backgrounds */
+  --primary-border: #e6d8ff; /* borders on cards/inputs */
+
+  /* ACCENT (amber) — ONE job: star ratings. Nothing else uses this. */
+  --accent-600: #b8720f;
+
+  /* ON-PRIMARY — text/icon colour for anything sitting on a solid
+     --primary-700 fill (buttons, badges, filled panels). One job: contrast
+     against that one fill. Never used on any other background. */
+  --on-primary: #ffffff;
+  --on-primary-muted: rgba(255, 255, 255, 0.92);
+
+  /* STATUS (staff consoles only) — the moderator/admin workflows have real
+     approve/reject/error states the child and marketing surfaces never
+     needed, so purple+amber alone can't carry them; a deliberate, flagged
+     extension of the token system, not a quiet violation of it. "Pending"
+     deliberately does not get a third hue — it is the absence of a
+     verdict, so it stays neutral, reusing the border and muted tokens,
+     instead of spending a fourth colour on "no decision yet". */
+  --danger-700: #b0245c;  /* reject / remove / destructive actions, error text */
+  --danger-100: #fde2ec;  /* tinted background: danger badges, danger button fill */
+  --success-700: #1c7a4a; /* approved / success status only */
+  --success-100: #dcf6e8; /* tinted background: success badges */
+
+  /* STAT-TILE PALETTE — Admin/Moderator Overview stat tiles only (see
+     .stat--tone-* in parent.css). Explicitly requested by Kiefer to give
+     each tile its own fixed identity colour instead of everything reading
+     as the same neutral purple — a deliberate widening of the "1 primary +
+     1 accent" rule above, not an accident. Each tile's colour is now just
+     an identity marker (which count is which at a glance), not a signal —
+     the Performance tiles (Error rate/latency) deliberately stay OUT of
+     this palette and keep their old red-only-when-actually-slow behaviour,
+     since permanently colouring "Error rate: 0.0%" red would misrepresent
+     a healthy system. */
+  --blue-700: #1d5fae;   --blue-100: #e3edfb;
+  --pink-700: #b0246f;   --pink-100: #fbe3f0;
+  --amber-700: #8d570a;  --amber-100: #fbedd6;
+  --teal-700: #11695f;   --teal-100: #dff5f2;
+  --indigo-700: #4338a8; --indigo-100: #eae8fb;
+  --orange-700: #a84a0a; --orange-100: #fde8d6;
+  --cyan-700: #0b6e77;   --cyan-100: #dcf3f4;
+  --brown-700: #8a5a2e;  --brown-100: #f2e6d8;
+  --magenta-700: #a3218e; --magenta-100: #f7e2f4;
+
+  /* NEUTRALS — ink for headings, text for body, muted for the least
+     important label on the page, never for a paragraph a user is
+     meant to actually read. */
+  --ink: #241f36;
+  --text: #4a4460;
+  --muted: #665e80;
+  --border: #ece6f5;
+  --surface: #ffffff;
+  --bg: #fdf9f2;
+
   color-scheme: light;
 }
 
@@ -10,6 +122,34 @@
 body {
   margin: 0;
   min-height: 100svh;
-  background: linear-gradient(160deg, #eef6ff 0%, #fdf0ff 60%, #fff6ec 100%);
-  color: #2a2440;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: var(--leading-body);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font);
+  color: var(--ink);
+  line-height: var(--leading-snug);
+  /* Balances line lengths across a heading instead of leaving a short
+     orphan word alone on its own last line — a no-op, not a risk, on the
+     handful of older browsers that don't support it yet. */
+  text-wrap: balance;
+}
+
+/* Applies everywhere in one place (index.css loads once, globally) rather
+   than needing every page to opt in — real, reported issue: a short last
+   line (e.g. a single word like "family.") reads as a formatting mistake,
+   not intentional line-breaking.
+   `text-wrap: pretty` (tried first) is the property actually meant for
+   this, but Safari doesn't implement it at all as of this build — on a
+   Mac, that rule was silently a no-op, which is exactly why the orphan
+   word was still there after the first fix. `balance` has real, current
+   support in Safari/Chrome/Firefox alike and, for text this short (most
+   of this app's copy is 1-3 lines), does the same job: it evens out every
+   line instead of leaving one short one at the end. */
+p {
+  max-width: var(--measure);
+  text-wrap: balance;
 }

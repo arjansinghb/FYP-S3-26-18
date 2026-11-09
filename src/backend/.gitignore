@@ -6,3 +6,6 @@ venv/
 
 # Local secrets
 .env
+secrets/
+*firebase-admin*.json
+.vercel

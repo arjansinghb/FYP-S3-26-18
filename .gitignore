@@ -3,6 +3,8 @@ agent-context/
 personal-reflections/
 diary/
 .claude/
+/CLAUDE.md
+.impeccable/
 
 # OS
 .DS_Store

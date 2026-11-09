@@ -1,99 +1,427 @@
-.app {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 24px 20px 20px;
+/* Every spacing/colour/radius/font value below is a design token (see
+   index.css) — nothing invented outside that scale. Full-viewport column:
+   header (.child-bar) + .chat-shell share ONE fixed 100svh box (not
+   min-height) so the transcript can scroll internally instead of the whole
+   page growing taller than one screen. */
+.child-screen {
   display: flex;
   flex-direction: column;
-  min-height: 100svh;
+  height: 100svh;
+  background:
+    radial-gradient(1100px 500px at 50% 0%, color-mix(in srgb, var(--primary-500) 14%, transparent), transparent 70%),
+    var(--bg);
 }
 
-/* the whole screen is basically just Pip + a caption + the talk button */
-.stage {
+/* ---------- chat shell: presence header + scrolling transcript + input ---------- */
+/* This is the real chat surface — the transcript below is exactly the
+   context window sent back to the brain on each turn (see chat.py's
+   session_history), not a separate "for show" log.
+
+   Content column is capped (chat bubbles read badly stretched full-width on
+   a big monitor), but .child-bar/.chat-input-bar below span edge-to-edge as
+   their own full-width surfaces — same "wide bars, capped reading column"
+   split the landing page uses, so the page reads as one shell that fills
+   the window, not a phone-width card floating in dead space.
+
+   .chat-shell itself carries NO width cap — it's purely the flex column
+   that gives .chat-transcript below room to scroll (min-height:0 is what
+   makes that overflow actually kick in). The 1100px cap used to sit here,
+   which meant .chat-transcript's own scrollbar rendered at the edge of
+   that centered column — visibly stranded mid-page on a wide monitor
+   instead of at the window's real right edge ("scroll bar nya... di
+   bagian kanan pojok aja" — flagged directly, with a screenshot showing it
+   a few hundred px in from the actual browser edge). The cap moved onto
+   .chat-transcript-inner instead. */
+.chat-shell {
+  width: 100%;
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-presence {
+  position: relative;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-4) 0 var(--space-2);
+}
+.chat-presence .avatar {
+  width: 116px;
+  height: 116px;
+}
+/* Once the conversation has started the big mascot has done its job. Left at
+   full size it eats ~170px of a short laptop screen and squeezes the
+   recommendation cards (reported by a tester: "the Pip icon is blocking most
+   of the page"). It shrinks to a slim row instead: small avatar, status text
+   beside it. */
+.chat-presence--compact {
+  flex-direction: row;
   justify-content: center;
-  gap: 28px;
-  text-align: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
 }
-
-.stage .avatar {
-  width: 260px;
-  height: 260px;
+.chat-presence--compact .avatar { width: 52px; height: 52px; }
+.chat-presence--compact .chat-presence-glow { display: none; }
+.chat-presence--compact .chat-status { min-height: 0; }
+/* Even before the first message, don't let the mascot take a third of a short
+   screen. */
+@media (max-height: 760px) {
+  .chat-presence:not(.chat-presence--compact) { padding-top: var(--space-2); }
+  .chat-presence:not(.chat-presence--compact) .avatar { width: 84px; height: 84px; }
+  .chat-presence:not(.chat-presence--compact) .chat-presence-glow { width: 124px; height: 124px; }
 }
-
-/* subtitle of what Pip just said (not a chat, just a caption) */
-.caption {
-  min-height: 3em;
-  max-width: 520px;
+/* Presence glow — motivated by Pip's own speaking state, not a permanent
+   decorative halo: quiet at rest, pulses only while Pip is actually
+   talking (see .chat-presence-glow--active below). A static purple aurora
+   glow behind an avatar is the single most generic "AI chatbot" visual
+   default there is; tying it to real state is the same standard already
+   applied to the avatar's own bob/blink/talk animations. */
+.chat-presence-glow {
+  position: absolute;
+  top: -10px;
+  width: 170px;
+  height: 170px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--primary-500) 22%, transparent), transparent 72%);
+  pointer-events: none;
+  opacity: 0.4;
+  transition: opacity 0.3s ease;
+}
+.chat-presence-glow--active {
+  opacity: 1;
+  animation: presence-pulse 1.6s ease-in-out infinite;
+}
+@keyframes presence-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.08); }
+}
+.chat-status {
+  min-height: 1.4em;
   margin: 0;
-  font-size: 24px;
-  line-height: 1.4;
-  color: #3a2f57;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  /* primary-500 measured 3.37:1 on this background at this size/weight —
+     below the 4.5:1 WCAG AA requirement. primary-700 (already used below
+     for the listening state) clears it comfortably. */
+  color: var(--primary-700);
 }
-.caption-listening {
-  color: #9b6bff;
+/* Distinguished from the idle/thinking/speaking states by the mic's own
+   pulse animation (.mic-btn-listening), not a second colour — this was
+   already the stated intent, the idle state just hadn't been fixed to
+   match it yet. */
+.chat-status-listening {
+  color: var(--primary-700);
 }
 
-/* the one big control: tap to talk */
-.talk {
-  font: inherit;
-  font-size: 22px;
-  font-weight: 600;
+/* The actual scrolling element, edge-to-edge — its native scrollbar sits at
+   the true viewport edge because nothing here caps its own width (see the
+   .chat-shell comment above for why that matters). No horizontal padding
+   of its own either: .chat-transcript-inner below owns all of that, same
+   split as .chat-input-bar's own bar/content separation. */
+.chat-transcript {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+}
+.chat-transcript-inner {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-1) var(--space-5) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bubble-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.bubble-row-child {
+  align-items: flex-end;
+}
+.bubble-row-pip {
+  align-items: flex-start;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  animation: bubble-in 0.25s ease-out;
+}
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.bubble-child {
+  background: var(--primary-700);
+  color: var(--on-primary);
+  border-bottom-right-radius: var(--space-2);
+}
+/* Pip's own words are bold — the child's own typed/spoken words stay
+   regular weight, so the two voices in the transcript read as visually
+   distinct without a second typeface. */
+.bubble-pip {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: var(--space-2);
+  box-shadow: var(--shadow-sm);
+  font-weight: 700;
+}
+
+/* three-dot "thinking" indicator inside a pip bubble */
+.bubble-dots {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+  min-height: 1em;
+}
+.bubble-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary-500);
+  animation: dot-bounce 1.2s infinite ease-in-out;
+}
+.bubble-dots span:nth-child(2) { animation-delay: 0.15s; }
+.bubble-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+  40%           { transform: translateY(-5px); opacity: 1; }
+}
+
+.bubble-recs {
+  max-width: 92%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+.bubble-recs .pill {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+/* ---------- welcome back (returning child only — streak and/or saved
+   favourites). This screen is the only "home" a logged-in child ever
+   sees — no separate browse homepage by design — so continuity has to
+   live here instead of behind the Favourites header button. ---------- */
+.welcome-back {
+  background: var(--primary-100);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  margin: var(--space-1) 0 var(--space-3);
+}
+.welcome-back-lead {
+  margin: 0 0 var(--space-1);
+  font-weight: 800;
+  font-size: var(--text-base);
+  color: var(--primary-700);
+}
+.welcome-back-favs { margin-top: var(--space-3); }
+.welcome-back-favs-label {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: var(--space-2);
+}
+.welcome-back-fav-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.welcome-back-fav-chip {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 20px 36px;
-  border: none;
-  border-radius: 999px;
-  background: #6a2ea0;
-  color: #fff;
+  gap: var(--space-2);
+  font: inherit;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--primary-border);
+  background: var(--surface);
+  color: var(--primary-700);
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(120, 80, 200, 0.35);
-  transition: transform 0.1s, background 0.15s, box-shadow 0.15s;
+  max-width: min(100%, 340px);
+  text-align: left;
+  line-height: 1.3;
+  border-radius: 20px;
+  transition: border-color 0.12s, transform 0.1s;
 }
-.talk:hover:not(:disabled) {
-  background: #7d3cbd;
-  transform: translateY(-2px);
-}
-.talk:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.talk-icon {
-  font-size: 26px;
+.welcome-back-fav-chip svg { flex-shrink: 0; }
+/* The whole title is shown: a long one wraps onto a second line instead of
+   being cut off at a fixed width (it used to read "Goodnight Farm Frien…",
+   which hid the one thing that tells a child which book it is). */
+.welcome-back-fav-chip span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+/* Scoped through .welcome-back-fav-row so this reliably beats parent.css's
+   global `button:hover:not(:disabled)` fill (same cross-page CSS-bundling
+   bleed-through as the pills/logo in child.css — see those comments for
+   the full story) with an intentional purple-fill + white-text hover
+   instead of whatever unreadable combination that rule would otherwise
+   win with. */
+.welcome-back-fav-row .welcome-back-fav-chip:hover {
+  background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700);
+  transform: translateY(-1px);
 }
 
-/* pulsing ring while listening */
-.talk-listening {
-  background: #e0459b;
+/* ---------- starter prompt chips (shown only before the first message) ---------- */
+.starter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-1) 0 var(--space-2);
+}
+/* Each chip pops in on its own beat instead of the whole row fading in as
+   one block — a small, specific bit of authored motion rather than a
+   generic "fade everything in" effect. */
+.starter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--primary-700);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+  animation: chip-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.starter-chip:nth-child(1) { animation-delay: 0.03s; }
+.starter-chip:nth-child(2) { animation-delay: 0.08s; }
+.starter-chip:nth-child(3) { animation-delay: 0.13s; }
+.starter-chip:nth-child(4) { animation-delay: 0.18s; }
+.starter-chip:nth-child(5) { animation-delay: 0.23s; }
+.starter-chip:nth-child(6) { animation-delay: 0.28s; }
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.94); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .starter-chip { animation: none; }
+}
+/* Scoped through .starter-row for the same reason as .welcome-back-fav-chip
+   above — beats parent.css's global button:hover bleed-through with an
+   intentional purple-fill + white-text hover. */
+.starter-row .starter-chip:hover {
+  transform: translateY(-2px);
+  background: var(--primary-700); color: var(--on-primary); border-color: var(--primary-700);
+  box-shadow: var(--shadow-md);
+}
+
+/* ---------- input bar: mic + text, its own full-width surface pinned to
+   the bottom of the screen (sibling of .chat-shell, not inside it — see
+   ChildChat.jsx) ---------- */
+.chat-input-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) max(var(--space-5), calc((100% - 1100px) / 2));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 20px color-mix(in srgb, var(--primary-700) 5%, transparent);
+}
+.mic-btn {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary-700);
+  color: var(--on-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-700) 25%, transparent);
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.mic-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 32%, transparent);
+}
+.mic-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Same primary colour as idle — the pulse animation carries the "active"
+   meaning, not a colour swap to a new hue. */
+.mic-btn-listening {
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(224, 69, 155, 0.5); }
-  70%  { box-shadow: 0 0 0 22px rgba(224, 69, 155, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(224, 69, 155, 0); }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary-700) 50%, transparent); }
+  70%  { box-shadow: 0 0 0 14px color-mix(in srgb, var(--primary-700) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary-700) 0%, transparent); }
+}
+.chat-text-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  outline: none;
+  color: var(--ink);
+}
+.chat-text-input:focus {
+  border-color: var(--primary-500);
+}
+.chat-text-input:disabled {
+  opacity: 0.6;
+}
+.chat-send-btn {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary-700);
+  color: var(--on-primary);
+  cursor: pointer;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary-700) 25%, transparent);
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.chat-send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary-700) 32%, transparent);
+}
+.chat-send-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-.app-footer {
-  margin-top: 20px;
-  text-align: center;
-  font-size: 12px;
-  color: #b3a8ca;
-}
+/* ---------- avatar (illustration — its own consistent, self-contained
+   colour treatment; --avatar-color is the one user-customisable knob,
+   set via the colour swatches, CH19/CH20) ---------- */
 
-/* ---------- avatar animations ---------- */
-
-.avatar-shadow { fill: rgba(120, 80, 200, 0.15); }
-.avatar-fill   { fill: var(--avatar-color, #9b6bff); }
+.avatar-shadow { fill: color-mix(in srgb, var(--primary-700) 15%, transparent); }
+.avatar-fill   { fill: var(--avatar-color, var(--primary-500)); }
 .avatar-cheek  { fill: #ff9ecb; opacity: 0.75; }
-.avatar-eye    { fill: #2a2440; }
+.avatar-eye    { fill: var(--ink); }
 .avatar-glint  { fill: #ffffff; }
 .avatar-stroke {
   fill: none;
-  stroke: #2a2440;
+  stroke: var(--ink);
   stroke-width: 4;
   stroke-linecap: round;
 }
@@ -107,6 +435,17 @@
   50%      { transform: translateY(-6px); }
 }
 
+/* While actively talking, the whole body gets a quicker, smaller bounce on
+   top of the mouth-flap — reads as "animated and speaking", not just a
+   static face with a moving mouth. */
+.avatar.is-speaking .avatar-body {
+  animation: talk-bounce 0.42s ease-in-out infinite;
+}
+@keyframes talk-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50%      { transform: translateY(-3px) scale(1.015); }
+}
+
 .avatar-eyes {
   transform-origin: 100px 92px;
   animation: blink 4s infinite;
@@ -118,7 +457,7 @@
 
 .avatar-mouth-smile {
   fill: none;
-  stroke: #2a2440;
+  stroke: var(--ink);
   stroke-width: 4;
   stroke-linecap: round;
 }
@@ -138,3 +477,44 @@
 .avatar-eyes-happy { opacity: 0; }
 .avatar.is-happy .avatar-eyes { opacity: 0; }
 .avatar.is-happy .avatar-eyes-happy { opacity: 1; }
+
+/* Every decorative animation in this file, in one place, off for anyone who
+   asked the OS for reduced motion — state is still communicated (colour
+   changes, opacity swaps, the mouth staying open while speaking) without
+   the actual bounce/pulse/bob movement. */
+@media (prefers-reduced-motion: reduce) {
+  .bubble, .starter-chip { animation: none; }
+  .bubble-dots span { animation: none; opacity: 1; }
+  .mic-btn-listening { animation: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary-700) 35%, transparent); }
+  .avatar-body, .avatar.is-speaking .avatar-body { animation: none; }
+  .avatar-eyes { animation: none; }
+  .avatar.is-speaking .avatar-mouth-open { animation: none; opacity: 1; }
+  .chat-presence-glow--active { animation: none; opacity: 1; }
+}
+
+/* ---------- maintenance mode (SA11) ---------- */
+.maintenance-screen {
+  min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: var(--space-6, 24px) 16px;
+  background: var(--bg);
+}
+.maintenance-card {
+  width: 100%; max-width: 440px; text-align: center; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 20px); padding: var(--space-8, 40px) var(--space-6, 24px);
+  box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-3, 12px);
+}
+.maintenance-icon {
+  width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.maintenance-card h1 { margin: var(--space-2, 8px) 0 0; font-size: var(--text-xl, 22px); color: var(--ink); text-wrap: balance; }
+.maintenance-card p { margin: 0; color: var(--text); max-width: 34ch; text-wrap: pretty; }
+.maintenance-help { font-size: var(--text-sm, 14px); color: var(--muted); }
+.maintenance-help a { color: var(--primary-700); font-weight: 700; }
+.maintenance-card button { margin-top: var(--space-3, 12px); }
+.maintenance-bar {
+  position: sticky; top: 0; z-index: 60; padding: 8px 16px; text-align: center; font-size: var(--text-sm); font-weight: 700;
+  background: var(--primary-100); color: var(--primary-700);
+}
+.maintenance-bar--staff { background: var(--amber-100); color: var(--amber-700); }
+.field-hint-p { margin: -4px 0 var(--space-3, 12px); max-width: 60ch; text-wrap: pretty; }
