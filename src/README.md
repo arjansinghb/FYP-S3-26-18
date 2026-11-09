@@ -1,44 +1,68 @@
-# Source Code
+# Source code
 
-The application source for FYP-26-S3-18 — a chatbot that recommends
-age-appropriate books and videos to children (5–12), with a parent
-oversight dashboard. Delivered as an installable Progressive Web App (PWA).
-
-## Tech stack (finalized in the PRD)
-
-| Layer | Choice | Notes |
-|---|---|---|
-| **Frontend** | React (via Vite) | Child-facing avatar chat UI + parent dashboard. Ships as an installable PWA. |
-| **Backend** | Python + FastAPI | API, recommendation logic, and the NLP/LLM conversation layer live together in one language. |
-| **AI / recommendation** | OpenAI API | Powers the conversational understanding and the ANN-based recommendation engine. Provider compliance (under-13 / Zero Data Retention) is owned by the lead programmer. |
-| **Database + Auth** | Firebase (Firestore + Authentication) | Parent accounts, linked child profiles, chat/recommendation history. |
-| **Content sources** | Google Books API (books); YouTube Data API v3, restricted to a curated allowlist (video) | Closed, vetted catalogue — never open/unfiltered sources. |
-
-## Folder layout
+The application behind Pip, a chatbot that recommends age-appropriate books and videos to
+children (5 to 12), with a dashboard for parents and consoles for moderators and admins. It is
+delivered as an installable Progressive Web App (PWA).
 
 ```
 src/
-  frontend/   React (Vite) app — child avatar chat UI + parent dashboard (PWA)
-  backend/    Python + FastAPI — API, recommendation engine, NLP/LLM pipeline
+  backend/    Python + FastAPI: API, recommendation logic, moderation, storage, tests
+  frontend/   React + Vite: child chat, parent dashboard, moderator and admin consoles
 ```
 
-## Running locally
+## Tech stack
 
-Prerequisites: **Node.js LTS** (frontend) and **Python 3.11+** (backend).
+| Layer | Choice | Notes |
+|---|---|---|
+| Frontend | React 19, Vite 8, React Router 7 | One app with four areas: `/child`, `/parent`, `/moderator`, `/admin` (plus the landing page at `/`). |
+| Backend | Python, FastAPI | About 114 endpoints, grouped in `app/routers/`. |
+| AI | OpenAI API | Chat model (`gpt-4o-mini` by default) for conversation, embeddings for catalogue retrieval, text-to-speech, and the moderation API. |
+| Storage | Firebase Firestore | The whole application state is saved as one snapshot document. Without Firebase it runs in memory and resets on restart. |
+| Email | Resend | Verification and reset emails. Without a key the codes are returned or shown on screen (dev only). |
+| Content sources | Google Books, YouTube Data API v3 | Used only by the moderator import tools, never at chat time. |
+| Hosting | Vercel | Backend and frontend are two separate projects (`backend/vercel.json`, `frontend/vercel.json`). |
 
-```
-# Frontend
-cd frontend
-npm install
-npm run dev
+## Run it locally
 
-# Backend (once added)
-cd backend
+Prerequisites: **Python 3.11+** and **Node.js 20+**. The two apps are separate processes.
+
+```bash
+# 1. Backend, from the repository root
+cd src/backend
 python -m venv .venv
-# activate the venv, then:
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload
+uvicorn app.main:app --reload      # http://localhost:8000 (docs at /docs)
 ```
 
-API keys (OpenAI, Firebase, Google Books, YouTube) are supplied via
-environment variables / local config and are **never** committed to the repo.
+```bash
+# 2. Frontend, in a second terminal
+cd src/frontend
+npm install
+npm run dev                        # http://localhost:5173
+```
+
+The frontend talks to `http://localhost:8000` by default. To point it elsewhere, create
+`src/frontend/.env.local` with `VITE_API_BASE=http://localhost:<port>`.
+
+With no configuration at all the backend uses a placeholder brain and in-memory storage, which is
+enough to click through every screen. To use the real services, copy `backend/.env.example` to
+`backend/.env` and fill in the keys you have (OpenAI, Firebase, Google Books, YouTube, Resend).
+Keys are read from the environment and are **never** committed.
+
+## Tests and checks
+
+```bash
+cd src/backend
+pip install pytest
+python -m pytest tests -q          # 401 tests, no network or real keys needed
+python scripts/smoke_test.py --base-url http://localhost:8000    # end-to-end against a running backend
+```
+
+```bash
+cd src/frontend
+npm run lint
+npm run build
+```
+
+More detail: [`backend/README.md`](backend/README.md) and [`frontend/README.md`](frontend/README.md).

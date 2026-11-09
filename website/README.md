@@ -1,7 +1,13 @@
-# Marketing Website
+# Project website
 
-A required deliverable, separate from the product itself: a website used
-for external marketing of the project group and the system being
-developed (preliminary version due with the Session 1 progress report,
-final version due with the final submission — must stay live for at least
-one month after the final presentation if hosted on a paid domain).
+The project's public website is the landing page of the web app itself, so there is no separate
+code in this folder. It is live at:
+
+**https://fyp-pip-frontend.vercel.app**
+
+It introduces Pip, explains how it works and why it is safe, shows the Free and Premium plans, shows
+reviews written by parents, and links to sign-up.
+
+Source: `src/frontend/src/pages/Home.jsx` and `src/frontend/src/pages/landing.css`. The text, plans and
+reviews come from the backend (`/api/public/site`, `/api/public/plans`, `/api/public/reviews`), so an
+admin can change them in the admin console without a new deployment.

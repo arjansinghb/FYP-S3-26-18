@@ -1,16 +1,59 @@
-# React + Vite
+# Frontend: Pip web app (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+One React app that contains the child chat, the parent dashboard, and the moderator and admin
+consoles, delivered as an installable PWA (`public/manifest.webmanifest`, `public/sw.js`).
 
-Currently, two official plugins are available:
+## Run it
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+cd src/frontend
+npm install
+npm run dev          # http://localhost:5173
+```
 
-## React Compiler
+It expects the backend at `http://localhost:8000` (see `../backend/README.md`). To use another address,
+create `.env.local`:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```
+VITE_API_BASE=http://localhost:8010
+```
 
-## Expanding the Oxlint configuration
+| Variable | Purpose |
+|---|---|
+| `VITE_API_BASE` | Backend address (default `http://localhost:8000`). |
+| `VITE_HIDE_DEMO_LOGINS` | Set to `true` to hide the demo moderator and admin sign-ins on the login screen. |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server with hot reload |
+| `npm run build` | Production build into `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run lint` | Lint with Oxlint |
+
+## Routes
+
+| Path | Who | What |
+|---|---|---|
+| `/` | Visitors | Landing page, plans and reviews (this is the project's public website) |
+| `/parent` | Parents, moderators, admins | Sign up and sign in for every role, then the parent dashboard |
+| `/child` | Children | PIN sign-in and the chat with Pip, Browse and My Library |
+| `/moderator` | Moderators | Submissions, catalogue, AI audit, reports, search and import |
+| `/admin` | Admins | System health, users, reviews, settings, support |
+
+## Source layout
+
+```
+src/
+  pages/        One file per area (ParentDashboard, ChildChat, ModeratorDashboard, AdminDashboard,
+                Home, ChildLogin) and their stylesheets
+  components/   Shared pieces: Avatar, recommendation cards, dialogs, level badge, select, toast
+  api.js        Every call to the backend, in one place
+  index.css     Design tokens and base styles
+```
+
+## Deployment
+
+Deployed to Vercel as a separate project. `vercel.json` rewrites every path to `index.html`, so deep
+links such as `/parent/child` work on refresh.

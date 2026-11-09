@@ -1,64 +1,90 @@
-# Backend — Pip API (FastAPI)
+# Backend: Pip API (FastAPI)
 
-The "engine room" for FYP-26-S3-18. Still runs **with no API keys and no
-database setup** using a placeholder brain and in-memory storage, so anyone on
-the team can start it in one command — but now also picks up real services
-automatically the moment their keys are present, at the same two isolated swap
-points the file layout was always meant for:
-
-- **`app/brain.py`** — `OpenAIBrain` calls the real OpenAI API once
-  `OPENAI_API_KEY` is set (`BRAIN_PROVIDER` auto-detects this — see
-  `.env.example`), constrained to only ever recommend items from the
-  catalogue it's given (never invents a title).
-- **`app/storage.py` + `app/firestore_store.py`** — once `FIREBASE_PROJECT_ID`
-  + a service-account file are configured, the in-memory store is loaded from
-  and saved back to Firestore (a coarse whole-state snapshot under a
-  `prototype_state` collection, kept deliberately separate from the other
-  branch's schema in the same project — see `firestore_store.py`'s docstring
-  for why this isn't fine-grained per-record Firestore access).
-
-Both fall back to the original zero-setup behaviour with no keys configured.
+The API behind Pip: accounts and roles, child profiles, the chat and recommendation loop,
+moderation, parent oversight, billing (simulated), notifications and the admin tools.
+Interactive docs for every endpoint are served at `/docs` when it is running.
 
 ## Run it
 
-```
+```bash
 cd src/backend
 python -m venv .venv
-# Windows:  .venv\Scripts\activate
-# macOS/Linux:  source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-- API root: http://localhost:8000/
-- Health check: http://localhost:8000/api/health
-- **Interactive API docs (try every endpoint): http://localhost:8000/docs**
+- API root and health check: http://localhost:8000/api/health
+- Interactive API docs: http://localhost:8000/docs
 
-## What's built (core backbone)
+It starts with **no keys and no database**: a placeholder brain and in-memory storage (data resets on
+restart). Real services switch on automatically when their keys are present.
 
-| Area | Use cases | Endpoints |
-|---|---|---|
-| Accounts & auth | UV05, PA01/02, CM01, SA01 | `/api/auth/signup`, `/login`, `/logout`, `/me` |
-| Child profiles + linking | PA07-PA10, PA13, CH01, CH02 | `/api/children`, `/api/children/link` |
-| Chat → recommendation loop | CH06-CH10, CH15-CH17 | `/api/chat`, `/api/chat/favourite`, `/favourites`, `/feedback` |
-| Content + moderation | CM03-CM09, CM13 | `/api/content` (+ `/approve`, `/reject`) |
-| Parent oversight | PA14, PA15, PA16 | `/api/children/{id}/activity`, `/favourites`, `/report` |
+## Configuration
 
-## Key design choices
+Copy `.env.example` to `.env`. Everything is optional.
 
-- **Provider-agnostic brain** (`app/brain.py`): the only place the AI lives.
-  `BRAIN_PROVIDER` picks `placeholder` or `openai` — nothing else changes.
-- **Storage is isolated** (`app/storage.py` + `app/firestore_store.py`):
-  in-memory dicts either way, optionally snapshotted to/from Firestore,
-  without touching the routers.
-- With no Firebase configured, data still resets on restart (in-memory) —
-  expected for a quick local demo.
+| Variable | What it does |
+|---|---|
+| `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `BRAIN_PROVIDER` | Real conversation and explanations (`placeholder` or `openai`; auto-detected from the key). |
+| `OPENAI_TTS_MODEL`, `OPENAI_TTS_VOICE` | Voice for Pip's spoken replies. |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_ADMIN_CREDENTIALS_PATH` or `FIREBASE_ADMIN_CREDENTIALS_JSON` | Save the application state to Firestore. |
+| `GOOGLE_BOOKS_API_KEY`, `YOUTUBE_DATA_API_KEY` | Moderator search and import. |
+| `RESEND_API_KEY`, `RESEND_FROM`, `FRONTEND_URL` | Real verification and reset emails. |
+| `DEV_RETURN_RESET_TOKEN` | Local development only: return the password-reset code in the response when no email can be sent. Never enable it in a deployed app. |
+| `INPUT_MODERATION_ENABLED`, `GUARDRAILS_ENABLED`, `SCOPE_CLASSIFIER_ENABLED`, `PII_SCRUB_ENABLED`, `CHAT_RATE_LIMIT_PER_MIN`, `MAX_MESSAGE_CHARS` | Safety layers in front of the model. |
+| `EMAIL_DOMAIN_CHECK_ENABLED` | Reject sign-ups whose email domain has no mail server. |
+| `ZDR_STATUS` | Records the status of OpenAI zero data retention for under-13 users (shown in the admin settings). |
+| `CORS_ORIGIN_REGEX` | Which web origins may call the API (default: any localhost port). |
 
-A demo **moderator** account is seeded: `moderator@pip.local` / `moderator123`
-(and an admin: `admin@pip.local` / `admin123`) — persisted like everything
-else once Firestore is configured, so these keep working across restarts too.
+## Layout
 
-## Not built yet (deliberately out of the backbone)
+```
+app/
+  main.py            FastAPI app, middleware (maintenance mode, persistence, metrics)
+  routers/           One file per area: auth, account, children, chat, browse, articulation,
+                     content (moderator), reports, oversight (parent), admin, public, health
+  brain.py           The conversation layer. Picks only from the catalogue it is given.
+  embeddings.py      Embedding-based retrieval of catalogue items
+  guardrails.py, moderation.py, pii.py   Safety layers before a message reaches the model
+  storage.py         All application data (in memory), with Firestore snapshots via firestore_store.py
+  content_sources.py, bulk_import.py     Google Books / YouTube search and bulk import
+  email_service.py, email_validation.py  Email delivery and address checks
+tests/               pytest suite (401 tests)
+scripts/             smoke_test.py (end-to-end), seed_real_catalogue.py
+api/index.py         Entry point for the Vercel deployment
+```
 
-Payments/subscription, notifications, verifiable parental consent, multi-child
-analytics, and the full admin suite — see the PRD use-case list.
+## Tests
+
+```bash
+pip install pytest
+python -m pytest tests -q          # 401 tests; always runs with the placeholder brain and no Firestore
+python scripts/smoke_test.py --base-url http://localhost:8000
+```
+
+`smoke_test.py` walks through every role against a running backend and deletes the accounts and
+data it creates. Against a deployed backend, add `--email-domain <a domain with mail servers>`.
+
+## Design choices
+
+- **The catalogue is the only source of recommendations.** Retrieval picks the candidates and the
+  model only decides how to talk about them. Any item it returns that was not a candidate is dropped.
+- **The model is behind one interface** (`app/brain.py`), so the provider can change without touching
+  the routers.
+- **Storage is isolated** in `storage.py` and `firestore_store.py`. Requests that change data reload the
+  latest snapshot first and save it afterwards, so several serverless instances stay consistent.
+- Passwords are hashed (PBKDF2-SHA256 with a per-account salt). A child's PIN is stored so a parent
+  can read it back from the dashboard, and five wrong tries lock the profile.
+
+## Demo accounts
+
+A moderator (`moderator@pip.local` / `moderator123`) and an admin (`admin@pip.local` / `admin123`) are
+created automatically for assessment. They will be removed after the project is assessed.
+
+## Known limitations
+
+- Billing is simulated; no payment provider is connected.
+- All state lives in one Firestore document (about 1 MiB limit), so this suits a demo, not large scale.
+- The *block links* safety switch is stored but not yet enforced.
+- Push notifications are not implemented.
