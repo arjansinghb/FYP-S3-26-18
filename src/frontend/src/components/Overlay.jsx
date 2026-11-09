@@ -12,13 +12,14 @@ export default function Overlay({ title, icon: Icon, children, onClose }) {
     // existed before (a keyboard/screen-reader user had no signal a
     // modal had even opened, and no way out but a mouse click).
     closeRef.current?.focus()
+    const trigger = triggerRef.current
     function onKeyDown(e) {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      triggerRef.current?.focus?.()
+      trigger?.focus?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

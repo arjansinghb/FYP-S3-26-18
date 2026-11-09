@@ -958,7 +958,7 @@ class Database:
             for c in self.children.values()
         )
 
-    PIN_RETRY_LIMIT = 5  # URS says "limited retries" without a number — [ASSUMED]
+    PIN_RETRY_LIMIT = 5  # the URS says "limited retries" without a number, so 5 is our own choice
 
     def check_child_pin(self, child: dict, pin: str) -> bool:
         """Shared by CH01 (link) and CH02 (return login) — tracks failed

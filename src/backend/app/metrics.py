@@ -3,8 +3,7 @@
 URS's SA08 description is specific: "Displays system-level metrics: API
 uptime, error rates, NLP/recommendation service latency." Before this, the
 admin stats endpoint only had request counts and a raw process uptime — a
-real gap found during a URS cross-check (dev-session 2026-09-07), not
-something implemented before.
+gap found while cross-checking the URS.
 
 In-process rolling window (last N requests), fed by main.py's
 `track_request` middleware. Deliberately simple — no external metrics

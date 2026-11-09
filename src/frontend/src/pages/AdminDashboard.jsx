@@ -88,7 +88,7 @@ export default function AdminDashboard() {
   if (checking) return <div className="parent"><p className="muted">Loading…</p></div>
   // One sign-in for every role lives on /parent; it sends staff back here.
   if (!account) return <Navigate to="/parent" state={{ mode: 'login' }} replace />
-  return <Tools account={account} onLogout={() => { logout(); setAccount(null) }} />
+  return <Tools onLogout={() => { logout(); setAccount(null) }} />
 }
 
 const ADMIN_TABS = [
@@ -99,7 +99,7 @@ const ADMIN_TABS = [
   { key: 'support', label: 'Support', icon: LifeBuoyIcon, countKey: 'ticketsOpen' },
 ]
 
-function Tools({ account, onLogout }) {
+function Tools({ onLogout }) {
   const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
   const [toast, notify] = useToast()

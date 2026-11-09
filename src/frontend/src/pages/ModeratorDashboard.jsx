@@ -71,7 +71,7 @@ export default function ModeratorDashboard() {
   if (checking) return <div className="parent"><p className="muted">Loading…</p></div>
   // One sign-in for every role lives on /parent; it sends staff back here.
   if (!account) return <Navigate to="/parent" state={{ mode: 'login' }} replace />
-  return <Tools account={account} onLogout={() => { logout(); setAccount(null) }} />
+  return <Tools onLogout={() => { logout(); setAccount(null) }} />
 }
 
 const TABS = [
@@ -82,7 +82,7 @@ const TABS = [
   { key: 'reports', label: 'Reports', icon: FlagIcon, countKey: 'reportsOpen' },
 ]
 
-function Tools({ account, onLogout }) {
+function Tools({ onLogout }) {
   const scrolled = useScrolled()
   const [tab, setTab] = useState('overview')
   const [catalogueQuery, setCatalogueQuery] = useState('')

@@ -1,6 +1,5 @@
 """Test setup — forces mock-brain + no-Firestore mode regardless of what's in
-the repo's real `.env` (which has live OpenAI/Firebase credentials — see
-agent-context/prototype-real-integrations.md §15). Tests must be free,
+the repo's real `.env` (which has live OpenAI/Firebase credentials). Tests must be free,
 deterministic, and never touch real OpenAI/Firestore, so this overrides the
 relevant env vars *before* app.config (and anything that imports it) ever
 runs — same technique, and same reasoning, as the team's other

@@ -568,6 +568,8 @@ function DashboardHome({ account, kids, loading, context, setContext }) {
       }]
     })).then((rows) => { if (live) setStats(Object.fromEntries(rows)) })
     return () => { live = false }
+    // kidsKey changes exactly when the list of children does, which is when the stats need reloading
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kidsKey])
 
   function openChild(id, tab) {
@@ -1330,7 +1332,6 @@ function SubscriptionPanel({ account, onAccountUpdated }) {
   }
 
   if (!status) return <div className="dash-panel"><h2 className="dash-title"><StarIcon width={20} height={20} /> Subscription</h2><p className="muted">Loading…</p></div>
-  const price = priceFor('premium', billingCycle)
   // Same field-routing idea as AuthPanel's isWrongPassword — both card
   // errors are actually about the last-4 box, not the form in general, so
   // route them to sit right under it instead of one banner near the
@@ -2397,6 +2398,7 @@ function ExplanationsPanel({ child, account, onChanged }) {
       setError(err.message)
     }
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [child.id])
 
   const [decliningRow, setDecliningRow] = useState(null)   // explanation waiting on the "are you sure?" step
@@ -3198,6 +3200,8 @@ function ChildDataPrivacy({ child }) {
     Promise.all([childActivity(child.id), childFavourites(child.id)])
       .then(([activity, favs]) => setCounts({ messages: activity.length, favourites: favs.length }))
       .catch(() => {})
+    // runs once per mounted panel; the panel is re-created when another child is opened
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function request() {

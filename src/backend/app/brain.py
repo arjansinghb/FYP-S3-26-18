@@ -403,9 +403,7 @@ class OpenAIBrain:
        candidate list is dropped rather than trusted — retrieval decides
        *what's eligible*, the chat model only decides *how to talk about it*.
 
-    Safety/design rule (see agent-context/CLAUDE.md §2.1/§3 on the other
-    branch — same principle applies here even though this file doesn't read
-    that doc): the model is never asked to "know" a book or video on its own.
+    Safety rule: the model is never asked to "know" a book or video on its own.
     """
 
     def __init__(self, api_key: str, model: str):

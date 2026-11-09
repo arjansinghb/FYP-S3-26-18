@@ -125,6 +125,11 @@ class Settings:
     RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
     RESEND_FROM = os.getenv("RESEND_FROM", "Pip <onboarding@resend.dev>")
 
+    # PA03: a reset code is only ever handed back in the API response when this
+    # is switched on (local development without an email service). Left off in
+    # any deployed environment, the code can only be received by email.
+    DEV_RETURN_RESET_TOKEN = os.getenv("DEV_RETURN_RESET_TOKEN", "").lower() in ("1", "true", "yes")
+
     # Where the web app lives — verification emails link to <FRONTEND_URL>/parent/verify?token=...
     # (set it to the deployed frontend's address in production).
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")

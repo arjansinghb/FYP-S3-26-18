@@ -1,7 +1,6 @@
 """End-to-end smoke test across all five actors' real endpoints.
 
-Not a unit-test suite (this prototype doesn't have pytest fixtures/mocking
-set up — see agent-context notes) — this hits a REAL RUNNING backend over
+Not a unit-test suite (those are in tests/) — this hits a REAL RUNNING backend over
 HTTP, the same way the real frontend does, and checks the actual response.
 Exit code is non-zero if anything fails, and every check prints PASS/FAIL so
 a run is a structured, skimmable report instead of one-off manual curls.
@@ -30,6 +29,8 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://localhost:8010")
+    parser.add_argument("--email-domain", default="example.com",
+                        help="domain for the throwaway test accounts; a deployed backend checks MX records, so pass one that has them")
     args = parser.parse_args()
 
     c = httpx.Client(base_url=args.base_url, timeout=30)
@@ -42,7 +43,7 @@ def main() -> int:
     r = c.get("/api/public/plans")
     check("UV03 subscription plans", r.status_code == 200, r.text)
 
-    email_a = f"smoke-a-{stamp}@example.com"
+    email_a = f"smoke-a-{stamp}@{args.email_domain}"
     r = c.post("/api/auth/signup", json={"email": email_a, "password": "Smoke1234", "name": "Smoke Parent A"})
     check("UV05 signup", r.status_code == 200, r.text)
     signup = r.json()
@@ -58,7 +59,7 @@ def main() -> int:
 
     # a second parent, purely to prove PIN uniqueness is enforced ACROSS
     # families (not just within one parent's own children)
-    email_b = f"smoke-b-{stamp}@example.com"
+    email_b = f"smoke-b-{stamp}@{args.email_domain}"
     r = c.post("/api/auth/signup", json={"email": email_b, "password": "Smoke1234", "name": "Smoke Parent B"})
     signup_b = r.json()
     bh = {"Authorization": f"Bearer {signup_b['token']}"}

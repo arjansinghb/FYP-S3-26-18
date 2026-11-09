@@ -151,7 +151,10 @@ def request_password_reset(body: PasswordResetRequest):
             token=None,
             note="If that email is registered, a reset code has been sent to it.",
         )
-    return PasswordResetRequestOut(token=token)
+    if token and settings.DEV_RETURN_RESET_TOKEN:
+        return PasswordResetRequestOut(token=token, note="Dev mode: the reset code is returned here because it was not emailed.")
+    # Same answer whether or not the address is registered, and the code never leaves the server
+    return PasswordResetRequestOut(token=None, note="If that email is registered, a reset code has been sent to it.")
 
 
 @router.post("/reset-password/confirm", response_model=AccountOut)

@@ -44,8 +44,7 @@ def test_sa03_reset_user_password(client: TestClient, admin: dict, parent: dict)
 def test_sa08_system_health_has_real_metrics(client: TestClient, admin: dict):
     """Not just counts — the URS's own SA08 wording ("API uptime, error
     rates, NLP/recommendation service latency") requires all three, closed
-    as a real gap during the 2026-09-07 URS cross-check (see app/metrics.py
-    and agent-context/prototype-real-integrations.md §15)."""
+    as a gap found in the URS cross-check (see app/metrics.py)."""
     r = client.get("/api/admin/stats", headers=admin["headers"])
     assert r.status_code == 200
     body = r.json()
